@@ -96,12 +96,9 @@ The downstream analysis consists of the following steps:
 
 
 ## Citation
-Complete Mutagenesis of the Genome and Proteome of ΦX174
-Huijin Wei, Xianghua Li, Ben Lehner
-bioRxiv 2026.07.25.740675; doi: https://doi.org/10.64898/2026.07.25.740675
-This article is a preprint and has not been certified by peer review 
-
-
+> Huijin Wei, Xianghua Li, Ben Lehner.
+> Complete Mutagenesis of the Genome and Proteome of ΦX174.
+> *bioRxiv* 2026. https://doi.org/10.64898/2026.07.25.740675
 
 
 
