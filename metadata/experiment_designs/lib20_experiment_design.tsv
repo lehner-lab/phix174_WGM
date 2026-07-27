@@ -1,0 +1,7 @@
+sample_name	experiment_replicate	selection_id	selection_replicate	technical_replicate	pair1	pair2
+input1	1	0			lib20_rep1_input_R1.fastq	lib20_rep1_input_R2.fastq
+output1	1	1	1		lib20_rep1_output_R1.fastq	lib20_rep1_output_R2.fastq
+input2	2	0			lib20_rep2_input_R1.fastq	lib20_rep2_input_R2.fastq
+output2	2	1	1		lib20_rep2_output_R1.fastq	lib20_rep2_output_R2.fastq
+input3	3	0			lib20_rep3_input_R1.fastq	lib20_rep3_input_R2.fastq
+output3	3	1	1		lib20_rep3_output_R1.fastq	lib20_rep3_output_R2.fastq
