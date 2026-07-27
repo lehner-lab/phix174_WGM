@@ -47,22 +47,59 @@ phix174-WGM/
 
 
 ## Data availability
-The raw paired-end sequencing reads are deposited in the European Nucleotide Archive under project accession PRJEB120835. 
+Raw paired-end sequencing reads are deposited in the European Nucleotide Archive under project accession PRJEB120835. The metadata and scripts required to download the sequencing reads, merge files generated from separate sequencing lanes, and rerun the DiMSum pipeline are provided in this repository.
 
-Raw sequencing files are not stored in this GitHub repository. They can be downloaded from ENA using the scripts provided here, and used for running DiMSum pipeline to calculate fitness values for variants after the project is publicly released.
+For exact reproduction of the downstream analyses, we also provide the DiMSum fitness datasets generated during the original analysis and used throughout this study.
+
+Protein structures, AlphaFold 3 models, and other large structural datasets are hosted separately because of their file size.
+Structural data: [link to be added]
 
 
 ## Analysis overview
-1. 
-2. 
-3. 
+The downstream analysis consists of the following steps:
+1. Load raw DiMSum fitness estimates, associated errors, and library-specific variant annotations.
+3. Normalize fitness values within each library using synonymous and nonsense reference distributions.
+4. Combine libraries and merge duplicated genotypes.
+5. Generate annotated single-nucleotide and single-amino-acid variant datasets, together with residue-level summaries.
+6. Classify variant and mutation effects using statistical significance and fitness-effect thresholds.
+7. Perform enrichment tests, comparative analyses, and figure generation.
+8. Integrate variant-effect predictor scores and evaluate predictor performance.
+9. Use mutational data to evaluate experimentally resolved and predicted protein structures and interaction models.
 
 
-## Download data
-Download processed data using provided script 
+## Scripts
+1. Load dependencies and configure the analysis environment (scripts/00_environment_and_dependencies.R;).
+2. Normalize raw fitness values within each library (scripts/01_normalize_library_fitness.R; Inputs: data/01_dimsum_raw_fitness/; Outputs: data/02_normalized_fitness/).
+3. Combine normalized datasets and classify variant effects (scripts/02_combine_and_classify_variants.R; Inputs: data/02_normalized_fitness/; Outputs: data/03_combined_variants/, data/04_single_nucleotide/).
+4. Generate amino-acid variant datasets (scripts/03_generate_amino_acid_variants.R; Inputs: data/03_combined_variants/; Outputs: data/05_single_amino_acid/)
+5. Analyze and plot single-nucleotide variants (scripts/04_single_nucleotide_analysis.R; Inputs: data/04_single_nucleotide/).
+6. Analyze and plot single-amino-acid variants (scripts/05_single_amino_acid_analysis.R; Inputs: data/05_single_amino_acid/).
+7. Benchmark variant-effect predictors (scripts/06_vep_benchmarking.R; Inputs: data/05_single_amino_acid/; Outputs: data/06_vep_benchmarking/).
+8. Evaluate structural predictions using mutational data (scripts/07_structural_prediction_evaluation.R).
 
 
-## 
+## Provided Datasets
+1. Raw DiMSum fitness data: library-level DiMSum output tables containing the raw variant fitness estimates and associated error values used as input for downstream normalization (data/01_dimsum_raw_fitness/). ## These files represent DiMSum-derived fitness values before additional within-library normalization, cross-library integration, or biological annotation.
+
+2. Normalized library-level fitness data: fitness values normalized separately within each library using the corresponding library-specific synonymous and nonsense mutational effects, and rescaled across libraries containing reference essential genes (data/02_normalized_fitness/). ## These datasets retain the original library assignments and are used as input for cross-library integration.
+
+3. Combined and deduplicated variant dataset: normalized measurements from all libraries are combined into a single dataset, genotypes measured in more than one library are identified and merged to produce one final measurement per unique genotype (data/03_combined_variants/). ## This directory contains the combined dataset after removal or statistical integration of duplicated genotypes.
+
+4. Single-nucleotide datasets: variant-level and residue-level datasets for single-nucleotide variants are provided with genomic, functional, and mutation-effect annotations (data/04_single_nucleotide/). ## These include single-nucleotide-level variants fitness data, mutation annotations by genomic positions and affected genes (ORFs), statistical significance, mutation-effect categories, and nucleotide-residue summary.
+
+5. Single-amino-acid datasets: variant-level and residue-level datasets for single-amino-acid substitutions are provided with protein, structural, and mutation-effect annotations (data/05_single_amino_acid/). ## These include single-amino-acid variant fitness data, mutation annotations, amino-acid residues annotations, single-ORF and multi-ORF classifications, statistical significance and mutation-effect categories.
+
+6. Variant-effect predictor benchmarking data: benchmarking datasets contain experimentally measured fitness values together with scores generated by selected variant effect predictors (data/06_vep_benchmarking/). ## The supplied files include predictor scores for individual variants, correlations between predictions with experimental data, pre-protein benchmarking, and overall predictor-performance summaries.
+
+7. Structural datasets: experimentally resolved structures (downloaded from PDB), predicted structures, protein–DNA models, protein–protein interaction models, and associated condidence, interface-analysis files; ## The repository contains the scripts and summary tables used to evaluate structural predictions using mutational data, mapping experimentally measured mutational effects onto structures. Large coordinate files and complete prediction outputs can be downloaded from: Structural data: [link to be added]
+
+
+
+## Citation
+Complete Mutagenesis of the Genome and Proteome of ΦX174
+Huijin Wei, Xianghua Li, Ben Lehner
+bioRxiv 2026.07.25.740675; doi: https://doi.org/10.64898/2026.07.25.740675
+This article is a preprint and has not been certified by peer review 
 
 
 
