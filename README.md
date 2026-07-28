@@ -49,7 +49,7 @@ phix174-WGM/
 ## Data availability
 Raw paired-end sequencing reads are deposited in the European Nucleotide Archive under project accession PRJEB120835. The metadata and scripts required to download the sequencing reads, merge files generated from separate sequencing lanes, and rerun the DiMSum pipeline are provided in this repository.
 
-For exact reproduction of the downstream analyses, we also provide the DiMSum fitness datasets generated during the original analysis and used throughout this study.
+For exact reproduction of the downstream analyses, we provide the DiMSum fitness datasets generated during the original analysis and used throughout this study.
 
 Protein structures, AlphaFold 3 models, and other large structural datasets are hosted separately because of their file size.
 Structural data: [link to be added]
