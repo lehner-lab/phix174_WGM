@@ -1,9 +1,16 @@
 ## R Scripts
-0. Load dependencies and configure the analysis environment (R_scripts/00_R_packages.R).
-1. Normalize raw fitness values within each library (R_scripts/01_fitness_data_normalization.R).
-2. Combine all libraries, statistic tests and classify variant effects (R_scripts/02_all_variants_analysis.R).
-3. Analyze and plot single-nucleotide variants (R_scripts/03_single_nucleotide_variants.R).
-4. Generate, analyze and plot single-amino-acid variants (R_scripts/04_single_amino_acid_variants.R)
-5. Evaluate variant-effect predictors (R_scripts/05_evaluate_VEPs.R).
-6. Evaluate AlphaFold 3 structural predictions (R_scripts/06_evaluate_AF3_models.R).
-   
+
+The analysis workflow is organized into sequential R scripts. Each script performs a specific stage of the data processing and analysis pipeline and should be executed in the order listed below.
+
+| Script                              | Description                                                                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **00_R_packages.R**                 | Load required R packages, define utility functions, and configure the analysis environment.                                    |
+| **01_fitness_data_normalization.R** | Import raw fitness datasets, perform within-library fitness normalization, and generate normalized fitness tables.             |
+| **02_all_variants_analysis.R**      | Merge normalized libraries into a unified variant dataset, perform statistical analyses, and classify variant fitness effects. |
+| **03_single_nucleotide_variants.R** | Generate, analyze, and visualize the single-nucleotide mutation landscape.                                                     |
+| **04_single_amino_acid_variants.R** | Construct the single-amino-acid substitution dataset and perform downstream analyses and visualizations.                       |
+| **05_evaluate_VEPs.R**              | Benchmark computational variant-effect predictors against experimentally measured fitness data.                                |
+| **06_evaluate_AF3_models.R**        | Evaluate and rank AlphaFold 3 structural models using experimental mutational data and structural analyses.                    |
+
+The scripts are designed to be executed sequentially. We provide the input datasets and key intermediate output datasets required for each analysis step, as well as the key result tables used to generate the figures, see the `data/` directory.
+
