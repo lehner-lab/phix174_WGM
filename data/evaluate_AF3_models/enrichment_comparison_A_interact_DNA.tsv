@@ -1,0 +1,10 @@
+test_type	dataset	group	exposure_var	outcome_var	exposure_focus	outcome_focus	n_total	a_exposed_outcome	b_exposed_no_outcome	c_unexp_outcome	d_unexp_no_outcome	odds_ratio	conf_low	conf_high	log_or_ln	log_conf_low_ln	log_conf_high_ln	log_or_log10	log_conf_low_log10	log_conf_high_log10	p_value	method	label
+fisher_odds_ratio	A_DNA	ssDNA-specific 
+(30aa)	interact_ss_only	mutation_category_FDR_1aa	TRUE	Detrimental	4832	385	102	2238	2107	3.5527535282845584	2.8247302310603963	4.5003625282228805	1.2677229446030014	1.0384128666086683	1.504157955358651	0.5505650794232253	0.4509769779054821	0.65324749992314	6.756263748586577e-33	Fisher's Exact Test for Count Data	ssDNA-specific 
+(30aa)
+fisher_odds_ratio	A_DNA	dsDNA-specific 
+(37aa)	interact_ds_only	mutation_category_FDR_1aa	TRUE	Detrimental	4832	270	135	2353	2074	1.762646365510862	1.4158325418384532	2.2022500248776895	0.5668162965177849	0.3477177268645739	0.7894795763042554	0.24616518983051133	0.15101189003722656	0.34286662356425535	1.6522356983898594e-7	Fisher's Exact Test for Count Data	dsDNA-specific 
+(37aa)
+fisher_odds_ratio	A_DNA	Shared 
+(44aa)	interact_shared	mutation_category_FDR_1aa	TRUE	Detrimental	4832	302	140	2321	2069	1.9226724581200918	1.5541112968082547	2.3875717288113436	0.653716123508385	0.4409038689486283	0.870276836402643	0.28390530517087625	0.1914821173341838	0.37795642777788685	4.144369390361563e-10	Fisher's Exact Test for Count Data	Shared 
+(44aa)
