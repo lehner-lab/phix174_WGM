@@ -1,0 +1,1895 @@
+---
+title: "phix_DMS_single_nucleotide_variants"
+author: "Huijin Wei"
+date: "2026-07-30"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Set working working directory
+```{r}
+here::here()
+
+```
+
+
+
+## Load functions
+### 1) Data process
+```{r}
+# Function to annotate 1nt mutations 
+annotate_1nt_mutations <- function(df,
+                                  wt_col = "genome_nt_mut_wt",
+                                  sub_col = "genome_nt_mut_sub") {
+  
+  stopifnot(wt_col %in% names(df),
+            sub_col %in% names(df))
+  
+  purines <- c("A", "G")
+  pyrimidines <- c("C", "T")
+  
+  df %>%
+    dplyr::mutate(
+      
+      # Mutation string (e.g., A>C)
+      genome_nt_mut_base = paste0(.data[[wt_col]], ">", .data[[sub_col]]),
+      
+      # WT nucleotide type
+      genome_nt_mut_wt_type = dplyr::case_when(
+        .data[[wt_col]] %in% purines ~ "Purine",
+        .data[[wt_col]] %in% pyrimidines ~ "Pyrimidine",
+        TRUE ~ NA_character_
+      ),
+      
+      # Sub nucleotide type
+      genome_nt_mut_sub_type = dplyr::case_when(
+        .data[[sub_col]] %in% purines ~ "Purine",
+        .data[[sub_col]] %in% pyrimidines ~ "Pyrimidine",
+        TRUE ~ NA_character_
+      ),
+      
+      # Mutation class: Transition / Transversion
+      genome_nt_mut_base_type = dplyr::case_when(
+        genome_nt_mut_wt_type == genome_nt_mut_sub_type ~ "Transition",
+        genome_nt_mut_wt_type != genome_nt_mut_sub_type ~ "Transversion",
+        TRUE ~ NA_character_
+      ),
+      
+      # Simplified noncoding annotation
+      genome_nt_pos_annotation_combined = case_when(
+        grepl(",", genome_nt_pos_annotation) ~ "Multi-Annotation",
+        TRUE ~ genome_nt_pos_annotation
+      ),
+      genome_nt_pos_noncoding_regions = case_when(
+        phix_aa_mut_genes == "Noncoding#1 J-F" ~ "J-F",
+        phix_aa_mut_genes == "Noncoding#2 F-G" ~ "F-G",
+        phix_aa_mut_genes == "Noncoding#3 G-H" ~ "G-H",
+        phix_aa_mut_genes == "Noncoding#4 H-A" ~ "H-A",
+        TRUE ~ NA_character_
+      )
+    )
+}
+
+
+
+# Genome nt columns to keep during the collasping
+nt_position_cols <- c(
+  # ---- mutation position ----
+  "genome_nt_mut_pos", "genome_nt_mut_pos1", "genome_nt_mut_wt", "genome_nt_mut_sub",
+  
+  # ---- AA mapping (multi-ORF aware) ----
+  "gene_sub_nt_mut_pos1", "gene_sub_aa_mut_gene", "gene_sub_aa_mut_pos", "gene_sub_aa_mut_wt",
+  "gene_sub_nt_mut2_pos1", "gene_sub_aa_mut2_gene", "gene_sub_aa_mut2_pos", "gene_sub_aa_mut2_wt",
+  "gene_sub_nt_mut3_pos1", "gene_sub_aa_mut3_gene", "gene_sub_aa_mut3_pos", "gene_sub_aa_mut3_wt",
+  
+  # ---- structural annotation ----
+  "genome_nt_pos_structural",
+  "genome_nt_pos_overlap_orf",
+  "genome_nt_pos_coding",
+  "genome_nt_pos_protein_monomer",
+  "genome_nt_pos_protein_binding",
+  "genome_nt_pos_protein_residue",
+  "genome_nt_pos_protein_binding_hostspot",
+  "phix_aa_mut_genes",
+  
+  # ---- fitness ----
+  "fitness_final", "sigma_final",
+  
+  # ---- nucleotide / noncoding ----
+  "genome_nt_pos_noncoding",
+  "genome_nt_pos_nucleotide_class",
+  
+  # ---- regulatory (broad) ----
+  "genome_nt_pos_ori",
+  "genome_nt_pos_terminator",
+  "genome_nt_pos_promoter",
+  "genome_nt_pos_RBS",
+  
+  # ---- regulatory (gene-level, NEW) ----
+  "genome_nt_pos_terminator_gene",
+  "genome_nt_pos_promoter_gene",
+  "genome_nt_pos_promoter_anti_sense",
+  "genome_nt_pos_RBS_gene",
+  
+  # ---- combined annotations ----
+  "genome_nt_pos_annotation",
+  "genome_nt_pos_annotation_combined",
+  
+  # ---- mutation type ----
+  "genome_nt_mut_wt_type",
+  
+  # ---- global statistics ----
+  "p_value_two_sample_ttest_syn",
+  "p_value_two_sample_ttest_syn_FDR",
+  "effect_size_vs_syn",
+  "effect_size_std_vs_syn",
+  "effect_size_bin",
+  
+  "mutation_category_FDR",
+  "mutation_category_FDR_lethal",
+  "mutation_category_FDR_cutoff",
+  "mutation_category_FDR_cutoff_combined",
+  
+  # ---- 1nt subset statistics ----
+  "p_value_1nt_two_sample_ttest_syn",
+  "p_value_1nt_two_sample_ttest_syn_FDR",
+  "effect_size_vs_1nt_syn",
+  "effect_size_std_vs_1nt_syn",
+  "effect_size_bin_1nt",
+  
+  "mutation_category_FDR_1nt",
+  "mutation_category_FDR_lethal_1nt",
+  "mutation_category_FDR_cutoff_1nt",
+  "mutation_category_FDR_cutoff_1nt_combined"
+)
+
+
+# Function to summarise 1nt mut data to positions
+collapse_nt_to_position <- function(df,
+                                    pos_col = "genome_nt_mut_pos",
+                                    fitness_col = "fitness_final",
+                                    sigma_col = "sigma_final",
+                                    wt_reference) {
+  
+  # ---- Safety check ----
+  if (missing(wt_reference) || !is.numeric(wt_reference)) {
+    stop("You must supply a numeric wt_reference value.")
+  }
+  
+  df %>%
+    dplyr::group_by(.data[[pos_col]]) %>%
+    dplyr::summarise(
+      
+      # ------------------------
+      # Sampling
+      # ------------------------
+      
+      n_mutations_nt_pos = dplyr::n(),
+      
+      n_unique_substitutions =
+        dplyr::n_distinct(genome_nt_mut_sub),
+      
+      n_valid_substitutions =
+        sum(!is.na(mutation_category_FDR_1nt)),
+      
+      n_possible_substitutions = 3,
+      
+      is_fully_sampled =
+        n_unique_substitutions == 3 &
+        n_valid_substitutions == 3,
+      
+      # ------------------------
+      # Fitness summaries
+      # ------------------------
+      
+      min_fitness_nt_pos = min(.data[[fitness_col]], na.rm = TRUE),
+      max_fitness_nt_pos = max(.data[[fitness_col]], na.rm = TRUE),
+      median_fitness_nt_pos = median(.data[[fitness_col]], na.rm = TRUE),
+      mean_fitness_nt_pos = mean(.data[[fitness_col]], na.rm = TRUE),
+      sd_fitness_nt_pos = sd(.data[[fitness_col]], na.rm = TRUE),
+      
+      median_sigma_nt_pos =
+        if (sigma_col %in% names(df))
+          median(.data[[sigma_col]], na.rm = TRUE)
+        else NA_real_,
+      
+      # ------------------------
+      # Category counts
+      # ------------------------
+      
+      genome_nt_pos_num_beneficial =
+        sum(mutation_category_FDR_lethal_1nt == "Beneficial", na.rm = TRUE),
+      
+      genome_nt_pos_num_neutral =
+        sum(mutation_category_FDR_lethal_1nt == "Neutral", na.rm = TRUE),
+      
+      genome_nt_pos_num_detrimental =
+        sum(mutation_category_FDR_lethal_1nt == "Detrimental", na.rm = TRUE),
+      
+      genome_nt_pos_num_lethal =
+        sum(mutation_category_FDR_lethal_1nt == "Lethal", na.rm = TRUE),
+      
+      # ------------------------
+      # Category fractions
+      # ------------------------
+      
+      genome_nt_pos_frac_beneficial =
+        genome_nt_pos_num_beneficial / n_mutations_nt_pos,
+      
+      genome_nt_pos_frac_neutral =
+        genome_nt_pos_num_neutral / n_mutations_nt_pos,
+      
+      genome_nt_pos_frac_detrimental =
+        genome_nt_pos_num_detrimental / n_mutations_nt_pos,
+      
+      genome_nt_pos_frac_lethal =
+        genome_nt_pos_num_lethal / n_mutations_nt_pos,
+      
+      # ------------------------
+      # Essential logic (original)
+      # ------------------------
+      
+      genome_nt_pos_essential_FDR = ifelse(
+        any(mutation_category_FDR_1nt == "Detrimental", na.rm = TRUE),
+        "Essential", "Non-essential"
+      ),
+      
+      genome_nt_pos_essential_FDR_lethal = ifelse(
+        any(mutation_category_FDR_lethal_1nt == "Lethal", na.rm = TRUE),
+        "Essential", "Non-essential"
+      ),
+      
+      genome_nt_pos_essential_FDR_deleterious = ifelse(
+        any(mutation_category_FDR_cutoff_1nt_combined == "Deleterious", na.rm = TRUE),
+        "Essential", "Non-essential"
+      ),
+      
+      # ------------------------
+      # Median fitness rule
+      # ------------------------
+      
+      genome_nt_pos_essential_median_fitness = {
+        med_fit <- median(.data[[fitness_col]], na.rm = TRUE)
+        if (!is.na(med_fit) && med_fit < 0.5 * wt_reference) {
+          "Essential"
+        } else {
+          "Non-essential"
+        }
+      },
+      
+      # ------------------------
+      # FINAL classification (UPDATED)
+      # ------------------------
+      
+      genome_nt_pos_nucleotide_category = dplyr::case_when(
+        
+        # strongest signal
+        any(mutation_category_FDR_lethal_1nt == "Lethal", na.rm = TRUE) ~ "Essential",
+        
+        # sub-lethal constraint
+        any(mutation_category_FDR_1nt == "Detrimental", na.rm = TRUE) ~ "Sensitive",
+        
+        # only safe tolerance call
+        is_fully_sampled ~ "Tolerant",
+        
+        # incomplete sampling
+        TRUE ~ "Unable to define"
+      ),
+      
+      # ------------------------
+      # Preserve invariant columns
+      # ------------------------
+      
+      dplyr::across(
+        -c(
+          dplyr::any_of(c(pos_col, fitness_col, sigma_col)),
+          dplyr::starts_with("mutation_category_")
+        ),
+        dplyr::first
+      ),
+      
+      .groups = "drop"
+    )
+}
+
+
+
+# Function to do Chi-square Test (with Cramér’s V)
+run_chisq_test <- function(df,
+                           group_col,
+                           category_col,
+                           dataset = NA,
+                           gene = NA,
+                           simulate_p = FALSE) {
+
+  group_sym    <- rlang::ensym(group_col)
+  category_sym <- rlang::ensym(category_col)
+
+  dat <- df %>%
+    dplyr::filter(!is.na(!!group_sym),
+                  !is.na(!!category_sym))
+
+  if (nrow(dat) == 0) {
+    stop("No complete cases available for chi-square test.")
+  }
+
+  tab <- table(dat[[rlang::as_name(group_sym)]],
+               dat[[rlang::as_name(category_sym)]])
+
+  test <- suppressWarnings(
+    chisq.test(tab, simulate.p.value = simulate_p)
+  )
+
+  # Effect size: Cramér’s V
+  cramer_v <- sqrt(as.numeric(test$statistic) /
+                   (sum(tab) * (min(dim(tab)) - 1)))
+
+  # Convert tables safely
+  observed_df <- as.data.frame(tab)
+  colnames(observed_df) <- c("group", "category", "observed")
+  
+  expected_df <- as.data.frame(test$expected)
+  colnames(expected_df) <- c("group", "category", "expected")
+  
+  residual_df <- as.data.frame(test$stdres)
+  colnames(residual_df) <- c("group", "category", "std_resid")
+
+  summary_tbl <- tibble::tibble(
+    test_type     = "chi_square",
+    dataset       = dataset,
+    gene          = gene,
+    group_var     = rlang::as_name(group_sym),
+    category_var  = rlang::as_name(category_sym),
+    n_total       = sum(tab),
+    statistic     = unname(test$statistic),
+    df            = unname(test$parameter),
+    p_value       = test$p.value,
+    effect_size   = unname(cramer_v),
+    effect_name   = "cramers_v",
+    method        = test$method,
+    min_expected  = min(test$expected)
+  )
+
+  return(list(
+    summary   = summary_tbl,
+    observed  = observed_df,
+    expected  = expected_df,
+    residuals = residual_df
+  ))
+}
+
+
+
+# Function to generate summary table
+generate_mutation_category_summary <- function(
+    df, 
+    class_col,
+    category_col,
+    total_count = NULL
+) {
+
+  class_syms    <- rlang::syms(class_col)
+  category_sym  <- rlang::ensym(category_col)
+
+  df %>%
+    dplyr::filter(!is.na(!!category_sym)) %>%
+    dplyr::group_by(!!!class_syms, !!category_sym) %>%
+    dplyr::summarise(count = dplyr::n(), .groups = "drop") %>%
+    dplyr::group_by(!!!class_syms) %>%
+    dplyr::mutate(
+      proportion = if (is.null(total_count)) {
+        count / sum(count)
+      } else {
+        count / total_count
+      },
+      percent = round(proportion * 100, 2)
+    ) %>%
+    dplyr::ungroup()
+}
+
+
+
+
+```
+
+
+### 2) Data plotting
+```{r}
+# Function to plot volcano plots
+plot_volcano <- function(data,
+                         x_col = "fitness_final",
+                         y_col = "p_adj_two_samples_syn",
+                         color_col = "mutation_category_FDR_cutoff",
+                         x_lim = c(-1, 1.5),
+                         y_lim = c(0, 2.7),
+                         plot_title = "Volcano Plot") {
+
+  x_sym <- rlang::sym(x_col)
+  y_sym <- rlang::sym(y_col)
+  color_sym <- rlang::sym(color_col)
+
+  ggplot(data, aes(x = !!x_sym, y = -log10(!!y_sym), color = !!color_sym)) +
+    geom_point(alpha = 0.6, size = 1) +
+    scale_color_manual(values = c(
+      "Beneficial"  = "#A1A9D0",  # soft blue
+      "Neutral"     = "#D9D9D9",  # light gray
+      "Detrimental" = "#F4A6A6",  # light red
+      "Lethal"      = "#F0988C"   # muted dark red
+    )) +
+    xlim(x_lim) +
+    ylim(y_lim) +
+    labs(
+      x = "Fitness",
+      y = expression(-log[10](FDR)),
+      title = plot_title,
+      color = "Mutation Category"
+    ) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(),
+      legend.position = "none"
+    )
+}
+
+
+# Function to make Donut plot 
+plot_donut_percent <- function(df,
+                       category_col = Category,     # bare column name
+                       count_col    = count,        # if NULL, will try percent/proportion
+                       percent_col  = NULL,         # optional: bare name of percent/proportion (0–1 or 0–100)
+                       title        = "Composition",
+                       label_acc    = 0.1,          # percent label precision
+                       palette      = NULL) {       # optional vector of colors
+
+  cat_sym <- enquo(category_col)
+  cnt_sym <- enquo(count_col)
+  pct_sym <- enquo(percent_col)
+
+  # 1) collapse to category level and compute percent
+  if (!quo_is_null(pct_sym)) {
+    df_cat <- df %>%
+      group_by(!!cat_sym) %>%
+      summarise(percent = sum(!!pct_sym, na.rm = TRUE), .groups = "drop") %>%
+      mutate(percent = ifelse(percent > 1, percent/100, percent))
+  } else {
+    df_cat <- df %>%
+      group_by(!!cat_sym) %>%
+      summarise(count = sum(!!cnt_sym, na.rm = TRUE), .groups = "drop") %>%
+      mutate(percent = count / sum(count))
+  }
+
+  df_cat <- df_cat %>%
+    mutate(label = percent_format(accuracy = label_acc)(percent))
+
+  # 2) build donut
+  p <- ggplot(df_cat, aes(x = 2, y = percent, fill = !!cat_sym)) +
+    geom_col(color = "white", width = 0.9) +
+    coord_polar(theta = "y") +
+    xlim(0.5, 2.5) +  # creates the hole
+    geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 4) +
+    labs(title = title, x = NULL, y = NULL, fill = rlang::as_name(cat_sym)) +
+    theme_void() +
+    theme(legend.position = "none")
+
+  if (!is.null(palette)) {
+    p <- p + scale_fill_manual(values = palette)
+  }
+
+  p
+}
+
+
+
+# Function to plot special stacked bar plot
+# 1) function to make stacked bar plot for 1nt mutations
+bar_percent_stacked_genome <- function(
+    summary_df,
+    class_col = Class,
+    category_col = Category,
+    count_col = count,
+    percent_col = percent,
+    plot_title = "Mutation Category by Class",
+    fill_legend_title = "Mutation Category",
+    x_order = NULL,
+    facet_col = NULL,
+    custom_colors = NULL,
+    show_segment_labels = FALSE,
+    label_digits = 1,
+    use_percent = TRUE,   # TRUE = 0–100, FALSE = 0–1
+    stat_df = NULL,
+    stat_p_col = "p_value",
+    stat_format = c("p", "stars"),
+    stat_position = c("subtitle", "caption", "none")
+) {
+
+  stat_format   <- match.arg(stat_format)
+  stat_position <- match.arg(stat_position)
+
+  # ---- Tidy eval ----
+  class_sym    <- rlang::ensym(class_col)
+  category_sym <- rlang::ensym(category_col)
+  count_sym    <- rlang::ensym(count_col)
+  percent_sym  <- rlang::ensym(percent_col)
+  facet_sym    <- if (!is.null(facet_col)) rlang::ensym(facet_col) else NULL
+
+  class_name    <- rlang::as_name(class_sym)
+  category_name <- rlang::as_name(category_sym)
+  percent_name  <- rlang::as_name(percent_sym)
+
+  # ---- Default colors ----
+  if (is.null(custom_colors)) {
+    custom_colors <- c(
+      "Beneficial"  = "#A1A9D0",
+      "Neutral"     = "#D9D9D9",
+      "Detrimental" = "#F4A6A6",
+      "Lethal"      = "#F0988C"
+    )
+  }
+
+  # ---- Clean & aggregate ----
+  grouping_vars <- if (is.null(facet_sym)) {
+    list(class_sym, category_sym)
+  } else {
+    list(facet_sym, class_sym, category_sym)
+  }
+
+  summary_df <- summary_df %>%
+    dplyr::filter(!is.na(!!class_sym), !is.na(!!category_sym)) %>%
+    dplyr::group_by(!!!grouping_vars) %>%
+    dplyr::summarise(
+      !!count_sym := sum(!!count_sym, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # ---- Recompute percentages ----
+  group_class_vars <- if (is.null(facet_sym)) {
+    list(class_sym)
+  } else {
+    list(facet_sym, class_sym)
+  }
+
+  summary_df <- summary_df %>%
+    dplyr::group_by(!!!group_class_vars) %>%
+    dplyr::mutate(
+      !!percent_sym := if (use_percent) {
+        round(!!count_sym / sum(!!count_sym) * 100, 2)
+      } else {
+        !!count_sym / sum(!!count_sym)
+      }
+    ) %>%
+    dplyr::ungroup()
+
+  # ---- Total counts ----
+  total_df <- summary_df %>%
+    dplyr::group_by(!!!group_class_vars) %>%
+    dplyr::summarise(
+      total_count = sum(!!count_sym, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # ---- Category order (robust) ----
+  summary_df[[category_name]] <- factor(
+    summary_df[[category_name]],
+    levels = names(custom_colors),
+    ordered = TRUE
+  )
+
+  # ---- X ordering ----
+  if (!is.null(x_order)) {
+
+    summary_df[[class_name]] <- factor(summary_df[[class_name]], levels = x_order)
+    total_df[[class_name]]   <- factor(total_df[[class_name]], levels = x_order)
+
+  } else if (is.null(facet_sym)) {
+
+    class_order <- summary_df %>%
+      dplyr::group_by(!!class_sym) %>%
+      dplyr::summarise(
+        order_val = sum(
+          ifelse(
+            .data[[category_name]] %in% c("Detrimental", "Lethal"),
+            .data[[percent_name]],
+            0
+          ),
+          na.rm = TRUE
+        ),
+        .groups = "drop"
+      ) %>%
+      dplyr::arrange(dplyr::desc(order_val)) %>%
+      dplyr::pull(!!class_sym)
+
+    summary_df[[class_name]] <- factor(summary_df[[class_name]], levels = class_order)
+    total_df[[class_name]]   <- factor(total_df[[class_name]], levels = class_order)
+  }
+
+  # ---- Base plot ----
+  p <- ggplot2::ggplot(
+    summary_df,
+    ggplot2::aes(
+      x = .data[[class_name]],
+      y = .data[[percent_name]],
+      fill = .data[[category_name]]
+    )
+  ) +
+    ggplot2::geom_bar(
+      stat = "identity",
+      position = "stack",
+      width = 0.9,
+      color = "black"
+    ) +
+    ggplot2::scale_fill_manual(
+      values = custom_colors,
+      name = fill_legend_title,
+      drop = FALSE
+    ) +
+    ggplot2::labs(
+      title = plot_title,
+      x = "Class",
+      y = ifelse(use_percent, "Proportion (%)", "Proportion")
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+  
+  # ---- Y-axis (STRICT 0–100 + label space) ----
+  p <- p +
+    ggplot2::scale_y_continuous(
+      #limits = c(0, 100),
+      breaks = seq(0, 100, 25),
+      expand = c(0, 0)
+    ) +
+    ggplot2::coord_cartesian(ylim = c(0, 110))
+
+  # ---- Segment labels ----
+  if (show_segment_labels) {
+    p <- p +
+      ggplot2::geom_text(
+        ggplot2::aes(
+          label = if (use_percent) {
+            paste0(round(.data[[percent_name]], label_digits), "%")
+          } else {
+            round(.data[[percent_name]], label_digits)
+          }
+        ),
+        position = ggplot2::position_stack(vjust = 0.5),
+        size = 3
+      )
+  }
+
+  # ---- Total labels ----
+  y_max <- ifelse(use_percent, 100, 1)
+
+  p <- p +
+    ggplot2::geom_text(
+      data = total_df,
+      ggplot2::aes(
+        x = .data[[class_name]],
+        y = y_max * 1.05,
+        label = scales::comma(total_count)
+      ),
+      inherit.aes = FALSE,
+      size = 3.5
+    ) +
+    ggplot2::coord_cartesian(ylim = c(0, y_max * 1.1))
+
+  # ---- Facet ----
+  if (!is.null(facet_sym)) {
+    p <- p + ggplot2::facet_wrap(vars(!!facet_sym), scales = "free_x")
+  }
+
+  # ---- Statistics ----
+  if (!is.null(stat_df) && stat_position != "none" && is.null(facet_sym)) {
+
+    p_val <- stat_df[[stat_p_col]][1]
+
+    stat_label <- if (stat_format == "p") {
+      ifelse(p_val < 2.2e-16,
+             "p < 2.2e-16",
+             paste0("p = ", signif(p_val, 3)))
+    } else {
+      dplyr::case_when(
+        p_val < 0.001 ~ "***",
+        p_val < 0.01  ~ "**",
+        p_val < 0.05  ~ "*",
+        TRUE ~ "ns"
+      )
+    }
+
+    label_text <- paste0("Chi-square test: ", stat_label)
+
+    if (stat_position == "subtitle") {
+      p <- p + ggplot2::labs(subtitle = label_text)
+    } else if (stat_position == "caption") {
+      p <- p + ggplot2::labs(caption = label_text)
+    }
+  }
+
+  return(p)
+}
+
+
+# 2) function to make stacked bar plot for 1nt in both mutation category and nt classification
+# updated: add n= on top of bars
+bar_percent_stacked_genome_nucleotide <- function(
+  data,
+  x_col,
+  fill_col,
+  palette = NULL,
+  title = NULL,
+  legend_title = "Factor Class",
+  show_legend = TRUE,
+  x_order = NULL
+) {
+
+  # Required packages:
+  # dplyr, ggplot2, rlang
+
+  # --- Capture columns safely ---
+  x_sym    <- rlang::ensym(x_col)
+  fill_sym <- rlang::ensym(fill_col)
+
+  x_name   <- rlang::as_name(x_sym)
+  fill_name <- rlang::as_name(fill_sym)
+
+  # --- Step 1: Compute total counts per x group ---
+  total_counts <- data %>%
+    dplyr::group_by(!!x_sym) %>%
+    dplyr::summarise(total = sum(count, na.rm = TRUE), .groups = "drop")
+
+  # --- Step 2: Sum counts per x and fill category ---
+  grouped_data <- data %>%
+    dplyr::group_by(!!x_sym, !!fill_sym) %>%
+    dplyr::summarise(count = sum(count, na.rm = TRUE), .groups = "drop")
+
+  # --- Step 3: Calculate percentage ---
+  percent_data <- grouped_data %>%
+    dplyr::left_join(total_counts, by = x_name) %>%
+    dplyr::mutate(percent = 100 * count / total) %>%
+    dplyr::select(-total)
+
+  # --- Step 4: Handle x ordering ---
+  if (!is.null(x_order)) {
+    percent_data <- percent_data %>%
+      dplyr::mutate(!!x_sym := factor(.data[[x_name]], levels = x_order))
+  }
+
+  # --- Step 5: Enforce stack order from palette ---
+  if (!is.null(palette) && !is.null(names(palette))) {
+    percent_data[[fill_name]] <- factor(
+      percent_data[[fill_name]],
+      levels = names(palette)
+    )
+  }
+
+  # --- Step 6: Compute total counts for bar-top labels ---
+  bar_totals <- percent_data %>%
+    dplyr::group_by(!!x_sym) %>%
+    dplyr::summarise(
+      n = sum(count, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    #dplyr::mutate(label = paste0("n = ", n))
+    dplyr::mutate(label = n)
+
+  # --- Step 7: Build plot ---
+  p <- ggplot2::ggplot(percent_data,
+              ggplot2::aes(x = !!x_sym,
+                           y = percent,
+                           fill = !!fill_sym)) +
+    ggplot2::geom_bar(stat = "identity",
+             position = "stack",
+             width = 0.9,
+             color = "black") +
+    ggplot2::geom_text(
+      data = bar_totals,
+      ggplot2::aes(x = !!x_sym, y = 100, label = label),
+      inherit.aes = FALSE,
+      vjust = -0.5,
+      size = 4
+    ) +
+    ggplot2::labs(
+      title = title,
+      x = NULL,
+      y = "Percentage (%)",
+      fill = if (show_legend) legend_title else NULL
+    ) +
+    ggplot2::scale_y_continuous(
+      #limits = c(0, 110),   # room for top labels
+      #expand = ggplot2::expansion(mult = c(0, 0.05))
+      breaks = seq(0, 100, 25),
+      labels = scales::label_number(scale = 1),
+      expand = expansion(mult = c(0, 0.10))
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      legend.position = if (show_legend) "right" else "none",
+      axis.text.x = ggplot2::element_text(angle = 0)
+    )
+
+  # --- Step 8: Apply custom palette ---
+  if (!is.null(palette)) {
+    p <- p +
+      ggplot2::scale_fill_manual(
+        values = palette,
+        drop = FALSE,
+        na.value = "white"
+      )
+  }
+
+  return(p)
+}
+
+
+## Functions for heatmaps
+# 1) Function to plot heatmaps for noncoding regions at Nt level
+plot_heatmap_noncoding <- function(data,
+                                   pos_col = "genome_nt_mut_pos",
+                                   sub_col = "genome_nt_mut_sub",
+                                   wt_col = "genome_nt_mut_wt",
+                                   value_col = "fitness_final",
+                                   plot_title = "",
+                                   show_legend = TRUE,
+                                   show_title = TRUE,
+                                   x_label = "WT Nucleotides", # Add custom X label
+                                   y_label = "Mutants" # Add custom Y label
+                                   ) {
+  
+  # Convert to symbols
+  pos_sym <- rlang::sym(pos_col)
+  sub_sym <- rlang::sym(sub_col)
+  wt_sym  <- rlang::sym(wt_col)
+  val_sym <- rlang::sym(value_col)
+  
+  # Base plot
+  p <- ggplot(data, aes(x = !!pos_sym, y = !!sub_sym, fill = !!val_sym)) +
+    geom_tile(color = "white", width = 1, height = 1) +
+    coord_fixed() +
+    
+    # Mark WT
+    geom_point(
+      aes(x = !!pos_sym, y = !!wt_sym),
+      shape = 4, size = 0.8, color = "black", stroke = 0.6,
+      inherit.aes = FALSE
+    ) +
+    
+    # Color scale
+    scale_fill_gradientn(
+      colors = c("darkred", "red", "gray88", "blue"),
+      values = scales::rescale(c(-1, 0, 1, 1.5)),
+      limits = c(-1, 1.5),
+      name = value_col,
+      na.value = "white",
+      guide = if (show_legend) guide_colorbar(
+        barwidth = 10,
+        barheight = 1,
+        direction = "horizontal",
+        ticks.colour = "black",
+        title.position = "top",
+        title.hjust = 0.5
+      ) else "none"
+    ) +
+    
+    # X axis: WT letters
+    scale_x_continuous(
+      breaks = data[[pos_col]],
+      labels = data[[wt_col]],
+      expand = c(0, 0)
+    ) +
+    
+    # Y axis
+    scale_y_discrete(expand = c(0, 0)) +
+    
+    # Theme
+    theme_minimal(base_size = 12) +
+    theme(
+      axis.text.x = element_text(hjust = 1, vjust = 0.5),
+      axis.text.y = element_text(vjust = 0.5),
+      axis.title.x = element_text(face = "bold", size = 12),
+      axis.title.y = element_text(face = "bold", size = 12),
+      panel.grid = element_blank(),
+      legend.position = if (show_legend) "right" else "none",
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      plot.margin = margin(10, 10, 10, 10)
+    )
+
+  # Add title if needed
+  if (show_title) {
+    p <- p + ggtitle(plot_title)
+  }
+
+  # Set x and y axis labels if provided
+  if (!is.null(x_label)) {
+    p <- p + xlab(x_label)
+  }
+  if (!is.null(y_label)) {
+    p <- p + ylab(y_label)
+  }
+
+  return(p)
+}
+
+
+# 2) Function for heatmaps with a color for the wt blocks 
+plot_heatmap_noncoding_colored_wt <- function(data,
+                                   pos_col = "genome_nt_mut_pos",
+                                   sub_col = "genome_nt_mut_sub",
+                                   wt_col = "genome_nt_mut_wt",
+                                   value_col = "fitness_final",
+                                   plot_title = "",
+                                   show_legend = TRUE,
+                                   show_title = TRUE,
+                                   x_label = "WT Nucleotides",
+                                   y_label = "Mutants",
+                                   wt_value = 1.0,
+                                   wt_shape = 21,
+                                   wt_size = 0.8) {
+  
+  library(dplyr)
+  library(ggplot2)
+  library(rlang)
+  
+  # ---- symbols ----
+  pos_sym <- sym(pos_col)
+  sub_sym <- sym(sub_col)
+  wt_sym  <- sym(wt_col)
+  val_sym <- sym(value_col)
+  
+  # ---- 1) Create WT rows ----
+  wt_rows <- data %>%
+    distinct(!!pos_sym, !!wt_sym) %>%
+    mutate(
+      !!sub_sym := .data[[wt_col]],
+      !!val_sym := wt_value,
+      is_wt = TRUE
+    )
+  
+  # ---- 2) Combine data ----
+  data_plot <- bind_rows(
+    data %>% mutate(is_wt = FALSE),
+    wt_rows
+  )
+  
+  # ---- 3) X-axis mapping (stable & unique) ----
+  x_map <- data %>%
+    distinct(!!pos_sym, !!wt_sym) %>%
+    arrange(!!pos_sym)
+  
+  # ---- 4) Plot ----
+  p <- ggplot(data_plot, aes(
+    x = !!pos_sym,
+    y = !!sub_sym,
+    fill = !!val_sym
+  )) +
+    
+    geom_tile(color = "white", width = 1, height = 1) +
+    
+    # ---- WT overlay ----
+    geom_point(
+      data = dplyr::filter(data_plot, is_wt),
+      aes(x = !!pos_sym, y = !!sub_sym),
+      shape = wt_shape,
+      size = wt_size,
+      stroke = 0.5,
+      color = "black",
+      fill = "white",
+      inherit.aes = FALSE
+    ) +
+    
+    coord_fixed() +
+    
+    # ---- Color scale ----
+    scale_fill_gradientn(
+      colors = c("darkred", "red", "gray88", "blue"),
+      values = scales::rescale(c(-1, 0, 1, 1.5)),
+      limits = c(-1, 1.5),
+      name = value_col,
+      na.value = "white",
+      guide = if (show_legend) guide_colorbar(
+        barwidth = 10,
+        barheight = 1,
+        direction = "horizontal",
+        title.position = "top",
+        title.hjust = 0.5
+      ) else "none"
+    ) +
+    
+    # ---- X axis ----
+    scale_x_continuous(
+      breaks = x_map[[pos_col]],
+      labels = x_map[[wt_col]],
+      expand = c(0, 0)
+    ) +
+    
+    # ---- Y axis ----
+    scale_y_discrete(expand = c(0, 0)) +
+    
+    # ---- Theme ----
+    theme_minimal(base_size = 12) +
+    theme(
+      axis.text.x = element_text(hjust = 1, vjust = 0.5),
+      axis.text.y = element_text(vjust = 0.5),
+      axis.title.x = element_text(face = "bold"),
+      axis.title.y = element_text(face = "bold"),
+      panel.grid = element_blank(),
+      legend.position = if (show_legend) "right" else "none",
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      plot.margin = margin(10, 10, 10, 10)
+    )
+  
+  # ---- Title ----
+  if (show_title) {
+    p <- p + ggtitle(plot_title)
+  }
+  
+  # ---- Axis labels ----
+  if (!is.null(x_label)) {
+    p <- p + xlab(x_label)
+  }
+  if (!is.null(y_label)) {
+    p <- p + ylab(y_label)
+  }
+  
+  return(p)
+}
+
+
+
+
+
+```
+
+
+
+## Load data
+### 1) load all and 1nt variants
+```{r}
+## all variants
+load("./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat.RData")
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat), 0)
+nrow(phix_all_dms_sub_libraries_normalized_unique_stat)
+# [1] 44195
+
+
+## 1nt Data
+## Load 1nt DMS data after Statistic tests
+load("./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_1nt.RData")
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_1nt), 0)
+nrow(phix_all_dms_sub_libraries_normalized_unique_stat_1nt)
+# [1] 16098
+
+
+
+```
+
+
+### 2) get 1nt Synonymous reference
+  - for collapsing 1nt mutations data
+  - for plotting volcano plots
+
+```{r}
+## 1nt Data
+filtered_data_1nt_synonymous <- phix_all_dms_sub_libraries_normalized_unique_stat %>%
+  filter(genome_nt_mut_ham == 1, phix_aa_mut_class == "Synonymous", !is.na(fitness_final))
+
+# get weighted.mean of all 1nt synonymous mutations;
+phix_1nt_synonymous_combined_weights <- 1 / (filtered_data_1nt_synonymous$sigma_final^2)  # Weights are the inverse of variance
+phix_1nt_synonymous_combined_fitness_final <- sum(filtered_data_1nt_synonymous$fitness_final * phix_1nt_synonymous_combined_weights) / sum(phix_1nt_synonymous_combined_weights) 
+# [1] 0.978221
+phix_1nt_synonymous_combined_sigma_final <- sqrt(1/sum(phix_1nt_synonymous_combined_weights)) 
+# [1] 0.0002813241
+
+
+
+```
+
+
+### 3) look-up table for 1aa synonymous mutations
+To quantify how many 1aa synonymous mutations have codons fall into nt-level regulatory elements
+
+```{r}
+# check data 
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat), 0)
+
+# look-up table
+phix_1aa_syn_genome_nt_look_up <- phix_all_dms_sub_libraries_normalized_unique_stat %>%
+  filter(!is.na(genome_nt_pos_annotation), phix_aa_mut_class == "Synonymous") %>%
+  select(phix_aa_mut_class, phix_aa_mut_ID, genome_nt_pos_RBS, genome_nt_pos_RBS_gene, genome_nt_pos_promoter, genome_nt_pos_promoter_gene, genome_nt_pos_promoter_anti_sense, genome_nt_pos_terminator, genome_nt_pos_terminator_gene, genome_nt_pos_ori, genome_nt_pos_annotation)
+
+nrow(phix_1aa_syn_genome_nt_look_up)
+# [1] 123
+
+phix_1aa_syn_genome_nt_look_up_unique <- phix_1aa_syn_genome_nt_look_up %>%
+  separate_rows(phix_aa_mut_ID, sep = ",") %>%
+  mutate(phix_aa_mut_ID = trimws(phix_aa_mut_ID)) %>%
+  distinct()
+
+nrow(phix_1aa_syn_genome_nt_look_up_unique)
+# [1] 49
+
+
+## Saving the advanced proteome data.frame
+#save(phix_1aa_syn_genome_nt_look_up_unique, file = "./data/proteins_data/plotting_data/phix_1aa_syn_genome_nt_look_up_unique.RData")
+write_tsv(phix_1aa_syn_genome_nt_look_up_unique, file = "./data/proteins_data/plotting_data/phix_1aa_syn_genome_nt_look_up_unique.tsv")
+
+
+
+```
+
+
+
+## Process 1nt variants
+1) update 1nt mut data and annotations
+2) process 1nt mut data to get nucleotide residue level data
+  - FUNCTION: collapse_nt_to_position
+3) statistic tests 
+
+```{r}
+# Check data
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_1nt), 0)
+table(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$mutation_category_FDR_lethal_1nt)
+
+
+# 1) updated 1nt variants data 
+phix_all_dms_sub_unique_1nt_annotated <- annotate_1nt_mutations(phix_all_dms_sub_libraries_normalized_unique_stat_1nt)
+
+
+table(phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_nucleotide_class)
+#            Coding          Noncoding Overlapping Coding 
+#             13021                636               2441 
+
+table(phix_all_dms_sub_unique_1nt_annotated$mutation_category_FDR_1nt)
+# Beneficial     Neutral Detrimental 
+#        176        7693        8229 
+
+table(phix_all_dms_sub_unique_1nt_annotated$mutation_category_FDR_1nt[!is.na(phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_noncoding_regions)])
+# Beneficial     Neutral Detrimental 
+#         41         473         122 
+
+table(phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_annotation)
+#       Ori (+)           Promoter                RBS       RBS,Promoter     RBS,Terminator         Terminator Terminator,Ori (-)  Unknown Noncoding 
+#            90                381                120                  6                 33                411                130                269 
+
+
+
+# 2) get 1nt residues data 
+phix_all_dms_sub_unique_1nt_pos_annotated <- phix_all_dms_sub_unique_1nt_annotated %>%
+  select(dplyr::any_of(nt_position_cols)) %>%
+  collapse_nt_to_position(wt_reference = phix_1nt_synonymous_combined_fitness_final)
+
+
+table(phix_all_dms_sub_unique_1nt_pos_annotated$genome_nt_pos_nucleotide_class)
+#         Coding          Noncoding Overlapping Coding 
+#           4355                217                814 
+
+table(phix_all_dms_sub_unique_1nt_pos_annotated$genome_nt_pos_nucleotide_category)
+#       Essential        Sensitive         Tolerant Unable to define 
+#            2588             1102             1664               32 
+
+write_tsv(phix_all_dms_sub_unique_1nt_pos_annotated, file = "./data/fitness_data/phix_all_dms_sub_unique_1nt_pos_annotated.tsv")
+# renamed 'Supplementary_file_phix_1nt_residues.tsv'
+
+
+
+
+```
+
+
+
+## Statistics
+- global category: Chi-square
+```{r}
+# checking data 
+head(as.data.frame(phix_all_dms_sub_unique_1nt_annotated), 2)
+head(as.data.frame(phix_all_dms_sub_unique_1nt_pos_annotated), 0)
+
+
+# 1) mutations
+phix_genome_chisq_test <- run_chisq_test(
+  phix_all_dms_sub_unique_1nt_annotated,
+  #phix_all_dms_sub_unique_1nt_annotated[phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_noncoding == "Noncoding",],
+  #phix_all_dms_sub_unique_1nt_pos_annotated,
+  
+  #genome_nt_pos_wt,
+  genome_nt_pos_nucleotide_class,
+  
+  #mutation_category_FDR_lethal_1nt, 
+  mutation_category_FDR_1nt,
+  
+  dataset="Genome 1nt Mutations", 
+  
+  gene="all"
+  )
+
+phix_genome_chisq_test$summary
+view(phix_genome_chisq_test$summary)
+
+
+# 2) residues
+phix_genome_chisq_test <- run_chisq_test(
+  phix_all_dms_sub_unique_1nt_pos_annotated,
+  
+  #aa_mut_gene, 
+  #aa_mut_class, 
+  genome_nt_pos_nucleotide_class,
+  
+  genome_nt_pos_nucleotide_category,
+  
+  dataset="Genome 1nt Residues", 
+  
+  gene="all"
+  )
+
+phix_genome_chisq_test$summary
+view(phix_genome_chisq_test$summary)
+
+
+
+```
+
+
+
+## Summary 
+Summary 1nt mutation and residue data
+  - FUNCTION: 'generate_mutation_category_summary'
+
+### 1) 1nt mutations
+  - $mutation_category_FDR_lethal_1nt
+```{r}
+# Check data
+head(as.data.frame(phix_all_dms_sub_unique_1nt_annotated), 0)
+#head(as.data.frame(phix_all_dms_sub_unique_1nt_pos_annotated), 0)
+
+
+# Run the Summary Function 
+# 1) all 1nt mut
+summary_1nt_mut <- generate_mutation_category_summary(
+  phix_all_dms_sub_unique_1nt_annotated,
+  
+  class_col = c("genome_nt_pos_nucleotide_class"),
+  #class_col = c("genome_nt_pos_coding"),
+  #class_col = c("genome_nt_mut_wt"),
+  #class_col = c("genome_nt_mut_base_type"),
+  #class_col = c("genome_nt_mut_wt_type", "genome_nt_mut_sub_type", "genome_nt_mut_base_type"),
+  #class_col = c("genome_nt_mut_wt", "genome_nt_pos_nucleotide_class", "genome_nt_mut_wt_type", "genome_nt_mut_sub_type", "genome_nt_mut_base_type"),
+  
+  #category_col = "mutation_category_FDR_1nt"
+  category_col = "mutation_category_FDR_lethal_1nt"
+  #category_col = "mutation_category_FDR_cutoff_1nt"
+  #category_col = "mutation_category_FDR_cutoff_1nt_combined"
+)
+
+#write_tsv(summary_1nt_mut, file = "./data/summary_tables/summary_1nt_mut.tsv")
+
+
+# 2) noncoding 1nt mut 
+summary_1nt_noncoding_mut <- generate_mutation_category_summary(
+  phix_all_dms_sub_unique_1nt_annotated[phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_nucleotide_class == "Noncoding",],
+  #phix_all_dms_sub_unique_1nt_annotated[phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_nucleotide_class == "Noncoding" & phix_all_dms_sub_unique_1nt_annotated$mutation_category_FDR_1nt == "Detrimental",],
+  #phix_all_dms_sub_unique_1nt_annotated[phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_nucleotide_class == "Noncoding" & phix_all_dms_sub_unique_1nt_annotated$mutation_category_FDR_1nt == "Beneficial",],
+  
+  #phix_all_dms_sub_unique_1nt_annotated[phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_nucleotide_class == "Noncoding" & phix_all_dms_sub_unique_1nt_annotated$genome_nt_mut_pos %in% c(3950:3955),],
+  #phix_all_dms_sub_unique_1nt_annotated[phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_nucleotide_class == "Noncoding" & phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_annotation_combined == "Promoter",],
+  
+  #class_col = c("phix_aa_mut_genes"),
+  #class_col = c("genome_nt_mut_wt"),
+  class_col = c("genome_nt_pos_annotation"),
+  #class_col = c("genome_nt_mut_wt", "genome_nt_pos_annotation_combined"),
+  #class_col = c("genome_nt_pos_nucleotide_class"),
+  #class_col = c("genome_nt_pos_noncoding_regions"),
+  #class_col = c("genome_nt_pos_annotation_combined"),
+  #class_col = c("phix_aa_mut_genes", "genome_nt_pos_noncoding_regions", "genome_nt_pos_annotation_combined"),
+  #class_col = c("phix_aa_mut_genes", "genome_nt_mut_wt", "genome_nt_pos_nucleotide_class", "genome_nt_mut_wt_type", "genome_nt_mut_sub_type", "genome_nt_mut_base_type"),
+  
+  #class_col = c("mutation_category_FDR_1nt"),
+  
+  #category_col = "genome_nt_pos_annotation"
+  #category_col = "genome_nt_pos_annotation_combined"
+  
+  #category_col = "mutation_category_FDR_1nt"
+  category_col = "mutation_category_FDR_lethal_1nt"
+  #category_col = "mutation_category_FDR_cutoff_1nt"
+  #category_col = "mutation_category_FDR_cutoff_1nt_combined"
+)
+
+#write_tsv(summary_1nt_noncoding_mut, file = "./data/summary_tables/summary_1nt_noncoding_mut.tsv")
+
+
+# 3) detrimental noncoding 1nt mut
+#summary_1nt_noncoding_mut_deleterious <- generate_mutation_category_summary(
+  #phix_all_dms_sub_unique_1nt_annotated[phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_nucleotide_class == "Noncoding" & phix_all_dms_sub_unique_1nt_annotated$mutation_category_FDR_lethal_1nt %in% c("Detrimental", "Lethal"),],
+  
+  #class_col = c("phix_aa_mut_genes"),
+  #class_col = c("genome_nt_pos_annotation"),
+  #class_col = c("genome_nt_pos_annotation_combined"),
+  #class_col = c("phix_aa_mut_genes", "genome_nt_pos_annotation"),
+  #class_col = c("genome_nt_mut_wt", "phix_aa_mut_genes", "genome_nt_pos_annotation", "genome_nt_pos_noncoding_regions", "genome_nt_pos_annotation_combined"),
+  
+  #total_count = 21223,
+ 
+  #category_col = "mutation_category_FDR_1nt"
+  #category_col = "mutation_category_FDR_lethal_1nt"
+  #category_col = "mutation_category_FDR_cutoff_1nt"
+  #category_col = "mutation_category_FDR_cutoff_1nt_combined"
+)
+
+
+
+
+
+
+```
+
+
+
+### 2) 1nt residues
+  - $genome_nt_pos_nucleotide_category
+```{r}
+# Check data
+#head(as.data.frame(phix_all_dms_sub_unique_1nt_annotated), 0)
+head(as.data.frame(phix_all_dms_sub_unique_1nt_pos_annotated), 0)
+
+
+# 1) all 1nt nucleotide
+summary_1nt_pos_essential_category <- generate_mutation_category_summary(
+  phix_all_dms_sub_unique_1nt_pos_annotated,
+  
+  class_col = "genome_nt_pos_nucleotide_class",
+  #class_col = c("genome_nt_pos_nucleotide_class", "genome_nt_pos_annotation_combined"),
+  #class_col = c("phix_aa_mut_genes", "genome_nt_pos_annotation", "genome_nt_pos_factor_plot"),
+  
+  #total_count = 21223,
+ 
+  category_col = "genome_nt_pos_nucleotide_category"
+)
+
+#write_tsv(summary_1nt_pos_essential_category, file = "./data/summary_tables/summary_1nt_pos_essential_category.tsv")
+
+
+# 2) noncoding 1nt nucleotide 
+summary_1nt_pos_noncoding_essential_category <- generate_mutation_category_summary(
+  phix_all_dms_sub_unique_1nt_pos_annotated[!is.na(phix_all_dms_sub_unique_1nt_pos_annotated$genome_nt_pos_noncoding),],
+  
+  class_col = c("phix_aa_mut_genes"),
+  #class_col = "genome_nt_pos_nucleotide_class",
+  
+  #total_count = 21223,
+ 
+  category_col = "genome_nt_pos_nucleotide_category"
+)
+
+
+
+```
+
+
+
+## Plots
+### 1) Volcano plots (Statistics)
+Fitness effects and statistical significance
+```{r}
+## check data
+head(as.data.frame(phix_all_dms_sub_unique_1nt_plotting), 0)
+table(phix_all_dms_sub_unique_1nt_plotting$mutation_category_FDR_1nt)
+
+head(as.data.frame(phix_all_dms_sub_unique_AA_plotting), 0)
+
+
+## Volcano plot - All Nucleotide Substitution Vatiants
+volcano_sub <- plot_volcano(
+  phix_all_dms_sub_unique_1nt_annotated,
+  
+  x_col = "fitness_final", 
+  
+  y_col = "p_value_1nt_two_sample_ttest_syn_FDR", 
+  
+  #color_col = "mutation_category_FDR",
+  #color_col = "mutation_category_FDR_lethal",
+  
+  #color_col = "mutation_category_FDR_1nt",
+  color_col = "mutation_category_FDR_lethal_1nt",
+  
+  x_lim = c(-1, 1.5), 
+  y_lim = c(0, 2.7), 
+  
+  #plot_title = "All Substitutions (n=44195)"
+  #plot_title = "Nonoverlapping AA Substitutions (AA ham < 2) (n=35227)"
+  plot_title = "Single Nucleotide Variants (n=16098)"
+  #plot_title = "Amino Acid Variants (n=40358)"
+  ) + 
+  geom_vline(xintercept = phix_1nt_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
+  geom_vline(xintercept = 0.5*phix_1nt_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")  # FDR threshold line
+print(volcano_sub)
+
+
+
+# Saving
+#ggsave(volcano_sub, filename = "./plots/volcano_1nt.pdf", width = 3, height = 3)
+
+
+
+```
+
+
+
+### 2) donut plot
+Mutation category, proportion of detrimental mutations (Figure 1)
+```{r}
+## Plotting
+donut_plot_phix_mut <- plot_donut_percent(
+  summary_1nt_mut,
+  #summary_phix_sub_mut_1nt, 
+  
+  #summary_phix_sub_mut_AA,
+  #summary_phix_sub_mut_AA_nonover,
+  
+  category_col = mutation_category_FDR_lethal_1nt,
+  
+  count_col = count,
+  title = NULL,
+  palette = c(
+    "Beneficial"="#A1A9D0",
+    "Neutral"="#D9D9D9",
+    "Detrimental"="#F4A6A6",
+    "Lethal"="#F0988C"
+    )
+  )
+print(donut_plot_phix_mut)
+
+
+## Saving
+ggsave(donut_plot_phix_mut, filename = "./plots/donut_plot_phix_mut_1nt.pdf", width = 3, height = 3)
+
+
+```
+
+Nucleotide residue category, proportion of essential nucleotide residues (Figure S1)
+```{r}
+# checking 
+head(as.data.frame(summary_1nt_pos_essential_category), 0)
+table(summary_1nt_pos_essential_category$genome_nt_pos_nucleotide_category)
+
+
+# plotting
+donut_plot_genome_nt <- plot_donut_percent(
+  df = summary_1nt_pos_essential_category,
+  #df = summary_1nt_pos_essential_category[summary_1nt_pos_essential_category$genome_nt_pos_nucleotide_class == "Noncoding",],
+  
+  #category_col = genome_nt_pos_factor_plot, 
+  #category_col = genome_nt_pos_annotation_combined,
+  category_col = genome_nt_pos_nucleotide_category,
+  
+  count_col = count,
+  
+  #title = "Amino Acid Mutations Category",
+  
+  #palette = c(
+    #"Beneficial"="#A1A9D0",
+    #"Neutral"="#D9D9D9",
+    #"Detrimental"="#F4A6A6",
+    #"Lethal"="#F0988C"
+    #)
+  
+  palette = c(
+    "Unable to define" = "#2B82AC",  
+    "Tolerant"         = "#DFCBBC",  
+    "Sensitive"        = "#EDB01D",  
+    "Essential"        = "#CD6143"
+    )
+  )
+print(donut_plot_genome_nt)
+
+
+## Saving
+ggsave(donut_plot_genome_nt, filename = "./plots/donut_plot_genome_nt_category.pdf", width = 3, height = 3)
+
+
+```
+
+
+
+### 3) stacked bar plot
+Mutation category, proportion of detrimental mutations across genomic regions (Figure 1)
+```{r}
+# check data 
+head(as.data.frame(summary_1nt_noncoding_mut), 0)
+table(summary_1nt_noncoding_mut$mutation_category_FDR_lethal_1nt)
+
+## Plotting
+bar_stacked_proteome_1nt_mut <- bar_percent_stacked_genome(
+  #summary_1nt_mut,
+  summary_1nt_noncoding_mut,
+  
+  #class_col = genome_nt_mut_wt,
+  #class_col = genome_nt_pos_nucleotide_class,
+  #class_col = genome_nt_pos_noncoding_regions,
+  class_col = genome_nt_pos_annotation,
+
+  category_col = mutation_category_FDR_lethal_1nt,
+  #category_col = mutation_category_FDR_lethal,
+  
+  count_col = count,
+  percent_col = percent,
+  
+  #plot_title = "Substitution Mutations category by Secondary Structures",
+  fill_legend_title = "Mutation Category",
+  
+  #x_order = c("multi_orf", "single_orf"),
+  #facet_col = "aa_mut_gene",
+  
+  #stat_df = NULL,
+  #stat_p_col = "p_value",
+  #stat_group_col = NULL,
+  #stat_format = c("p", "stars"),
+  #stat_position = c("subtitle", "caption", "none")
+  
+  ) +
+  theme(legend.position = "none")
+print(bar_stacked_proteome_1nt_mut)
+
+
+## Saving
+#ggsave(bar_stacked_proteome_1nt_mut, filename = "./plots/bar_stacked_genome_1nt_mut.pdf", width = 3, height = 3)
+#ggsave(bar_stacked_proteome_1nt_mut, filename = "./plots/bar_stacked_noncoding_1nt_mut.pdf", width = 5, height = 4)
+
+
+
+
+
+
+```
+
+Nucleotide residue category, proportion of essential nucleotide residues across genomic regions (Figure S1)
+```{r}
+## Check Data
+# checking 
+head(as.data.frame(summary_1nt_pos_essential_category), 0)
+table(summary_1nt_pos_essential_category$genome_nt_pos_nucleotide_category)
+
+
+## Plot the Nucleotide Category by proteins
+bar_stacked_genome_nt_category <- bar_percent_stacked_genome_nucleotide(
+  data = summary_1nt_pos_essential_category,
+  #data = summary_1nt_pos_essential_category[summary_1nt_pos_essential_category$genome_nt_pos_nucleotide_class == "Noncoding",],
+  
+  #x_col = phix_aa_mut_genes,
+  x_col = genome_nt_pos_nucleotide_class,
+  #x_col = genome_nt_pos_annotation_combined,
+  
+  #fill_col = genome_nt_pos_annotation_combined,
+  fill_col = genome_nt_pos_nucleotide_category,
+  
+  #factor_col = "genome_nt_pos_factor_plot",
+  
+  palette = c(
+    "Unable to define" = "#2B82AC",  
+    "Tolerant"         = "#DFCBBC",  
+    "Sensitive"        = "#EDB01D",  
+    "Essential"        = "#CD6143"
+    ),
+  
+  x_order = c("Overlapping Coding", "Coding", "Noncoding"),
+  
+  show_legend = FALSE
+)
+print(bar_stacked_genome_nt_category)
+
+
+## Saving
+ggsave(bar_stacked_genome_nt_category, filename = "./plots/bar_stacked_genome_nt_category.pdf", width = 2, height = 2)
+
+
+
+```
+
+
+
+### 4) Noncoding region heatmaps
+```{r}
+## Subset Noncoding 1nt DMS data 
+head(as.data.frame(phix_all_dms_sub_unique_1nt_annotated), 0)
+table(phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_noncoding)
+# Noncoding 
+#       636 
+
+phix_dms_sub_unique_1nt_noncoding_cols <- phix_all_dms_sub_unique_1nt_annotated %>%  # 651 rows
+  filter(!is.na(genome_nt_pos_noncoding)) %>%
+  select(
+    genome_nt_mut_pos,
+    genome_nt_mut_sub,
+    genome_nt_mut_wt,
+    genome_mut_ID_nt,
+    genome_nt_pos_structural,
+    genome_nt_pos_overlap_orf,
+    genome_nt_pos_coding,
+    fitness_final,
+    sigma_final,
+    phix_aa_mut_genes,
+    genome_nt_pos_ori,
+    genome_nt_pos_RBS,
+    genome_nt_pos_RBS_gene,
+    genome_nt_pos_promoter,
+    genome_nt_pos_promoter_gene,
+    genome_nt_pos_promoter_anti_sense,
+    genome_nt_pos_terminator,
+    genome_nt_pos_terminator_gene,
+    genome_nt_pos_annotation,
+    genome_nt_pos_annotation_combined
+  ) %>%
+  mutate(genome_nt_mut_pos = as.numeric(genome_nt_mut_pos))
+
+table(phix_dms_sub_unique_1nt_noncoding_cols$phix_aa_mut_genes)
+# Noncoding#1 J-F Noncoding#2 F-G Noncoding#3 G-H Noncoding#4 H-A 
+#             108             325              24             179 
+
+
+# Subset different Noncoding data.frames 
+phix_dms_sub_unique_1nt_noncoding1_cols <- phix_dms_sub_unique_1nt_noncoding_cols %>%
+  filter(phix_aa_mut_genes == "Noncoding#1 J-F")
+phix_dms_sub_unique_1nt_noncoding2_cols <- phix_dms_sub_unique_1nt_noncoding_cols %>%
+  filter(phix_aa_mut_genes == "Noncoding#2 F-G")
+phix_dms_sub_unique_1nt_noncoding3_cols <- phix_dms_sub_unique_1nt_noncoding_cols %>%
+  filter(phix_aa_mut_genes == "Noncoding#3 G-H")
+phix_dms_sub_unique_1nt_noncoding4_cols <- phix_dms_sub_unique_1nt_noncoding_cols %>%
+  filter(phix_aa_mut_genes == "Noncoding#4 H-A")
+
+
+# Plotting Noncoding Heatmaps
+heatmap_non1 <- plot_heatmap_noncoding_colored_wt(phix_dms_sub_unique_1nt_noncoding1_cols, 
+                                       plot_title = "Fitness Heatmap - Noncoding region between gene J-F",
+                                       show_legend = FALSE, show_title = FALSE, wt_value = 0.9807835,wt_shape = 4)
+print(heatmap_non1) # 36 positions
+ggsave(heatmap_non1, filename = "./plots/heatmap_non1_substitutions.pdf", width = 4, height = 2)
+
+heatmap_non2 <- plot_heatmap_noncoding_colored_wt(phix_dms_sub_unique_1nt_noncoding2_cols, 
+                                       plot_title = "Fitness Heatmap - Noncoding region between gene F-G",
+                                       show_legend = FALSE, show_title = FALSE, wt_value = 0.9807835,wt_shape = 4)
+print(heatmap_non2) # 110 positions
+ggsave(heatmap_non2, filename = "./plots/heatmap_non2_substitutions.pdf", width = 12, height = 2)
+
+heatmap_non3 <- plot_heatmap_noncoding_colored_wt(phix_dms_sub_unique_1nt_noncoding3_cols, 
+                                       plot_title = "Fitness Heatmap - Noncoding region between gene G-H",
+                                       show_legend = FALSE, show_title = FALSE, wt_value = 0.9807835,wt_shape = 4)
+print(heatmap_non3) # 8 positions
+ggsave(heatmap_non3, filename = "./plots/heatmap_non3_substitutions.pdf", width = 1.5, height = 2)
+
+heatmap_non4 <- plot_heatmap_noncoding_colored_wt(phix_dms_sub_unique_1nt_noncoding4_cols, 
+                                       plot_title = "Fitness Heatmap - Noncoding region between gene H-A",
+                                       show_legend = TRUE, show_title = FALSE, wt_value = 0.9807835,wt_shape = 4)
+print(heatmap_non4) # 63 positions 
+ggsave(heatmap_non4, filename = "./plots/heatmap_non4_substitutions.pdf", width = 9, height = 2)
+
+
+
+```
+
+
+
+### 5) Circular genomic heatmap 
+Outside annotation - add Heatmap - add residue axis
+
+#### 1) Coding regions
+```{r}
+## 
+# Load necessary libraries
+#library(circlize)
+
+# 1. Build genome annotation data frame
+phix_genome_length <- 5386
+phix_coding <- data.frame(
+  pos = 1:phix_genome_length,
+  coding = 0,
+  overlapping = 0
+)
+
+# 2. Annotate coding regions
+phix_coding$coding[phix_coding$pos >= 965 & phix_coding$pos <= 1000] <- 1
+phix_coding$coding[phix_coding$pos >= 2285 & phix_coding$pos <= 2394] <- 1
+phix_coding$coding[phix_coding$pos >= 2923 & phix_coding$pos <= 2930] <- 1
+phix_coding$coding[phix_coding$pos >= 3918 & phix_coding$pos <= 3980] <- 1
+
+# 3. Annotate overlapping regions
+phix_coding$overlapping[phix_coding$pos < 222] <- 2
+phix_coding$overlapping[phix_coding$pos > 389 & phix_coding$pos < 394] <- 2
+phix_coding$overlapping[phix_coding$pos > 567 & phix_coding$pos < 844] <- 2
+phix_coding$overlapping[phix_coding$pos == 848] <- 2
+phix_coding$overlapping[phix_coding$pos > 5074] <- 2
+
+# Quick checks (optional)
+message("Coding summary:"); print(table(phix_coding$coding))
+message("Overlapping summary:"); print(table(phix_coding$overlapping))
+
+# 4. Prepare for circos heatmap
+phix_coding_matrix <- as.matrix(phix_coding[, c("coding", "overlapping")])
+rownames(phix_coding_matrix) <- phix_coding$pos
+
+# 5. Plot circular heatmap
+circos.clear()
+circos.par(start.degree = 90, gap.degree = 0)
+col_phix_coding <- colorRamp2(c(0, 1, 2), c("white", "gray", "black"))
+
+circos.heatmap(
+  phix_coding_matrix,
+  cluster = FALSE,
+  col = col_phix_coding,
+  track.height = 0.05
+)
+
+
+
+```
+
+
+#### 2) 1nt Mut Fitness Heatmaps
+```{r}
+## Subset columns from the 1nt substitution data for circular heatmap
+#head(as.data.frame(phix_all_dms_sub_unique_1nt_plotting), 0)
+head(as.data.frame(phix_all_dms_sub_unique_1nt_annotated), 0)
+phix_dms_sub_unique_1nt_circle <- phix_all_dms_sub_unique_1nt_pos_annotated %>%
+  select(genome_nt_mut_pos1, genome_nt_mut_sub, fitness_final)
+range(phix_dms_sub_unique_1nt_circle$fitness_final)
+
+# Reshape and convert to matrix for circular heatmap
+phix_matrix <- phix_dms_sub_unique_1nt_circle %>%
+  #filter(genome_nt_mut_pos1 %in% c(3918:5386)) %>%
+  dcast(genome_nt_mut_pos1 ~ genome_nt_mut_sub, value.var = "fitness_final") %>%
+  arrange(genome_nt_mut_pos1) %>%
+  column_to_rownames("genome_nt_mut_pos1") %>%
+  as.matrix()
+
+# Color scale: darkred → red → gray88 → blue
+col_phix <- colorRamp2(c(-1, 0, 1, 1.5), c("darkred", "red", "gray88", "blue"))
+col_phix <- colorRamp2(
+  breaks = c(-1, 0, 1, 1.5),
+  colors = c("darkred", "red", "gray88", "blue")
+)
+
+# Set circos layout parameters
+circos.par(start.degree = 90, gap.degree = 0)
+
+# Plot circular heatmap
+circos.heatmap(
+  phix_matrix,
+  cluster = FALSE,
+  col = col_phix
+)
+
+# Add genome coordinate axis every 500 nt
+circos.axis(
+  h = "bottom",
+  major.at = seq(0, 5386, by = 500),
+  labels = seq(0, 5386, by = 500),
+  labels.cex = 0.6,
+  labels.facing = "inside",
+  direction = "inside",
+  minor.ticks = 0,
+  labels.pos.adjust = TRUE
+)
+
+#Add correct legend with matching limits
+lgd <- Legend(
+  title = "Fitness",
+  col_fun = col_phix,
+  at = c(-1, 0, 1, 1.5),  # Explicit breakpoints
+  labels = c("-1", "0", "1", "1.5"),
+  direction = "horizontal"
+)
+grid.newpage()
+draw(lgd)
+
+circos.clear()
+
+
+```
+
+
+#### 3) ORF annotations
+```{r}
+library(circlize)
+
+# 1. Clear any existing plot and define gene annotations
+circos.clear()
+
+phix_genome_annotation <- data.frame(
+  phix_genome_gene = factor(
+    c("A", "D", "F", "G", "H", "A*", "K", "E", "J", "B", "C"),
+    levels = c("A", "D", "F", "G", "H", "A*", "K", "E", "J", "B", "C")
+  ),
+  phix_gene_end = c(1542, 459, 1284, 528, 987, 1026, 171, 276, 117, 363, 261)
+)
+
+phix_genome_annotation$sector <- "s"
+phix_genome_annotation$sector[c(1:5)]    <- "s1"  # A, D, F, G, H
+phix_genome_annotation$sector[c(6, 8:9)] <- "s2"  # A*, E, J
+phix_genome_annotation$sector[c(10:11)]  <- "s3"  # B, C
+phix_genome_annotation$sector[7]         <- "s4"  # K
+
+xlim_list <- list(
+  s1 = cbind(0, phix_genome_annotation$phix_gene_end[phix_genome_annotation$sector == "s1"]),
+  s2 = cbind(0, phix_genome_annotation$phix_gene_end[phix_genome_annotation$sector == "s2"]),
+  s3 = cbind(0, phix_genome_annotation$phix_gene_end[phix_genome_annotation$sector == "s3"]),
+  s4 = cbind(0, phix_genome_annotation$phix_gene_end[phix_genome_annotation$sector == "s4"])
+)
+
+# Track 1: Initialize and plot for s1
+# 1st track: A, D, F, G, H;
+circos.par(start.degree =184, gap.degree = c(14.4, 10.1, 7.35, 0.5, 4.2)) # Group#1: , gap.degree = c(14.4, 2.4, 7.35, 0.5, 4.2)
+circos.initialize(factors = phix_genome_annotation$phix_genome_gene[phix_genome_annotation$sector == "s1"], xlim = xlim_s1)
+circos.track(ylim = c(0, 1), panel.fun = function(x, y) {
+  circos.arrow(CELL_META$xlim[1], CELL_META$xlim[2], 
+               arrow.head.width = CELL_META$yrange * 0.5, arrow.head.length = cm_x(0.2), 
+               col = "#66C2A5")
+  circos.text(CELL_META$xcenter, CELL_META$ycenter, CELL_META$sector.index, 
+              facing = "downward")
+}, bg.border = NA, track.height = 0.25)
+
+# Track 2: Initialize and plot for s2
+# 2nd track: A*, E, J;
+circos.par(start.degree =150, cell.padding = c(0.02, 0, 0.02, 0), gap.degree = c(28.8, 0.5, 236)) # Group#2: , gap.degree = c(47.5, 236)
+circos.initialize(factors = phix_genome_annotation$phix_genome_gene[phix_genome_annotation$sector == "s2"], xlim = xlim_s2)
+circos.track(ylim = c(0, 1), panel.fun = function(x, y) {
+  circos.arrow(CELL_META$xlim[1], CELL_META$xlim[2], 
+               arrow.head.width = CELL_META$yrange * 0.5, arrow.head.length = cm_x(0.2), 
+               col = "#66C2A5")
+  circos.text(CELL_META$xcenter, CELL_META$ycenter, CELL_META$sector.index, 
+              facing = "downward")
+}, bg.border = NA, track.height = 0.25)
+
+# Track 3: Initialize and plot for s3
+# 3rd track: B, C;
+circos.par(start.degree =110.8, cell.padding = c(0.02, 0, 0.02, 0), gap.degree = c(5.4, 312.8)) # Group#3: , gap.degree = c(5.4, 312.8)
+circos.initialize(factors = phix_genome_annotation$phix_genome_gene[phix_genome_annotation$sector == "s3"], xlim = xlim_s3)
+circos.track(ylim = c(0, 1), panel.fun = function(x, y) {
+  circos.arrow(CELL_META$xlim[1], CELL_META$xlim[2], 
+               arrow.head.width = CELL_META$yrange*0.5, arrow.head.length = cm_x(0.2), 
+               col = "#66C2A5")
+  circos.text(CELL_META$xcenter, CELL_META$ycenter, CELL_META$sector.index, 
+              facing = "downward")
+}, bg.border = NA, track.height = 0.25)
+
+# Track 4: Initialize and plot for s4
+# 4th track: K;
+circos.par(start.degree =87, gap.degree = c(348.5)) # Group#3: , gap.degree = c(23.1, 306.9)
+circos.initialize(factors = phix_genome_annotation$phix_genome_gene[phix_genome_annotation$sector == "s4"], xlim = xlim_s4)
+circos.track(ylim = c(0, 1), panel.fun = function(x, y) {
+  circos.arrow(CELL_META$xlim[1], CELL_META$xlim[2], 
+               arrow.head.width = CELL_META$yrange*0.5, arrow.head.length = cm_x(0.2), 
+               col = "#66C2A5")
+  circos.text(CELL_META$xcenter, CELL_META$ycenter, CELL_META$sector.index, 
+              facing = "downward")
+}, bg.border = NA, track.height = 0.25)
+
+# Done
+circos.clear()
+
+
+```
+
+
+
+
+## Save script checkpoint
+save a snapshot of all objects produced by the script
+
+```{r}
+# checkpoint - 03 statistics, summary of mutation category, and make plots
+# save.image(file = "data/checkpoints/03_single_nucleotide_variants.RData")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
