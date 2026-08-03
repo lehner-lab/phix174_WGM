@@ -1,20 +1,9 @@
 ## R Scripts
-1. Load dependencies and configure the analysis environment (scripts/00_environment_and_dependencies.R;).
-2. Normalize raw fitness values within each library (scripts/01_fitness_data_normalization.R; Inputs: data/01_dimsum_raw_fitness/; Outputs: data/02_normalized_fitness/).
-3. Combine all libraries, statistics and classify variant effects (scripts/02_all_variants_analysis.R; Inputs: data/02_normalized_fitness/; Outputs: data/03_combined_variants/, data/04_single_nucleotide/).
-4. Analyze and plot single-nucleotide variants (scripts/04_single_nucleotide_analysis.R; Inputs: data/04_single_nucleotide/).
-
-
-4. Generate amino-acid variant datasets (scripts/03_generate_amino_acid_variants.R; Inputs: data/03_combined_variants/; Outputs: data/05_single_amino_acid/)
-6. Analyze and plot single-amino-acid variants (scripts/05_single_amino_acid_analysis.R; Inputs: data/05_single_amino_acid/).
-7. Benchmark variant-effect predictors (scripts/06_vep_benchmarking.R; Inputs: data/05_single_amino_acid/; Outputs: data/06_vep_benchmarking/).
-8. Evaluate structural predictions using mutational data (scripts/07_structural_prediction_evaluation.R).
-
-
-
-
-
-
-
-
-
+0. Load dependencies and configure the analysis environment (R_scripts/00_R_packages.R).
+1. Normalize raw fitness values within each library (R_scripts/01_fitness_data_normalization.R).
+2. Combine all libraries, statistic tests and classify variant effects (R_scripts/02_all_variants_analysis.R).
+3. Analyze and plot single-nucleotide variants (R_scripts/03_single_nucleotide_variants.R).
+4. Generate, analyze and plot single-amino-acid variants (R_scripts/04_single_amino_acid_variants.R)
+5. Evaluate variant-effect predictors (R_scripts/05_evaluate_VEPs.R).
+6. Evaluate AlphaFold 3 structural predictions (R_scripts/06_evaluate_AF3_models.R).
+   
