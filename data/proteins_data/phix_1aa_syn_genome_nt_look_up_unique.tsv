@@ -1,0 +1,50 @@
+phix_aa_mut_class	phix_aa_mut_ID	genome_nt_pos_RBS	genome_nt_pos_RBS_gene	genome_nt_pos_promoter	genome_nt_pos_promoter_gene	genome_nt_pos_promoter_anti_sense	genome_nt_pos_terminator	genome_nt_pos_terminator_gene	genome_nt_pos_ori	genome_nt_pos_annotation
+Synonymous	gpG_P173syn	NA	NA	NA	NA	NA	Terminator	TG	NA	Terminator
+Synonymous	gpC_L66syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_K67syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_G70syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_L71syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_L72syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_I82syn	RBS	RBS (D)	NA	NA	NA	NA	NA	NA	RBS
+Synonymous	gpA_Q107syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_I114syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_Q296syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpA_S304syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpA_L361syn	RBS	RBS (B)	NA	NA	NA	NA	NA	NA	RBS
+Synonymous	gpA_G362syn	RBS	RBS (B)	NA	NA	NA	NA	NA	NA	RBS
+Synonymous	gpG_L174syn	NA	NA	NA	NA	NA	Terminator	TG	NA	Terminator
+Synonymous	gpC_L62syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_D64syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_R69syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_S75syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpA_N112syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_D115syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_H116syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_Y303syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpG_Q172syn	NA	NA	NA	NA	NA	Terminator	TG	NA	Terminator
+Synonymous	gpG_K175syn	NA	NA	NA	NA	NA	Terminator	TG	NA	Terminator
+Synonymous	gpG_*176syn	NA	NA	NA	NA	NA	Terminator	TG	NA	Terminator
+Synonymous	gpC_E68syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_E74syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpA_L295syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpA_T298syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpD_E56syn	RBS	RBS (E)	NA	NA	NA	NA	NA	NA	RBS
+Synonymous	gpH_F2syn	NA	NA	NA	NA	NA	Terminator	TG	NA	Terminator
+Synonymous	gpH_G3syn	NA	NA	NA	NA	NA	Terminator	TG	NA	Terminator
+Synonymous	gpH_A4syn	NA	NA	NA	NA	NA	Terminator	TG	NA	Terminator
+Synonymous	gpC_S61syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_V63syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_I65syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_S73syn	NA	NA	Promoter	pD	NA	NA	NA	NA	Promoter
+Synonymous	gpC_G83syn	RBS	RBS (D)	NA	NA	NA	NA	NA	NA	RBS
+Synonymous	gpA_L108syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_D109syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_I110syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_N111syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_T113syn	NA	NA	NA	NA	NA	NA	NA	Ori (+)	Ori (+)
+Synonymous	gpA_N297syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpA_P300syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpA_Y301syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpA_G302syn	NA	NA	Promoter	pB	NA	NA	NA	NA	Promoter
+Synonymous	gpB_L48syn	NA	NA	NA	NA	NA	Terminator	TB (RUT-3)	NA	Terminator
+Synonymous	gpA_G412syn	NA	NA	NA	NA	NA	Terminator	TB (RUT-3)	NA	Terminator
