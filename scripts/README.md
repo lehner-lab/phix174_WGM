@@ -4,16 +4,35 @@ This folder contains the Bash scripts used to retrieve the raw sequencing data, 
 
 The scripts should be run in numerical order.
 
-## Contents
+# Contents
 
 ```text
 bash/
 ├── README.md
 ├── 01_download_ena_fastq.sh
 ├── 02_concatenate_lanes.sh
-└── 03_run_DiMSum.sh
+├── 03_run_DiMSum.sh
+├── 04_run_contacts.sh
+├── 05_run_ipSAE.sh
+└── 06_run_internal_RMSD.sh
 ```
 
+## Script overview
+
+| Script                       | Description                                                                                                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **01_download_ena_fastq.sh** | Download raw paired-end sequencing reads from the European Nucleotide Archive (ENA).                                                                                                                 |
+| **02_concatenate_lanes.sh**  | Concatenate FASTQ files generated from separate sequencing lanes for each sequencing library.                                                                                                        |
+| **03_run_DiMSum.sh**         | Execute the DiMSum pipeline to estimate variant fitness from sequencing data.                                                                                                                        |
+| **04_run_contacts.sh**       | Run ChimeraX in batch mode to calculate residue–residue atom contacts for all selected AlphaFold 3 models and identify protein–protein and protein–DNA interfaces based on atom-distance thresholds. |
+| **05_run_ipSAE.sh**          | Evaluate predicted interfaces for all AlphaFold 3 models using ipSAE.                                                                                                                                |
+| **06_run_internal_RMSD.sh**  | Perform structural alignments in ChimeraX and calculate protein RMSD values relative to the selected reference model for each AlphaFold 3 prediction.                                                |
+
+```
+```
+
+
+# Supplementary information
 ## `01_download_ena_fastq.sh`
 
 Downloads the raw paired-end sequencing reads from the European Nucleotide Archive project:
