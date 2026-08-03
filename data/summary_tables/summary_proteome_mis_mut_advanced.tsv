@@ -1,0 +1,104 @@
+aa_mut_gene	residue_structural_group_predicted	mutation_category_FDR_lethal_1aa	count	proportion	percent
+A	Core	Beneficial	1	4.23908435777872e-4	0.04
+A	Core	Neutral	351	0.14879186095803307	14.88
+A	Core	Detrimental	712	0.30182280627384483	30.18
+A	Core	Lethal	1295	0.5489614243323442	54.9
+A	Interface	Beneficial	9	0.004672897196261682	0.47
+A	Interface	Neutral	599	0.3110072689511942	31.1
+A	Interface	Detrimental	559	0.29023883696780894	29.02
+A	Interface	Lethal	759	0.3940809968847352	39.41
+A	Non-interface surface	Beneficial	13	0.004473503097040606	0.45
+A	Non-interface surface	Neutral	1588	0.5464556090846524	54.65
+A	Non-interface surface	Detrimental	919	0.3162422573984859	31.62
+A	Non-interface surface	Lethal	386	0.13282863041982107	13.28
+B	Core	Beneficial	1	0.05	5
+B	Core	Neutral	9	0.45	45
+B	Core	Detrimental	3	0.15	15
+B	Core	Lethal	7	0.35	35
+B	Interface	Beneficial	9	0.21951219512195122	21.95
+B	Interface	Neutral	8	0.1951219512195122	19.51
+B	Interface	Detrimental	5	0.12195121951219512	12.2
+B	Interface	Lethal	19	0.4634146341463415	46.34
+B	Non-interface surface	Beneficial	17	0.22972972972972974	22.97
+B	Non-interface surface	Neutral	32	0.43243243243243246	43.24
+B	Non-interface surface	Detrimental	15	0.20270270270270271	20.27
+B	Non-interface surface	Lethal	10	0.13513513513513514	13.51
+B	Unknown structure	Neutral	80	0.851063829787234	85.11
+B	Unknown structure	Detrimental	11	0.11702127659574468	11.7
+B	Unknown structure	Lethal	3	0.031914893617021274	3.19
+C	Interface	Neutral	219	0.32348596750369274	32.35
+C	Interface	Detrimental	144	0.21270310192023634	21.27
+C	Interface	Lethal	314	0.4638109305760709	46.38
+C	Unknown structure	Neutral	178	0.40825688073394495	40.83
+C	Unknown structure	Detrimental	120	0.27522935779816515	27.52
+C	Unknown structure	Lethal	138	0.3165137614678899	31.65
+D	Core	Neutral	4	0.015037593984962405	1.5
+D	Core	Detrimental	23	0.08646616541353383	8.65
+D	Core	Lethal	239	0.8984962406015038	89.85
+D	Interface	Neutral	76	0.10146862483311081	10.15
+D	Interface	Detrimental	142	0.18958611481975968	18.96
+D	Interface	Lethal	531	0.7089452603471295	70.89
+D	Non-interface surface	Beneficial	1	0.004347826086956522	0.43
+D	Non-interface surface	Neutral	33	0.14347826086956522	14.35
+D	Non-interface surface	Detrimental	65	0.2826086956521739	28.26
+D	Non-interface surface	Lethal	131	0.5695652173913044	56.96
+D	Unknown structure	Neutral	23	0.48936170212765956	48.94
+D	Unknown structure	Detrimental	14	0.2978723404255319	29.79
+D	Unknown structure	Lethal	10	0.2127659574468085	21.28
+E	Interface	Neutral	60	0.631578947368421	63.16
+E	Interface	Detrimental	35	0.3684210526315789	36.84
+E	Non-interface surface	Neutral	16	0.64	64
+E	Non-interface surface	Detrimental	9	0.36	36
+E	Unknown structure	Beneficial	1	0.01694915254237288	1.69
+E	Unknown structure	Neutral	55	0.9322033898305084	93.22
+E	Unknown structure	Detrimental	3	0.05084745762711865	5.08
+F	Core	Beneficial	8	0.0037313432835820895	0.37
+F	Core	Neutral	88	0.041044776119402986	4.1
+F	Core	Detrimental	331	0.15438432835820895	15.44
+F	Core	Lethal	1717	0.800839552238806	80.08
+F	Interface	Beneficial	113	0.022976819845465637	2.3
+F	Interface	Neutral	463	0.09414396095973973	9.41
+F	Interface	Detrimental	1082	0.22000813338755593	22
+F	Interface	Lethal	3260	0.6628710858072387	66.29
+F	Non-interface surface	Beneficial	28	0.0273972602739726	2.74
+F	Non-interface surface	Neutral	180	0.1761252446183953	17.61
+F	Non-interface surface	Detrimental	294	0.2876712328767123	28.77
+F	Non-interface surface	Lethal	520	0.5088062622309197	50.88
+F	Unknown structure	Neutral	1	0.05263157894736842	5.26
+F	Unknown structure	Detrimental	1	0.05263157894736842	5.26
+F	Unknown structure	Lethal	17	0.8947368421052632	89.47
+G	Core	Neutral	263	0.26458752515090544	26.46
+G	Core	Detrimental	99	0.09959758551307847	9.96
+G	Core	Lethal	632	0.635814889336016	63.58
+G	Interface	Beneficial	12	0.007570977917981073	0.76
+G	Interface	Neutral	493	0.3110410094637224	31.1
+G	Interface	Detrimental	291	0.18359621451104102	18.36
+G	Interface	Lethal	789	0.49779179810725555	49.78
+G	Non-interface surface	Beneficial	8	0.011577424023154847	1.16
+G	Non-interface surface	Neutral	517	0.748191027496382	74.82
+G	Non-interface surface	Detrimental	96	0.1389290882778582	13.89
+G	Non-interface surface	Lethal	70	0.10130246020260492	10.13
+H	Interface	Beneficial	47	0.021286231884057972	2.13
+H	Interface	Neutral	962	0.43568840579710144	43.57
+H	Interface	Detrimental	752	0.34057971014492755	34.06
+H	Interface	Lethal	447	0.20244565217391305	20.24
+H	Non-interface surface	Beneficial	4	0.01762114537444934	1.76
+H	Non-interface surface	Neutral	97	0.42731277533039647	42.73
+H	Non-interface surface	Detrimental	69	0.3039647577092511	30.4
+H	Non-interface surface	Lethal	57	0.2511013215859031	25.11
+H	Unknown structure	Beneficial	83	0.022198448783097086	2.22
+H	Unknown structure	Neutral	1412	0.37764108050280826	37.76
+H	Unknown structure	Detrimental	1156	0.3091735758224124	30.92
+H	Unknown structure	Lethal	1088	0.2909868948916823	29.1
+J	Interface	Beneficial	33	0.06947368421052631	6.95
+J	Interface	Neutral	93	0.1957894736842105	19.58
+J	Interface	Detrimental	199	0.4189473684210526	41.89
+J	Interface	Lethal	150	0.3157894736842105	31.58
+J	Non-interface surface	Beneficial	12	0.05741626794258373	5.74
+J	Non-interface surface	Neutral	36	0.1722488038277512	17.22
+J	Non-interface surface	Detrimental	101	0.48325358851674644	48.33
+J	Non-interface surface	Lethal	60	0.28708133971291866	28.71
+J	Unknown structure	Neutral	20	0.6896551724137931	68.97
+J	Unknown structure	Lethal	9	0.3103448275862069	31.03
+K	Unknown structure	Beneficial	3	0.02586206896551724	2.59
+K	Unknown structure	Neutral	113	0.9741379310344828	97.41

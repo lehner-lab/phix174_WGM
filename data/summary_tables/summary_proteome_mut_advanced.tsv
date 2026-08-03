@@ -1,0 +1,15 @@
+aa_mut_class	mutation_category_FDR_lethal_1aa	count	proportion	percent
+Missense	Beneficial	403	0.014200140944326992	1.42
+Missense	Neutral	8069	0.2843199436222692	28.43
+Missense	Detrimental	7250	0.255461592670895	25.55
+Missense	Lethal	12658	0.4460183227625088	44.6
+Nonsense	Neutral	15	0.009953550099535502	1
+Nonsense	Detrimental	21	0.013934970139349702	1.39
+Nonsense	Lethal	1471	0.9761114797611148	97.61
+Stop-loss	Neutral	20	0.21739130434782608	21.74
+Stop-loss	Detrimental	4	0.043478260869565216	4.35
+Stop-loss	Lethal	68	0.7391304347826086	73.91
+Synonymous	Beneficial	90	0.06405693950177936	6.41
+Synonymous	Neutral	1199	0.8533807829181494	85.34
+Synonymous	Detrimental	107	0.07615658362989323	7.62
+Synonymous	Lethal	9	0.006405693950177936	0.64

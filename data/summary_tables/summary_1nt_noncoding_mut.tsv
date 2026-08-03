@@ -1,0 +1,20 @@
+genome_nt_pos_annotation	mutation_category_FDR_lethal_1nt	count	proportion	percent
+Promoter	Neutral	46	0.5679012345679012	56.79
+Promoter	Detrimental	5	0.06172839506172839	6.17
+Promoter	Lethal	30	0.37037037037037035	37.04
+RBS	Neutral	15	0.5555555555555556	55.56
+RBS	Detrimental	8	0.2962962962962963	29.63
+RBS	Lethal	4	0.14814814814814814	14.81
+RBS,Terminator	Neutral	14	0.42424242424242425	42.42
+RBS,Terminator	Detrimental	9	0.2727272727272727	27.27
+RBS,Terminator	Lethal	10	0.30303030303030304	30.3
+Terminator	Neutral	82	0.8541666666666666	85.42
+Terminator	Detrimental	11	0.11458333333333333	11.46
+Terminator	Lethal	3	0.03125	3.12
+Terminator,Ori (-)	Beneficial	38	0.2923076923076923	29.23
+Terminator,Ori (-)	Neutral	73	0.5615384615384615	56.15
+Terminator,Ori (-)	Detrimental	17	0.13076923076923078	13.08
+Terminator,Ori (-)	Lethal	2	0.015384615384615385	1.54
+Unknown Noncoding	Beneficial	3	0.011152416356877323	1.12
+Unknown Noncoding	Neutral	243	0.9033457249070632	90.33
+Unknown Noncoding	Detrimental	23	0.08550185873605948	8.55

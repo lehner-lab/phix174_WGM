@@ -1,0 +1,13 @@
+genome_nt_pos_nucleotide_class	genome_nt_pos_nucleotide_category	count	proportion	percent
+Coding	Essential	2084	0.47853042479908153	47.85
+Coding	Sensitive	921	0.21148105625717567	21.15
+Coding	Tolerant	1328	0.3049368541905855	30.49
+Coding	Unable to define	22	0.005051664753157291	0.51
+Noncoding	Essential	24	0.11059907834101383	11.06
+Noncoding	Sensitive	42	0.1935483870967742	19.35
+Noncoding	Tolerant	142	0.6543778801843319	65.44
+Noncoding	Unable to define	9	0.041474654377880185	4.15
+Overlapping Coding	Essential	480	0.5896805896805897	58.97
+Overlapping Coding	Sensitive	139	0.17076167076167076	17.08
+Overlapping Coding	Tolerant	194	0.23832923832923833	23.83
+Overlapping Coding	Unable to define	1	0.0012285012285012285	0.12

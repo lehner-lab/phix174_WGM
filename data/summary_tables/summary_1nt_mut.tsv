@@ -1,0 +1,13 @@
+genome_nt_pos_nucleotide_class	mutation_category_FDR_lethal_1nt	count	proportion	percent
+Coding	Beneficial	93	0.007142308578450196	0.71
+Coding	Neutral	6195	0.47576991014515013	47.58
+Coding	Detrimental	2656	0.20397818907917978	20.4
+Coding	Lethal	4077	0.3131095921972199	31.31
+Noncoding	Beneficial	41	0.06446540880503145	6.45
+Noncoding	Neutral	473	0.7437106918238994	74.37
+Noncoding	Detrimental	73	0.11477987421383648	11.48
+Noncoding	Lethal	49	0.0770440251572327	7.7
+Overlapping Coding	Beneficial	42	0.017206063088897994	1.72
+Overlapping Coding	Neutral	1025	0.4199098730028677	41.99
+Overlapping Coding	Detrimental	435	0.17820565342072922	17.82
+Overlapping Coding	Lethal	939	0.3846784104875051	38.47

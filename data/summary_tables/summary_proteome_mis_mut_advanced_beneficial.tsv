@@ -1,0 +1,20 @@
+aa_mut_gene	residue_structural_group_predicted	count	proportion	percent
+A	Core	1	0.043478260869565216	4.35
+A	Interface	9	0.391304347826087	39.13
+A	Non-interface surface	13	0.5652173913043478	56.52
+B	Core	1	0.037037037037037035	3.7
+B	Interface	9	0.3333333333333333	33.33
+B	Non-interface surface	17	0.6296296296296297	62.96
+D	Non-interface surface	1	1	100
+E	Unknown structure	1	1	100
+F	Core	8	0.053691275167785234	5.37
+F	Interface	113	0.7583892617449665	75.84
+F	Non-interface surface	28	0.18791946308724833	18.79
+G	Interface	12	0.6	60
+G	Non-interface surface	8	0.4	40
+H	Interface	47	0.35074626865671643	35.07
+H	Non-interface surface	4	0.029850746268656716	2.99
+H	Unknown structure	83	0.6194029850746269	61.94
+J	Interface	33	0.7333333333333333	73.33
+J	Non-interface surface	12	0.26666666666666666	26.67
+K	Unknown structure	3	1	100
