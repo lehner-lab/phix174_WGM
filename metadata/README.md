@@ -20,6 +20,7 @@ metadata/
     └── libr1_variant_identity.tsv
 ```
 
+
 ## `DiMSum_library_parameters.tsv`
 
 This table contains one row for each mutant library and defines the library-specific inputs used to run DiMSum.
