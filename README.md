@@ -52,14 +52,16 @@ phix174-WGM/
 
 
 
-## Data availability
-Raw paired-end sequencing reads are deposited in the European Nucleotide Archive under project accession PRJEB120835. The metadata and scripts required to download the sequencing reads, merge files generated from separate sequencing lanes, and rerun the DiMSum pipeline are provided in this repository.
+## Data Availability
 
-For exact reproduction of the downstream analyses, we provide datasets required and generated during the analysis and used throughout this study.
+Raw paired-end sequencing reads have been deposited in the European Nucleotide Archive (ENA) under project accession **PRJEB120835**. This repository provides the metadata and scripts required to download the sequencing data, merge FASTQ files generated from separate sequencing lanes, and reproduce the DiMSum analysis pipeline.
 
-Protein structures, AlphaFold 3 models, and other large structural datasets are hosted separately because of their file size.
-Structural data: [link to be added] 
+To facilitate reproducibility of all downstream analyses, we provide the key input datasets, intermediate datasets, and analysis-ready datasets generated throughout the study. These datasets are sufficient to reproduce all analyses, statistical tests, and figures presented in the manuscript without rerunning the sequencing data processing pipeline.
 
+Large structural datasets are hosted separately because of GitHub file size limitations.
+
+* **AlphaFold 3 models and structural analysis datasets:** https://doi.org/10.6084/m9.figshare.33102308
+* **EVcouplings multiple sequence alignments and output files:** https://doi.org/10.6084/m9.figshare.33102170
 
 
 ## Analysis overview
@@ -71,7 +73,6 @@ The downstream analysis consists of the following steps:
 6. Perform enrichment tests, comparative analyses, and figure generation.
 7. Integrate variant-effect predictor scores and evaluate predictor performance.
 8. Use mutational data to evaluate experimentally resolved and predicted protein structures and interaction models.
-
 
 
 ## Citation
