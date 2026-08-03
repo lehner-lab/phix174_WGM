@@ -7,52 +7,59 @@ The bacteriophage ΦX174 was the first genome to be sequenced and the first to b
 ## Repository structure
 This repository contains the metadata, reference sequences, and analysis scripts used to process deep-sequencing data from ΦX174 variant libraries and calculate variant fitness values using DiMSum.
 
-```
+```text
 phix174-WGM/
 ├── README.md
 ├── LICENSE
 ├── environment.yml
 ├── .gitignore
 │
-├── metadata/
-│   ├── DiMSum_library_parameters.tsv
-│   ├── experiment_designs/
-│   │   ├── lib1_experiment_design.tsv
-│   │   └── ...
-│   └── variant_identity/
-│       ├── lib1_variant_identity.tsv
-│       └── ...
-│
-├── scripts/
-│   ├── 01_download_ena_fastq.sh
-│   ├── 02_merge_fastq_lanes.sh
-│   ├── 03_run_dimsum.sh
-│   ├── 04_collect_dimsum_results.R
-│   ├── 05_normalize_fitness.R
-│   ├── 06_annotate_variants.R
-│   └── ...
+├── R_scripts/
+│   ├── README.md
+│   ├── 00_R_packages.R
+│   ├── 01_fitness_data_normalization.R
+│   ├── 02_all_variants_analysis.R
+│   ├── 03_single_nucleotide_variants.R
+│   ├── 04_single_amino_acid_variants.R
+│   ├── 05_evaluate_VEPs.R
+│   └── 06_evaluate_AF3_models.R
 │
 ├── data/
-│   ├── 01_dimsum_raw/
-│   ├── 02_fitness_combined/
-│   ├── 03_fitness_normalized/
-│   ├── 04_variants_annotated/
-│   └── 05_analysis_ready/
+│   ├── raw_fitness_data/
+│   │   ├── pool*_twist*_lib*_dimsum_fitness.RData
+│   │   └── ...
+│   │
+│   ├── evaluate_VEPs/
+│   ├── evaluate_AF3_models/
+│   ├── proteins_data/
+│   ├── mutant_library/
+│   ├── mutant_annotation/
+│   ├── EVcouplings/
+│   │
+│   ├── phix_dimsum_fitness_libraries.rds
+│   ├── phix_dms_sub_libraries_normalized.rds
+│   ├── phix_all_dms100_sub_libraries_normalized_unique_stat.tsv
+│   ├── phix_all_dms100_sub_libraries_normalized_unique_stat_1nt.tsv
+│   ├── phix_all_dms100_sub_libraries_normalized_unique_stat_AA.tsv
+│   ├── phix_proteome_dms_mut_Fitness_unique_advanced.tsv
+│   └── phix_proteome_dms_aa_pos_Fitness_advanced.tsv
 │
-└── docs/
-    ├── pipeline_overview.md
-    └── data_dictionary.md
-
+└── metadata/
+    ├── DiMSum_library_parameters.tsv
+    ├── experiment_designs/
+    └── variant_identity/
 ```
+
 
 
 ## Data availability
 Raw paired-end sequencing reads are deposited in the European Nucleotide Archive under project accession PRJEB120835. The metadata and scripts required to download the sequencing reads, merge files generated from separate sequencing lanes, and rerun the DiMSum pipeline are provided in this repository.
 
-For exact reproduction of the downstream analyses, we provide the DiMSum fitness datasets generated during the original analysis and used throughout this study.
+For exact reproduction of the downstream analyses, we provide datasets required and generated during the analysis and used throughout this study.
 
 Protein structures, AlphaFold 3 models, and other large structural datasets are hosted separately because of their file size.
-Structural data: [link to be added]
+Structural data: [link to be added] 
+
 
 
 ## Analysis overview
