@@ -72,7 +72,7 @@ The downstream analysis consists of the following steps:
 5. Generate annotated single-nucleotide and single-amino-acid variant datasets, together with residue-level summaries.
 6. Perform enrichment tests, comparative analyses, and figure generation.
 7. Integrate variant-effect predictor scores and evaluate predictor performance.
-8. Use mutational data to evaluate experimentally resolved and predicted protein structures and interaction models.
+8. Use mutational data to evaluate AlphaFold 3 predicted protein structures and interaction complex models.
 
 
 ## Citation
