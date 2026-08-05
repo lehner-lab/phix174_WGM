@@ -1,0 +1,1599 @@
+---
+title: "phix_DMS_all_variants_data_analysis"
+author: "Huijin Wei"
+date: "2026-07-30"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Set working working directory
+```{r}
+here::here()
+
+```
+
+
+
+## Load functions 
+### 1) substitutions data analysis
+```{r}
+# Function to calculate weighted mean and propagated error
+# 1) For library-overlapping data
+calculate_weighted_mean_and_error <- function(df, col1, column_fitness, column_sigma,
+                                              weighted_mean_col, propagated_error_col) {
+  df %>%
+    group_by_at(col1) %>%
+    summarise(
+      across(everything(), ~ first(.), .names = "{.col}"),  # Keep metadata from first row
+      !!weighted_mean_col := sum((!!sym(column_fitness)) / (!!sym(column_sigma))^2, na.rm = TRUE) /
+                              sum(1 / (!!sym(column_sigma))^2, na.rm = TRUE),
+      !!propagated_error_col := sqrt(1 / sum(1 / (!!sym(column_sigma))^2, na.rm = TRUE)),
+      .groups = "drop"
+    )
+}
+
+# Function to calculate Weighted.mean and pass error 
+# 2) For getting fitness data of unique AA mut
+calculate_unique_weighted_mean_and_error <- function(df, col1, column_fitness, column_sigma, 
+                                              weighted_mean_col, propagated_error_col) {
+  df %>%
+    group_by_at(col1) %>%
+    mutate(
+      row_count = n(),  # Count the number of rows per group
+      
+      # Weighted mean for fitness
+      !!weighted_mean_col := ifelse(
+        row_count == 1, !!sym(column_fitness),  # If only one row, keep original value
+        sum((!!sym(column_fitness)) / (!!sym(column_sigma))^2, na.rm = TRUE) / 
+        sum(1 / (!!sym(column_sigma))^2, na.rm = TRUE)
+      ),
+      
+      # Propagated error
+      !!propagated_error_col := ifelse(
+        row_count == 1, !!sym(column_sigma),  # If only one row, keep original sigma
+        sqrt(1 / sum(1 / (!!sym(column_sigma))^2, na.rm = TRUE))
+      )
+    ) %>%
+    select(-row_count) %>%  # Remove temporary column
+    ungroup()
+}
+
+# Function to supplement annotations at genome nt level based on the position 1 of mutations
+update_genome_nt_positions <- function(df, pos_col = "genome_nt_mut_pos1") {
+  
+  # Initialize columns with 0 (No)
+  df <- df %>%
+    mutate(
+      genome_nt_pos_noncoding = NA,
+      genome_nt_pos_coding = NA,
+      genome_nt_pos_overlap_orf = NA,
+      genome_nt_pos_structural = NA
+    )
+  
+  # Define position ranges for each classification
+  noncoding_ranges <- list(
+    c(965, 1000), c(2285, 2394), c(2923, 2930),
+    c(3918, 3980)
+  )
+  
+  coding_ranges <- list(
+    c(1, 964), c(1001, 2284), c(2395, 2922),
+    c(2931, 3917), c(3981, 5386)
+  )
+  
+  overlap_orf_ranges <- list(
+    c(1, 221), c(390, 393), c(568, 843),
+    c(848, 848), c(5075, 5386)
+  )
+  
+  structural_ranges <- list(
+    c(1, 51), c(390, 964), c(1001, 2284), 
+    c(2395, 2922), c(5075, 5386)
+  )
+  
+  # Function to check if a value falls within any of the specified ranges
+  is_in_ranges <- function(value, ranges) {
+    any(sapply(ranges, function(r) value >= r[1] & value <= r[2]))
+  }
+  
+  # Apply the range checks to update the binary columns
+  df <- df %>%
+    mutate(
+      genome_nt_pos_noncoding = ifelse(sapply(.data[[pos_col]], is_in_ranges, noncoding_ranges), "Noncoding", NA),
+      genome_nt_pos_coding = ifelse(sapply(.data[[pos_col]], is_in_ranges, coding_ranges), "Coding", NA),
+      genome_nt_pos_overlap_orf = ifelse(sapply(.data[[pos_col]], is_in_ranges, overlap_orf_ranges), "Overlapping Coding", NA),
+      genome_nt_pos_structural = ifelse(sapply(.data[[pos_col]], is_in_ranges, structural_ranges), T, F)
+    )
+  
+  return(df)
+}
+
+
+```
+
+
+### 2) statistics and mutation category
+```{r}
+## Function to compute p-value for Statitic tests
+# Two-samples t-test
+two_samples_ttest <- function(mu1, sem1, n1, mu2, sem2, n2) {
+  # Compute t-statistic using SEM directly
+  t_stat <- (mu1 - mu2) / sqrt(sem1^2 + sem2^2)
+
+  # Compute degrees of freedom (Welch’s approximation)
+  df <- (sem1^2 + sem2^2)^2 /
+        ((sem1^4 / (n1 - 1)) + (sem2^4 / (n2 - 1)))
+
+  # Ensure df is valid
+  if (is.na(df) || df <= 0) {
+    df <- 1  # Prevent invalid df values
+  }
+
+  # Compute two-tailed p-value
+  p_val <- 2 * (1 - pt(abs(t_stat), df))
+
+  return(p_val)
+}
+
+
+
+# Function for mutation category and direction, using Fitness-increasing rather Beneficial 
+assign_mutation_categories_fdr <- function(
+  df,
+  pval_col,
+  effect_raw_col,
+  alpha = 0.05,
+  effect_breaks = c(0.10, 0.15, 0.50),
+
+  effect_bin_col,
+  category_fdr_col,
+  category_fdr_lethal_col,
+  category_cutoff_col,
+  category_combined_col,
+
+  direction_col,
+  direction_lethal_col
+) {
+
+  # ---- Checks ----
+  required_cols <- c(pval_col, effect_raw_col)
+  missing_cols <- setdiff(required_cols, names(df))
+
+  if (length(missing_cols) > 0) {
+    stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  if (!is.numeric(effect_breaks)) {
+    stop("effect_breaks must be numeric.")
+  }
+
+  if (length(effect_breaks) != 3) {
+    stop("effect_breaks should contain three values, e.g. c(0.10, 0.15, 0.50).")
+  }
+
+  effect_breaks <- sort(effect_breaks)
+
+  # ---- Extract clean numeric vectors ----
+  p <- as.numeric(df[[pval_col]])
+  e <- as.numeric(df[[effect_raw_col]])
+
+  # ---- Significance ----
+  sig_flag <- !is.na(p) & (p < alpha)
+
+  # ---- Base classification ----
+  # Original category labels are kept:
+  # Beneficial / Neutral / Detrimental
+  category_fdr <- dplyr::case_when(
+    is.na(p) | is.na(e) ~ NA_character_,
+    !sig_flag ~ "Neutral",
+    e > 0 ~ "Beneficial",
+    e < 0 ~ "Detrimental",
+    TRUE ~ "Neutral"
+  )
+
+  # ---- Effect bins ----
+  effect_bin_num <- dplyr::case_when(
+    is.na(e) ~ NA_real_,
+    !sig_flag ~ 0,
+    abs(e) >= effect_breaks[3] ~ effect_breaks[3],
+    abs(e) >= effect_breaks[2] ~ effect_breaks[2],
+    abs(e) >= effect_breaks[1] ~ effect_breaks[1],
+    TRUE ~ 0
+  )
+
+  # ---- Lethal override ----
+  category_fdr_lethal <- dplyr::case_when(
+    is.na(category_fdr) ~ NA_character_,
+    category_fdr == "Detrimental" &
+      effect_bin_num >= effect_breaks[3] ~ "Lethal",
+    TRUE ~ category_fdr
+  )
+
+  # ---- Cutoff refinement ----
+  # Original 0.15 cutoff refinement is kept.
+  category_cutoff <- dplyr::case_when(
+    is.na(category_fdr) ~ NA_character_,
+    category_fdr %in% c("Beneficial", "Detrimental") &
+      effect_bin_num < effect_breaks[2] ~ "Neutral",
+    category_fdr == "Detrimental" &
+      effect_bin_num >= effect_breaks[3] ~ "Lethal",
+    TRUE ~ category_fdr
+  )
+
+  # ---- Combined ----
+  category_combined <- dplyr::case_when(
+    category_cutoff %in% c("Beneficial", "Neutral") ~ "Tolerated",
+    category_cutoff %in% c("Detrimental", "Lethal") ~ "Deleterious",
+    TRUE ~ NA_character_
+  )
+
+  # ---- Direction column without lethal ----
+  # Same logic as category_fdr, but with less interpretive labels.
+  direction <- dplyr::case_when(
+    is.na(category_fdr) ~ NA_character_,
+    category_fdr == "Beneficial" ~ "Fitness-increasing",
+    category_fdr == "Neutral" ~ "Neutral",
+    category_fdr == "Detrimental" ~ "Fitness-decreasing",
+    TRUE ~ NA_character_
+  )
+
+  # ---- Direction column with lethal ----
+  # Same logic as category_fdr_lethal, but with less interpretive labels.
+  direction_lethal <- dplyr::case_when(
+    is.na(category_fdr_lethal) ~ NA_character_,
+    category_fdr_lethal == "Beneficial" ~ "Fitness-increasing",
+    category_fdr_lethal == "Neutral" ~ "Neutral",
+    category_fdr_lethal == "Detrimental" ~ "Fitness-decreasing",
+    category_fdr_lethal == "Lethal" ~ "Lethal",
+    TRUE ~ NA_character_
+  )
+
+  # ---- Safe overwrite ----
+  output_cols <- c(
+    effect_bin_col,
+    category_fdr_col,
+    category_fdr_lethal_col,
+    category_cutoff_col,
+    category_combined_col,
+    direction_col,
+    direction_lethal_col
+  )
+
+  for (col in output_cols) {
+    df[[col]] <- NULL
+  }
+
+  # ---- Assign outputs explicitly ----
+  df[[effect_bin_col]] <- factor(
+    effect_bin_num,
+    levels = c(0, effect_breaks)
+  )
+
+  df[[category_fdr_col]] <- factor(
+    category_fdr,
+    levels = c("Beneficial", "Neutral", "Detrimental")
+  )
+
+  df[[category_fdr_lethal_col]] <- factor(
+    category_fdr_lethal,
+    levels = c("Beneficial", "Neutral", "Detrimental", "Lethal")
+  )
+
+  df[[category_cutoff_col]] <- factor(
+    category_cutoff,
+    levels = c("Beneficial", "Neutral", "Detrimental", "Lethal")
+  )
+
+  df[[category_combined_col]] <- factor(
+    category_combined,
+    levels = c("Tolerated", "Deleterious")
+  )
+
+  df[[direction_col]] <- factor(
+    direction,
+    levels = c("Fitness-increasing", "Neutral", "Fitness-decreasing")
+  )
+
+  df[[direction_lethal_col]] <- factor(
+    direction_lethal,
+    levels = c(
+      "Fitness-increasing",
+      "Neutral",
+      "Fitness-decreasing",
+      "Lethal"
+    )
+  )
+
+  return(df)
+}
+
+
+
+# Function to generate summary tables
+summarize_counts_df <- function(df, group_cols, count_col = NULL) {
+  group_syms <- syms(group_cols)
+  count_sym  <- if (!is.null(count_col)) sym(count_col) else NULL
+
+  summary_df <- if (is.null(count_col)) {
+    df %>%
+      group_by(!!!group_syms) %>%
+      summarise(n = n(), .groups = "drop")
+  } else {
+    df %>%
+      group_by(!!!group_syms, !!count_sym) %>%
+      summarise(n = n(), .groups = "drop")
+  }
+
+  return(as.data.frame(summary_df))
+}
+
+
+
+
+```
+
+
+### 3) summary and plots 
+```{r}
+# Function to generate summary table
+generate_mutation_category_summary <- function(
+    df, 
+    class_col,
+    category_col,
+    total_count = NULL
+) {
+
+  class_syms    <- rlang::syms(class_col)
+  category_sym  <- rlang::ensym(category_col)
+
+  df %>%
+    dplyr::filter(!is.na(!!category_sym)) %>%
+    dplyr::group_by(!!!class_syms, !!category_sym) %>%
+    dplyr::summarise(count = dplyr::n(), .groups = "drop") %>%
+    dplyr::group_by(!!!class_syms) %>%
+    dplyr::mutate(
+      proportion = if (is.null(total_count)) {
+        count / sum(count)
+      } else {
+        count / total_count
+      },
+      percent = round(proportion * 100, 2)
+    ) %>%
+    dplyr::ungroup()
+}
+
+
+# Function to plot the correlation across bio-replicates
+plot_replicate_reproducibility <- function(df,
+                                           replicate_cols,
+                                           cor_method = "pearson",
+                                           point_alpha = 0.5,
+                                           point_size = 1.2,
+                                           title = "Reproducibility Across Replicates") {
+  # ---- Check inputs ----
+  stopifnot(all(replicate_cols %in% names(df)))
+  
+  # ---- Load required library ----
+  if (!requireNamespace("GGally", quietly = TRUE)) {
+    stop("Please install 'GGally' package: install.packages('GGally')")
+  }
+
+  # ---- Subset and clean data ----
+  df_sub <- df[, replicate_cols]
+  df_sub <- df_sub[stats::complete.cases(df_sub), ]
+
+  # ---- Build ggpairs plot ----
+  p <- ggpairs(
+    df_sub,
+    upper = list(continuous = wrap("cor",
+                                           size = 4,
+                                           method = cor_method,
+                                           use = "pairwise.complete.obs",
+                                           color = "black")),
+    lower = list(continuous = wrap("points",
+                                           alpha = point_alpha,
+                                           size = point_size,
+                                           color = "black")),
+                                           #color = "gray88")),
+    diag = list(continuous = wrap("densityDiag",
+                                          alpha = 0.6,
+                                          fill = "gray88"))
+  ) +
+    theme_classic() +
+    theme(
+      strip.text = element_text(size = 11, face = "bold"),
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+    ) +
+    ggtitle(title)
+
+  return(p)
+}
+
+# Function - Pir charts
+plot_pie_summary <- function(data, 
+                              x_col = "Var1", 
+                              y_col = "Freq", 
+                              plot_title = NULL,
+                              outline_color = "black",
+                              outline_linewidth = 0.6,
+                              palette = "Set3",
+                              remove_legend = FALSE,
+                              show_text = TRUE) {    
+  
+  x_sym <- rlang::sym(x_col)
+  y_sym <- rlang::sym(y_col)
+
+  # Prepare and order the data by descending y_col
+  data <- data %>%
+    mutate(
+      percentage = round(100 * !!y_sym / sum(!!y_sym), 1),
+      legend_label = paste0(!!x_sym, " (", percentage, "%)")
+    ) %>%
+    arrange(desc(!!y_sym)) %>%
+    mutate(
+      legend_label = factor(legend_label, levels = unique(legend_label)),  # Order legend
+      fraction = !!y_sym / sum(!!y_sym),
+      ymax = cumsum(fraction),
+      ymin = c(0, head(ymax, -1))
+    )
+
+  p <- ggplot(data) +
+    geom_rect(
+      aes(ymin = ymin, ymax = ymax, xmin = 0.5, xmax = 1.5, fill = legend_label),
+      color = outline_color,
+      linewidth = outline_linewidth
+    ) +
+    coord_polar(theta = "y") +
+    xlim(0.5, 2.2) +
+    theme_void() +
+    labs(title = plot_title, fill = NULL) +
+    scale_fill_brewer(palette = palette) +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.title = element_blank(),
+      legend.text = element_text(size = 10)
+    )
+  
+  # Add text if requested
+  if (show_text) {
+    p <- p + geom_text(
+      aes(x = 1, y = (ymin + ymax) / 2, label = paste0(percentage, "%")),
+      size = 5,
+      color = "black"
+    )
+  }
+
+  # Optionally remove legend
+  if (remove_legend) {
+    p <- p + theme(legend.position = "none")
+  }
+  
+  return(p)
+}
+
+
+# Function to plot ridgeline plot
+plot_ridgeline_mut_class <- function(data,
+                                     score_col = fitness_final,
+                                     class_col = phix_aa_mut_class,
+                                     plot_title = "Ridgeline Density Plot of Fitness Final",
+                                     x_label = "Fitness") {
+  
+  p <- ggplot(data, aes(x = {{ score_col }}, y = {{ class_col }})) +
+    geom_density_ridges(
+      scale = 1.2,
+      fill = "grey88",
+      color = "black",
+      alpha = 0.8
+    ) +
+    xlim(-1, 1.5) +
+    labs(
+      title = plot_title,
+      x = x_label,
+      y = "Mutation Class"
+    ) +
+    theme_classic() +
+    theme(
+      strip.text = element_text(face = "bold"),
+      axis.text.y = element_text(face = "bold")
+    )
+  
+  return(p)
+}
+
+
+
+```
+
+
+
+## Load data
+Load normalized fitness data in 31 libraries (data.frames)
+```{r}
+# load normalized data
+sub_libs <- readRDS("./data/raw_data/phix_dms_sub_libraries_normalized.rds")
+list2env(sub_libs, envir = .GlobalEnv)
+
+
+```
+
+
+
+## Deduplicate genotype (Unique Genotypes)
+1) combine all 31 libraries with normalized fitness data;
+2) for duplicate variants, get weighted mean for the same genotype;
+```{r}
+# list all libraries (Only Substitutions)
+phix_dms_sub_libraries_normalized <- c(
+  "pool1_twist5_lib6_dms_sub_normalized",
+  "pool1_twist6_lib7_dms_sub_normalized",
+  "pool1_twist7_lib8_dms_sub_normalized",
+  "pool1_twist8_lib9_dms_sub_normalized",
+  "pool1_twist9_lib10_dms_sub_normalized",
+  "pool1_twist10_lib11_dms_sub_normalized",
+  "pool1_twist11_lib12_dms_sub_normalized",
+  
+  "pool2_twist3_lib3_dms_sub_normalized",
+  "pool2_twist4_lib4_dms_sub_normalized",
+  "pool2_twist5_lib5_dms_sub_normalized",
+  "pool2_twist13_lib13_dms_sub_normalized",
+  "pool2_twist15_lib15_dms_sub_normalized",
+  "pool2_twist20_lib21_dms_sub_normalized",
+  "pool2_twist21_lib22_dms_sub_normalized",
+  
+  "pool3_twist14_lib14_dms_sub_normalized",
+  "pool3_twist16_lib16_dms_sub_normalized",
+  "pool3_twist17_lib17_dms_sub_normalized",
+  "pool3_twist18_lib18_dms_sub_normalized",
+  "pool3_twist19_lib19_dms_sub_normalized",
+  "pool3_twist20_1_lib20_dms_sub_normalized",
+  "pool3_twist29_lib30_dms_sub_normalized",
+  
+  "pool4_twist1_lib1_dms_sub_normalized",
+  "pool4_twist2_lib2_dms_sub_normalized",
+  "pool4_twist22_lib23_dms_sub_normalized",
+  "pool4_twist23_lib24_dms_sub_normalized",
+  "pool4_twist24_lib25_dms_sub_normalized",
+  "pool4_twist25_lib26_dms_sub_normalized",
+  "pool4_twist26_lib27_dms_sub_normalized",
+  "pool4_twist27_lib28_dms_sub_normalized",
+  "pool4_twist28_lib29_dms_sub_normalized",
+  
+  "pool4_twist30_libr1_dms_sub_normalized"
+)
+
+# 1) combine 
+phix_all_dms_sub_libraries_normalized <- do.call(rbind, mget(phix_dms_sub_libraries_normalized))
+phix_all_dms_sub_libraries_normalized <- phix_all_dms_sub_libraries_normalized[order(phix_all_dms_sub_libraries_normalized$genome_nt_mut_pos1),]
+nrow(phix_all_dms_sub_libraries_normalized)
+# [1] 50906x
+
+table(duplicated(phix_all_dms_sub_libraries_normalized$genome_nt_mut_seq)) 
+# FALSE  TRUE 
+# 44195  6711 
+
+
+# 2) deduplicate by phix genotypes
+phix_all_dms_sub_libraries_normalized_dedup <- calculate_weighted_mean_and_error(
+  phix_all_dms_sub_libraries_normalized,
+  "genome_mut_ID_nt",
+  "fitness_normalized2",
+  "sigma_rescaled2",
+  "fitness_final",
+  "sigma_final")
+
+table(duplicated(phix_all_dms_sub_libraries_normalized_dedup$genome_nt_mut_seq))
+# FALSE 
+# 44195 
+
+## Unique genotypes: 44,195
+
+
+# 3) add genomic annotations
+# Remove oligo information 
+phix_all_dms_sub_libraries_normalized_unique <- phix_all_dms_sub_libraries_normalized_dedup %>%
+  select(-starts_with("oligo_"))
+
+# add annotations by nucleotide residues
+phix_all_dms_sub_libraries_normalized_unique$phix_aa_mut_class[is.na(phix_all_dms_sub_libraries_normalized_unique$phix_aa_mut_class)] <- "Noncoding"
+phix_all_dms_sub_libraries_normalized_unique <- phix_all_dms_sub_libraries_normalized_unique %>%
+  mutate(genome_nt_mut_pos1 = as.numeric(genome_nt_mut_pos1)) %>%
+  mutate(
+    phix_aa_mut_genes = case_when(
+      genome_nt_mut_pos1 %in% 965:1000  ~ "Noncoding#1 J-F",
+      genome_nt_mut_pos1 %in% 2285:2394 ~ "Noncoding#2 F-G",
+      genome_nt_mut_pos1 %in% 2923:2930 ~ "Noncoding#3 G-H",
+      genome_nt_mut_pos1 %in% 3918:3980 ~ "Noncoding#4 H-A",
+      TRUE ~ phix_aa_mut_genes
+    )
+  )
+
+# supplement nt annotations: Coding, protein-Coding, Overlapping Coding, and Structural proteins
+phix_all_dms_sub_libraries_normalized_unique <- 
+  update_genome_nt_positions(phix_all_dms_sub_libraries_normalized_unique, "genome_nt_mut_pos1")
+
+# Correct 'ReadThrough' to 'Stop-loss'
+phix_all_dms_sub_libraries_normalized_unique <- 
+  phix_all_dms_sub_libraries_normalized_unique %>%
+  dplyr::mutate(
+    dplyr::across(
+      where(is.character),
+      ~ stringr::str_replace_all(.x, "ReadThrough", "Stop-loss")
+    )
+  )
+
+
+
+```
+
+
+
+## Statistics
+t-test and FDR: two-sample t-test, compare to Synonymous distribution as the reference (for 1nt variants, separately);
+
+1) 1nt Data
+  Syn final fitness: phix_1nt_synonymous_combined_fitness_final
+  Syn final sigma: phix_1nt_synonymous_combined_sigma_final
+2) AA Data
+  Syn final fitness: phix_all_synonymous_combined_fitness_final
+  Syn final sigma: phix_all_synonymous_combined_sigma_final
+
+### 1) Get Reference data (Synonymous)
+Filter the synonymous fitness (normalized final) data, and calculate weighted.mean and propagate the error of SEM and make sure data is filtered correctly and remove NA values
+
+```{r}
+## All variants
+filtered_data_all_synonymous <- phix_all_dms_sub_libraries_normalized_unique %>%
+  filter(phix_aa_mut_class == "Synonymous", !is.na(fitness_final))
+
+# get weighted.mean of all synonymous mutations;
+phix_all_synonymous_combined_weights <- 1 / (filtered_data_all_synonymous$sigma_final^2)  # Weights are the inverse of variance
+phix_all_synonymous_combined_fitness_final <- sum(filtered_data_all_synonymous$fitness_final * phix_all_synonymous_combined_weights) / sum(phix_all_synonymous_combined_weights) 
+# [1] 0.9807827
+phix_all_synonymous_combined_sigma_final <- sqrt(1/sum(phix_all_synonymous_combined_weights)) 
+# [1] 0.0002573693
+
+
+
+## 1nt variants
+filtered_data_1nt_synonymous <- phix_all_dms_sub_libraries_normalized_unique %>%
+  filter(genome_nt_mut_ham == 1, phix_aa_mut_class == "Synonymous", !is.na(fitness_final))
+
+# get weighted.mean of all 1nt synonymous mutations;
+phix_1nt_synonymous_combined_weights <- 1 / (filtered_data_1nt_synonymous$sigma_final^2)  # Weights are the inverse of variance
+phix_1nt_synonymous_combined_fitness_final <- sum(filtered_data_1nt_synonymous$fitness_final * phix_1nt_synonymous_combined_weights) / sum(phix_1nt_synonymous_combined_weights) 
+# [1] 0.978221
+phix_1nt_synonymous_combined_sigma_final <- sqrt(1/sum(phix_1nt_synonymous_combined_weights)) # Sigma final = 0.0002678072, 0.0002678328, 0.0002812053
+# [1] 0.0002813241
+
+
+
+```
+
+
+### 2) two-sample t-tests
+
+```{r}
+# Make a copy for statistics
+phix_all_dms_sub_libraries_normalized_unique_stat <- phix_all_dms_sub_libraries_normalized_unique
+
+
+# Apply the function row-wise, the sample size is related to how many nt muts are merged to one AA mut 
+phix_all_dms_sub_libraries_normalized_unique_stat$p_value_two_sample_ttest_syn <- mapply(
+  two_samples_ttest,
+  phix_all_dms_sub_libraries_normalized_unique_stat$fitness_final,  # mu1 (row-wise)
+  phix_all_dms_sub_libraries_normalized_unique_stat$sigma_final,    # sem1 (row-wise)
+  MoreArgs = list(
+    n1 = 3,  # Fixed (n1),
+    mu2 = phix_all_synonymous_combined_fitness_final,  # Fixed (mu2)
+    sem2 = phix_all_synonymous_combined_sigma_final,   # Fixed (sem2)
+    n2 = 3  # Fixed (n2)
+  )
+)
+
+
+# Apply FDR correction using the function p.adjust() from basic R;
+phix_all_dms_sub_libraries_normalized_unique_stat <- phix_all_dms_sub_libraries_normalized_unique_stat %>%
+  mutate(p_value_two_sample_ttest_syn_FDR = p.adjust(p_value_two_sample_ttest_syn, method = "BH"))
+
+
+# Add raw effect size (difference from the synonymous baseline)
+phix_all_dms_sub_libraries_normalized_unique_stat$effect_size_vs_syn <-
+  phix_all_dms_sub_libraries_normalized_unique_stat$fitness_final -
+  phix_all_synonymous_combined_fitness_final
+
+
+# Add standardized effect (signal-to-noise; same scaling as t-stat numerator)
+phix_all_dms_sub_libraries_normalized_unique_stat$effect_size_std_vs_syn <-
+  (phix_all_dms_sub_libraries_normalized_unique_stat$fitness_final -
+   phix_all_synonymous_combined_fitness_final) /
+  sqrt(phix_all_dms_sub_libraries_normalized_unique_stat$sigma_final^2 +
+       phix_all_synonymous_combined_sigma_final^2)
+
+
+
+```
+
+
+### 3) Mutation Category
+FUNCTION: assign_mutation_categories_fdr
+  
+```{r}
+# Running Mutation Category
+phix_all_dms_sub_libraries_normalized_unique_stat <- assign_mutation_categories_fdr(
+  phix_all_dms_sub_libraries_normalized_unique_stat,
+  pval_col = "p_value_two_sample_ttest_syn_FDR",
+  effect_raw_col = "effect_size_vs_syn",
+  
+  alpha = 0.05,
+  effect_breaks = c(0.10, 0.15, 0.50),
+
+  # Output column names
+  effect_bin_col = "effect_size_bin",
+  category_fdr_col = "mutation_category_FDR",
+  category_fdr_lethal_col = "mutation_category_FDR_lethal",
+  category_cutoff_col = "mutation_category_FDR_cutoff",
+  category_combined_col = "mutation_category_FDR_cutoff_combined",
+  
+  direction_col = "mutation_direction",
+  direction_lethal_col = "mutation_direction_lethal"
+)
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat$mutation_direction) 
+# Fitness-increasing            Neutral Fitness-decreasing 
+#                533              14491              29171 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat$mutation_direction_lethal)
+# Fitness-increasing            Neutral Fitness-decreasing             Lethal 
+#                533              14491               9118              20053 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat$mutation_category_FDR) 
+# Beneficial     Neutral Detrimental
+#        533       14491       29171 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat$mutation_category_FDR_lethal)
+# Beneficial     Neutral Detrimental      Lethal 
+#        533       14491        9118       20053 
+
+
+```
+
+
+### 4) Complete nucleotides annotations
+separate noncoding annotations to the all sub data data.frame
+- RBS, Promoters, Terminators, Ori+ ... 
+
+```{r}
+# Supplement annotations
+phix_all_dms_sub_libraries_normalized_unique_stat <-
+  phix_all_dms_sub_libraries_normalized_unique_stat %>%
+  
+  dplyr::mutate(
+    
+    # ---- 1) nucleotide class priority ----
+    genome_nt_pos_nucleotide_class = purrr::pmap_chr(
+      list(genome_nt_pos_overlap_orf, genome_nt_pos_coding, genome_nt_pos_noncoding),
+      ~ {
+        if (!is.na(..1)) {
+          as.character(..1)
+        } else if (!is.na(..2)) {
+          as.character(..2)
+        } else if (!is.na(..3)) {
+          as.character(..3)
+        } else {
+          NA_character_
+        }
+      }
+    )
+  ) %>%
+
+  # ---- RBS ----
+  dplyr::left_join(
+    tibble::tibble(
+      genome_nt_mut_pos1 = c(
+        5063:5068, 39:45, 124:130, 378:381, 555:558,
+        836:840, 991:994, 2383:2387, 2923:2928, 3969:3973
+      ),
+      genome_nt_pos_RBS = "RBS",
+      genome_nt_pos_RBS_gene = c(
+        rep("RBS (B)", length(5063:5068)),
+        rep("RBS (K)", length(39:45)),
+        rep("RBS (C)", length(124:130)),
+        rep("RBS (D)", length(378:381)),
+        rep("RBS (E)", length(555:558)),
+        rep("RBS (J)", length(836:840)),
+        rep("RBS (F)", length(991:994)),
+        rep("RBS (G)", length(2383:2387)),
+        rep("RBS (H)", length(2923:2928)),
+        rep("RBS (A)", length(3969:3973))
+      )
+    ),
+    by = "genome_nt_mut_pos1"
+  ) %>%
+
+  # ---- promoter ----
+  dplyr::left_join(
+    tibble::tibble(
+      genome_nt_mut_pos1 = c(3927:3955, 129:155, 4863:4892, 313:357),
+      genome_nt_pos_promoter = "Promoter",
+      genome_nt_pos_promoter_gene = c(
+        rep("pA", length(3927:3955)),
+        rep("pD2 (btss49)", length(129:155)),
+        rep("pB", length(4863:4892)),
+        rep("pD", length(313:357))
+      )
+    ),
+    by = "genome_nt_mut_pos1"
+  ) %>%
+
+  # ---- anti-sense promoter ----
+  dplyr::left_join(
+    tibble::tibble(
+      genome_nt_mut_pos1 = c(2753:2779, 4021:4052),
+      genome_nt_pos_promoter_anti_sense = c(
+        rep("pR3", length(2753:2779)),
+        rep("pR12", length(4021:4052))
+      )
+    ),
+    by = "genome_nt_mut_pos1"
+  ) %>%
+
+  # ---- terminator ----
+  dplyr::left_join(
+    tibble::tibble(
+      genome_nt_mut_pos1 = c(3956:3974, 2909:2942, 5160:5238, 2308:2351, 969:985),
+      genome_nt_pos_terminator = "Terminator",
+      genome_nt_pos_terminator_gene = c(
+        rep("TH", length(3956:3974)),
+        rep("TG", length(2909:2942)),
+        rep("TB (RUT-3)", length(5160:5238)),
+        rep("TF", length(2308:2351)),
+        rep("TJ", length(969:985))
+      )
+    ),
+    by = "genome_nt_mut_pos1"
+  ) %>%
+
+  dplyr::mutate(
+    
+    # ---- ORI ----
+    genome_nt_pos_ori = dplyr::case_when(
+      genome_nt_mut_ham == 1 &
+        genome_nt_mut_pos1 %in% c(4299:4328) ~ "Ori (+)",
+        genome_nt_mut_pos1 %in% c(2308:2351) ~ "Ori (-)",
+      TRUE ~ NA_character_
+    ),
+    
+    # ---- combine annotations ----
+    genome_nt_pos_annotation = purrr::pmap_chr(
+      list(
+        genome_nt_pos_RBS,
+        genome_nt_pos_promoter,
+        genome_nt_pos_terminator,
+        genome_nt_pos_ori,
+        genome_nt_mut_pos1
+      ),
+      ~ {
+        values <- na.omit(c(..1, ..2, ..3, ..4))
+        
+        if (length(values) == 0 &&
+            ..5 %in% c(965:1000, 2285:2394, 2923:2930, 3918:3980)) {
+          "Unknown Noncoding"
+        } else if (length(values) == 0) {
+          NA_character_
+        } else {
+          paste(unique(values), collapse = ",")
+        }
+      }
+    )
+  )
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat$genome_nt_pos_annotation)
+#           Ori (+)           Promoter                RBS       RBS,Promoter     RBS,Terminator         Terminator Terminator,Ori (-)  Unknown Noncoding 
+#                90               1005                331                 20                 33               1270                130                269 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat$phix_aa_mut_class)
+#   Missense   Noncoding    Nonsense ReadThrough  Synonymous 
+#      36996         636        2653         352        3558 
+
+#save(phix_all_dms_sub_libraries_normalized_unique_stat, file = "./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat.RData")
+
+
+```
+
+
+
+
+## Prepare 1nt and AA variants data
+From the data.frame with statistics results for all variants - 'phix_all_dms_sub_libraries_normalized_unique_stat'
+
+```{r}
+# check all variants
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat), 0)
+table(duplicated(phix_all_dms_sub_libraries_normalized_unique_stat$genome_mut_ID_nt))
+# FALSE 
+# 44195 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat$genome_nt_pos_coding) 
+# Coding 
+#  43559 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat$genome_nt_pos_overlap_orf) 
+# Overlapping Coding 
+#              10133 
+
+
+```
+
+
+### 1) 1nt-level data.frame 
+- phix_all_dms_sub_libraries_normalized_unique_stat_1nt;
+
+```{r}
+# Subset 1nt variants
+phix_all_dms_sub_libraries_normalized_unique_stat_1nt <- phix_all_dms_sub_libraries_normalized_unique_stat %>%
+  filter(genome_nt_mut_ham == 1)
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$phix_aa_mut_class)
+#   Missense   Noncoding    Nonsense Stop-loss  Synonymous 
+#      11740         636         716          75        2931 
+
+
+
+```
+
+
+### 2) AA-level data.frame
+Subset variants encoding amino-acid changes, then combine those causing same changes by taking weighted.mean and propagating the error;
+- phix_all_dms_sub_libraries_normalized_unique_stat_AA
+
+```{r}
+# Subset Amino-acid variants
+phix_all_dms_sub_libraries_normalized_unique_stat_aa <- phix_all_dms_sub_libraries_normalized_unique_stat %>%
+  filter(genome_nt_pos_coding == "Coding") 
+
+
+# Check the frequency of each mut ID, and supplement aa mut frequency and Sample size to the data.frame
+count_table_phix_aa_mut_ID <- as.data.frame(table(phix_all_dms_sub_libraries_normalized_unique_stat_aa$phix_aa_mut_ID))
+names(count_table_phix_aa_mut_ID) = c("phix_aa_mut_ID", "phix_aa_mut_ID_freq")
+table(count_table_phix_aa_mut_ID$phix_aa_mut_ID_freq)
+#     1     2     3     4     5 
+# 38518   869   587     6   285
+
+phix_all_dms_sub_libraries_normalized_unique_stat_aa <- 
+  merge(phix_all_dms_sub_libraries_normalized_unique_stat_aa, count_table_phix_aa_mut_ID, by = "phix_aa_mut_ID")
+
+phix_all_dms_sub_libraries_normalized_unique_stat_aa$phix_aa_mut_ID_sample_size <- 
+  phix_all_dms_sub_libraries_normalized_unique_stat_aa$phix_aa_mut_ID_freq*3
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat_aa$phix_aa_mut_ID_freq)
+#     1     2     3     4     5 
+# 38518  1738  1761    24  1425 
+
+
+# Calculate fitness for unique genotypes by weighte.mean for the same phix_aa_mut_ID
+phix_all_dms_sub_libraries_normalized_unique_stat_aa_dedup <- calculate_unique_weighted_mean_and_error(
+  phix_all_dms_sub_libraries_normalized_unique_stat_aa, 
+  "phix_aa_mut_ID", "fitness_final", "sigma_final", 
+  "fitness_final_unique", "sigma_final_unique"
+)
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_aa_dedup), 0)
+
+
+# Remove genome nt annotation columns and unique($phix_aa_mut_ID) and get AA-level data.frame
+phix_all_dms_sub_libraries_normalized_unique_stat_AA <- phix_all_dms_sub_libraries_normalized_unique_stat_aa_dedup %>%
+  select(
+    -starts_with("genome_nt_"),
+    -starts_with("gene_sub_nt_"),
+    -starts_with("fitness_rep"),
+    -starts_with("sigma_rep"),
+    -starts_with("fitness_normalized"),
+    -starts_with("sigma_rescaled"),
+    -genome_mut_ID_nt,
+    -fitness_dimsum,
+    -sigma_dimsum
+  ) %>%
+  distinct(phix_aa_mut_ID, .keep_all = TRUE)
+
+dim(phix_all_dms_sub_libraries_normalized_unique_stat_AA)
+# [1] 40358    50
+
+
+
+```
+
+
+### 3) Synonymous variants 
+Get variant genome sequences for synonymous variants.
+
+```{r}
+# mut
+phix_restored_mut_genome_seq_D_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut_gene == "D", gene_sub_aa_mut_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_D_syn)
+# [1] 388x 
+
+phix_restored_mut_genome_seq_F_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut_gene == "F", gene_sub_aa_mut_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_F_syn)
+# [1] 1058
+
+phix_restored_mut_genome_seq_H_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut_gene == "H", gene_sub_aa_mut_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_H_syn)
+# [1] 781
+
+phix_restored_mut_genome_seq_K_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut_gene == "K", gene_sub_aa_mut_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_K_syn)
+# [1] 176
+
+
+# mut2
+phix_restored_mut_genome_seq_B_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut2_gene == "B", gene_sub_aa_mut2_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_B_syn)
+# [1] 270x 
+
+phix_restored_mut_genome_seq_C_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut2_gene == "C", gene_sub_aa_mut2_ham == 0) %>%
+  select(genome_nt_mut_seq) 
+nrow(phix_restored_mut_genome_seq_C_syn)
+# [1] 246x 
+
+phix_restored_mut_genome_seq_E_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut2_gene == "E", gene_sub_aa_mut2_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_E_syn)
+# [1] 283x 
+
+ 
+# mut3
+phix_restored_mut_genome_seq_A_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut3_gene == "A", gene_sub_aa_mut3_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_A_syn)
+# [1] 1262x 
+
+#phix_restored_mut_genome_seq_Astar_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>%
+phix_restored_mut_genome_seq_G_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut3_gene == "G", gene_sub_aa_mut3_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_G_syn)
+# [1] 447x 
+
+phix_restored_mut_genome_seq_J_syn <- phix_all_dms_sub_libraries_normalized_unique_stat %>% 
+  filter(gene_sub_aa_mut3_gene == "J", gene_sub_aa_mut3_ham == 0) %>%
+  select(genome_nt_mut_seq)
+nrow(phix_restored_mut_genome_seq_J_syn)
+# [1] 108x 
+
+
+# save 
+save(
+  phix_restored_mut_genome_seq_A_syn,
+  phix_restored_mut_genome_seq_B_syn,
+  phix_restored_mut_genome_seq_C_syn,
+  phix_restored_mut_genome_seq_D_syn,
+  phix_restored_mut_genome_seq_E_syn,
+  phix_restored_mut_genome_seq_F_syn,
+  phix_restored_mut_genome_seq_G_syn,
+  phix_restored_mut_genome_seq_H_syn,
+  phix_restored_mut_genome_seq_J_syn,
+  phix_restored_mut_genome_seq_K_syn,
+  file = "./data/mutant_library_data/Restored/restored_all_synonymous.RData"
+)
+
+
+```
+
+
+
+## Update Statistics, separately within the Nt- and AA-level data
+1) within 1Nt-level variants
+  - use 1nt subs synonymous as reference, the Weighted.mean of the fitness from all 1nt Synonymous data;
+
+2) within AA-level variants
+ - for AA unique data, because we merged data of repetitive genotypes, so needs to update separately;
+ - get the references for AA variants;
+ 
+3) the fitness data columns are different for 1nt level data and AA level data;
+
+### 1.1) 1nt data, Two-sample t-test and Mutation Category;
+```{r}
+# Check data
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_1nt), 0)
+
+
+# Running Statistic Tests
+phix_all_dms_sub_libraries_normalized_unique_stat_1nt$p_value_1nt_two_sample_ttest_syn <- mapply(
+  two_samples_ttest,
+  phix_all_dms_sub_libraries_normalized_unique_stat_1nt$fitness_final, 
+  phix_all_dms_sub_libraries_normalized_unique_stat_1nt$sigma_final,
+  MoreArgs = list(
+    mu2 = phix_1nt_synonymous_combined_fitness_final,
+    sem2 = phix_1nt_synonymous_combined_sigma_final,
+    n1 = 3,  # Mutant replicates, 3x biological replicates per variant
+    n2 = 3  # Synonymous population, sum of all at phix organism level from 30x libraries
+  )
+)
+
+
+# Apply FDR correction using the function p.adjust() from basic R;
+phix_all_dms_sub_libraries_normalized_unique_stat_1nt <- phix_all_dms_sub_libraries_normalized_unique_stat_1nt %>%
+  mutate(p_value_1nt_two_sample_ttest_syn_FDR = p.adjust(p_value_1nt_two_sample_ttest_syn, method = "BH"))
+
+
+# Add raw effect size (difference from the synonymous baseline)
+phix_all_dms_sub_libraries_normalized_unique_stat_1nt$effect_size_vs_1nt_syn <-
+  phix_all_dms_sub_libraries_normalized_unique_stat_1nt$fitness_final -
+  phix_1nt_synonymous_combined_fitness_final
+
+
+# Add standardized effect (signal-to-noise; same scaling as t-stat numerator)
+phix_all_dms_sub_libraries_normalized_unique_stat_1nt$effect_size_std_vs_1nt_syn <-
+  (phix_all_dms_sub_libraries_normalized_unique_stat_1nt$fitness_final -
+   phix_1nt_synonymous_combined_fitness_final) /
+  sqrt(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$sigma_final^2 +
+       phix_1nt_synonymous_combined_sigma_final^2)
+
+
+
+```
+
+- 1nt Mutation Category 
+```{r}
+# Check data
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_1nt), 0)
+
+
+# Running Mutation Category
+phix_all_dms_sub_libraries_normalized_unique_stat_1nt <- assign_mutation_categories_fdr(
+  phix_all_dms_sub_libraries_normalized_unique_stat_1nt,
+  pval_col = "p_value_1nt_two_sample_ttest_syn_FDR",
+  effect_raw_col = "effect_size_vs_1nt_syn",
+  
+  alpha = 0.05,
+  effect_breaks = c(0.10, 0.15, 0.50),
+
+  # Output column names
+  effect_bin_col = "effect_size_bin_1nt",
+  category_fdr_col = "mutation_category_FDR_1nt",
+  category_fdr_lethal_col = "mutation_category_FDR_lethal_1nt",
+  category_cutoff_col = "mutation_category_FDR_cutoff_1nt",
+  category_combined_col = "mutation_category_FDR_cutoff_1nt_combined",
+  
+  direction_col = "mutation_direction_1nt",
+  direction_lethal_col = "mutation_direction_lethal_1nt"
+)
+
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$mutation_category_FDR_1nt) 
+# Beneficial     Neutral Detrimental 
+#        176        7693        8229 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$mutation_category_FDR_lethal_1nt)
+# Beneficial     Neutral Detrimental      Lethal 
+#        176        7693        3164        5065 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$mutation_direction_1nt) 
+# Fitness-increasing            Neutral Fitness-decreasing 
+#                176               7693               8229 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$mutation_direction_lethal_1nt) 
+# Fitness-increasing            Neutral Fitness-decreasing             Lethal 
+#                176               7693               3164               5065 
+
+
+
+```
+
+
+### 1.2) AA-level data, Two-sample t-test and Mutation Category;
+```{r}
+# Check AA data
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_AA), 0)
+table(phix_all_dms_sub_libraries_normalized_unique_stat_AA$phix_aa_mut_class)
+#   Missense    Nonsense   Stop-loss  Synonymous 
+#      36081        2542         339        1396 
+
+
+# Get AA-level reference
+filtered_data_AA_synonymous <- phix_all_dms_sub_libraries_normalized_unique_stat_AA %>%
+  filter(phix_aa_mut_class == "Synonymous", !is.na(fitness_final_unique))
+
+# get weighted.mean of all 1nt synonymous mutations;
+phix_AA_synonymous_combined_weights <- 1 / (filtered_data_AA_synonymous$sigma_final^2)  # Weights are the inverse of variance
+phix_AA_synonymous_combined_fitness_final <- sum(filtered_data_AA_synonymous$fitness_final * phix_AA_synonymous_combined_weights) / sum(phix_AA_synonymous_combined_weights) 
+# [1] 0.9779537
+phix_AA_synonymous_combined_sigma_final <- sqrt(1/sum(phix_AA_synonymous_combined_weights)) 
+# [1] 0.0004107135
+
+
+# Apply the function row-wise, the sample size is related to how many nt muts are merged to one AA mut 
+phix_all_dms_sub_libraries_normalized_unique_stat_AA$p_value_AA_two_sample_ttest_syn <- mapply(
+  two_samples_ttest,
+  phix_all_dms_sub_libraries_normalized_unique_stat_AA$fitness_final_unique,  # mu1 (row-wise)
+  phix_all_dms_sub_libraries_normalized_unique_stat_AA$sigma_final_unique,    # sem1 (row-wise)
+  MoreArgs = list(
+    n1 = 3,  # Fixed (n1),
+    mu2 = phix_AA_synonymous_combined_fitness_final,  # Fixed (mu2)
+    sem2 = phix_AA_synonymous_combined_sigma_final,   # Fixed (sem2)
+    n2 = 3  # Fixed (n2)
+  )
+)
+
+
+# Apply FDR correction using the function p.adjust() from basic R;
+phix_all_dms_sub_libraries_normalized_unique_stat_AA <- phix_all_dms_sub_libraries_normalized_unique_stat_AA %>%
+  mutate(p_value_AA_two_sample_ttest_syn_FDR = p.adjust(p_value_AA_two_sample_ttest_syn, method = "BH"))
+
+
+# Add raw effect size (difference from the synonymous baseline)
+phix_all_dms_sub_libraries_normalized_unique_stat_AA$effect_size_vs_AA_syn <-
+  phix_all_dms_sub_libraries_normalized_unique_stat_AA$fitness_final -
+  phix_AA_synonymous_combined_fitness_final
+
+
+# Add standardized effect (signal-to-noise; same scaling as t-stat numerator)
+phix_all_dms_sub_libraries_normalized_unique_stat_AA$effect_size_std_vs_AA_syn <-
+  (phix_all_dms_sub_libraries_normalized_unique_stat_AA$fitness_final -
+   phix_AA_synonymous_combined_fitness_final) /
+  sqrt(phix_all_dms_sub_libraries_normalized_unique_stat_AA$sigma_final^2 +
+       phix_AA_synonymous_combined_sigma_final^2)
+
+
+
+```
+
+- AA Mutation Category
+```{r}
+# Check data
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_AA), 0)
+
+
+# Running Mutation Category
+phix_all_dms_sub_libraries_normalized_unique_stat_AA <- assign_mutation_categories_fdr(
+  phix_all_dms_sub_libraries_normalized_unique_stat_AA,
+  pval_col = "p_value_AA_two_sample_ttest_syn_FDR",
+  effect_raw_col = "effect_size_vs_AA_syn",
+  
+  #alpha = 1,
+  alpha = 0.05,
+  effect_breaks = c(0.10, 0.15, 0.50),
+
+  # Output column names
+  effect_bin_col = "effect_size_bin_AA",
+  category_fdr_col = "mutation_category_FDR_AA",
+  category_fdr_lethal_col = "mutation_category_FDR_lethal_AA",
+  category_cutoff_col = "mutation_category_FDR_cutoff_AA",
+  category_combined_col = "mutation_category_FDR_cutoff_AA_combined",
+  
+  direction_col = "mutation_direction_AA",
+  direction_lethal_col = "mutation_direction_lethal_AA"
+)
+
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat_AA$mutation_category_FDR_AA) 
+# Beneficial     Neutral Detrimental 
+#        623       11394       28341 
+
+table(phix_all_dms_sub_libraries_normalized_unique_stat_AA$mutation_category_FDR_lethal_AA)
+# Beneficial     Neutral Detrimental      Lethal 
+#        623       11394        8732       19609 
+
+
+
+```
+
+
+
+## Save RData
+### All Substitutions 
+```{r}
+## All Data
+save(phix_all_dms_sub_libraries_normalized_unique_stat, file = "./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat.RData")
+write_tsv(phix_all_dms_sub_libraries_normalized_unique_stat, file = "./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat.tsv")
+# 'Supplementary_file_phix_variants_fitness.tsv'
+
+## 1nt Substitution Data
+save(phix_all_dms_sub_libraries_normalized_unique_stat_1nt, file = "./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_1nt.RData")
+write_tsv(phix_all_dms_sub_libraries_normalized_unique_stat_1nt, file = "./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_1nt.tsv")
+# 'Supplementary_file_phix_1nt_variants_fitness.tsv'
+
+## AA Substitution Data
+save(phix_all_dms_sub_libraries_normalized_unique_stat_AA, file = "./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_AA.RData")
+write_tsv(phix_all_dms_sub_libraries_normalized_unique_stat_AA, file = "./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_AA.tsv")
+
+
+
+```
+
+
+
+## Save script checkpoint
+save a snapshot of all objects produced by the script
+
+```{r}
+# checkpoint - 02 combine, deduplicate and processs all variants, including statistics and mutation category
+# save.image(file = "data/checkpoints/02_all_variants_analysis.RData")
+
+
+
+```
+
+
+
+
+
+## Process all variants
+All variants and AA variants; (Single-nucleotide variants in script 03)
+
+### 1) make plotting data.frames
+- 1) subset three types data: all, nonoverlapping, AA; (1nt mutations are analyzed above)
+- 2) add factor level to plotting columns;
+  - all variants: phix_all_dms_sub_unique_plotting # [1] 44195
+  - single-aa-changed variants: phix_nonover_dms_sub_unique_plotting (phix_aa_mut_ham < 2) # [1] 35235
+  - AA variants: phix_all_dms_sub_unique_AA_plotting # [1] 40358
+
+```{r}
+# check data
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat), 0)
+table(phix_all_dms_sub_libraries_normalized_unique_stat$phix_aa_mut_class)
+nrow(phix_all_dms_sub_libraries_normalized_unique_stat)
+# [1] 44195
+
+# prepare plotting data
+# 1) all variants (n=44195)
+phix_all_dms_sub_unique_plotting <- phix_all_dms_sub_libraries_normalized_unique_stat %>%
+  mutate(
+    genome_nt_mut_ham = factor(
+      genome_nt_mut_ham,
+      levels = c("1", "2", "3")
+    ),
+    phix_aa_mut_class = factor(
+      phix_aa_mut_class,
+      levels = c("Stop-loss", "Noncoding", "Synonymous", "Nonsense", "Missense")
+    )
+  ) 
+nrow(phix_all_dms_sub_unique_plotting)
+# [1] 44195
+
+
+# 2) nonoverlapping variants (n=35235)
+phix_nonover_dms_sub_unique_plotting <- phix_all_dms_sub_unique_plotting %>%
+  filter(phix_aa_mut_ham < 2)
+nrow(phix_nonover_dms_sub_unique_plotting)
+# [1] 35235
+
+
+# 3) AA substitution Variants (n=40358)
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_AA), 0)
+phix_all_dms_sub_unique_AA_plotting <- phix_all_dms_sub_libraries_normalized_unique_stat_AA %>%
+  mutate(
+    phix_aa_mut_class = factor(
+      phix_aa_mut_class,
+      levels = c("Stop-loss", "Noncoding", "Synonymous", "Nonsense", "Missense")
+    )
+  ) 
+nrow(phix_all_dms_sub_libraries_normalized_unique_stat_AA)
+# [1] 40358
+
+
+
+```
+
+
+### 2) summary tables
+- FUNCTION: generate_mutation_category_summary
+
+```{r}
+# check data
+head(as.data.frame(phix_all_dms_sub_unique_plotting), 0)
+table(phix_all_dms_sub_unique_plotting$mutation_category_FDR_lethal)
+# Beneficial     Neutral Detrimental      Lethal 
+#        533       14491        9118       20053 
+
+
+# run the Summary Function 
+summary_phix_sub_mut <- generate_mutation_category_summary(
+  phix_all_dms_sub_unique_plotting,
+  
+  class_col = c("phix_aa_mut_genes"),
+  #class_col = c("phix_aa_mut_class"),
+  #class_col = c("genome_nt_pos_coding"),
+  #class_col = c("genome_nt_pos_nucleotide_class", "phix_aa_mut_class", "phix_aa_mut_genes", "phix_aa_mut_ham"),
+  
+  #category_col = "mutation_category_FDR"
+  category_col = "mutation_category_FDR_lethal"
+  #category_col = "mutation_category_FDR_cutoff"
+  #category_col = "mutation_category_FDR_cutoff_combined"
+)
+
+summary_phix_sub_mut_nonover <- generate_mutation_category_summary(
+  phix_nonover_dms_sub_unique_plotting,
+  
+  class_col = c("genome_nt_pos_nucleotide_class", "phix_aa_mut_class", "phix_aa_mut_genes", "phix_aa_mut_ham"),
+  #class_col = c("genome_nt_pos_coding"),
+  
+  #category_col = "mutation_category_FDR"
+  category_col = "mutation_category_FDR_lethal"
+  #category_col = "mutation_category_FDR_cutoff"
+  #category_col = "mutation_category_FDR_cutoff_combined"
+)
+
+
+# AA
+summary_phix_sub_mut_AA <- generate_mutation_category_summary(
+  phix_all_dms_sub_unique_AA_plotting,
+  phix_all_dms_sub_unique_AA_plotting[phix_all_dms_sub_unique_AA_plotting$phix_aa_mut_ham < 2,],
+  
+  class_col = c("phix_aa_mut_class", "phix_aa_mut_genes", "phix_aa_mut_ham"),
+  category_col = "mutation_category_FDR_cutoff"
+)
+
+
+
+
+
+```
+
+
+
+## Plots
+### 1) pairwise scatterplot matrix
+Replicate correlations (Figure S1)
+```{r}
+# plotting pearson correlation of 3 replicates
+pair_rep_plot <- plot_replicate_reproducibility(
+  #df = phix_all_dms_sub_libraries_normalized,
+  #df = phix_all_dms_sub_libraries_normalized_unique,
+  df = phix_all_dms_sub_libraries_normalized_unique_stat,
+  
+  replicate_cols = c("fitness_rep1_uncorr", "fitness_rep2_uncorr", "fitness_rep3_uncorr"),
+  
+  cor_method = "pearson",
+  title = "Reproducibility of Fitness Replicates"
+)
+print(pair_rep_plot)
+
+# saving
+ggsave(pair_rep_plot, filename = "./plots/pair_rep_plot.pdf", width = 4, height = 4)
+
+
+
+
+```
+
+
+### 2) Bar plots + Pie Charts
+Mutant Library Composition (Figure S1).
+```{r}
+## Prepare the pie chart showing 1nt percentage
+mut_library_nt_ham <- as.data.frame(table(phix_all_dms_sub_unique_plotting$genome_nt_mut_ham))
+mut_library_nt_ham$percent <- round(mut_library_nt_ham$Freq / 44195 * 100, 1)
+mut_library_nt_ham$Nt_ham <- paste0(mut_library_nt_ham$Var1, "nt")
+mut_library_nt_ham$Nt_ham <- factor(mut_library_nt_ham$Nt_ham, levels = c("1nt", "2nt", "3nt"))
+pie_mut_library_nt_ham <- plot_pie_summary(
+  mut_library_nt_ham, 
+  x_col = "Nt_ham", 
+  y_col = "percent",
+  outline_linewidth = 0.5,
+  plot_title = "Nucleotide Hamming Distance \n(n=43427)", 
+  palette = "Set3"
+)
+print(pie_mut_library_nt_ham)
+
+
+#ggsave(pie_mut_library_nt_ham, filename = "./plots/pie_mut_library_nt_ham.pdf", width = 5, height = 4)
+
+
+
+
+```
+
+
+### 3) Density plots (Ridgeline plots)
+Mutational effects distribution (Figure S1).
+```{r}
+## Table Check
+table(phix_all_dms_sub_unique_plotting$genome_nt_pos_annotation)
+
+
+## Plot Ridgeline 
+density_mut_class <- plot_ridgeline_mut_class(
+  phix_all_dms_sub_unique_plotting, 
+  
+  class_col = phix_aa_mut_class,
+  
+  #plot_title = "Fitness Distribution of All Mutants (n=44102))"
+  #plot_title = "Fitness Distribution of Nonoverlapping Mutants (n=35233))"
+  plot_title = "Fitness Distribution of Single Nucleotide Variants (n=16097))"
+  )  + 
+  geom_vline(xintercept = 1, linetype = "dashed", color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black")
+print(density_mut_class)
+
+
+## Save Plots
+ggsave(density_mut_class, filename = "./plots/ridgeline_phix_nt_mut_mut_class.pdf", width = 3.5, height = 3)
+
+
+
+```
+
+
+### 4) Volcano plots (Statistics)
+Fitness effects and statistical significance
+```{r}
+## check data
+head(as.data.frame(phix_all_dms_sub_unique_plotting), 0)
+
+
+## Volcano plot - All Nucleotide Substitution Vatiants
+volcano_sub <- plot_volcano(
+  #phix_all_dms_sub_unique_plotting, 
+  #phix_all_dms_sub_unique_no_plotting,
+  #phix_all_dms_sub_unique_AA_plotting,
+  
+  x_col = "fitness_final", 
+  
+  #y_col = "p_value_two_sample_ttest_syn_FDR", 
+  #y_col = "p_value_AA_two_sample_ttest_syn_FDR", 
+  
+  #color_col = "mutation_category_FDR",
+  #color_col = "mutation_category_FDR_lethal",
+  
+  #color_col = "mutation_category_FDR_AA",
+  #color_col = "mutation_category_FDR_lethal_AA",
+  
+  x_lim = c(-1, 1.5), 
+  y_lim = c(0, 2.7), 
+  
+  plot_title = "All Substitutions (n=44195)"
+  #plot_title = "Nonoverlapping AA Substitutions (AA ham < 2) (n=35227)"
+  #plot_title = "Amino Acid Variants (n=40358)"
+  ) + 
+  #geom_vline(xintercept = phix_all_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
+  geom_vline(xintercept = phix_AA_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
+  
+  #geom_vline(xintercept = 0.5*phix_all_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
+  geom_vline(xintercept = 0.5*phix_AA_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
+  
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")  # FDR threshold line
+
+print(volcano_sub)
+
+
+# Saving
+#ggsave(volcano_sub, filename = "./plots/volcano_all.pdf", width = 3, height = 3)
+#ggsave(volcano_sub, filename = "./plots/volcano_nonover.pdf", width = 3, height = 3)
+ggsave(volcano_sub, filename = "./plots/volcano_AA.pdf", width = 3, height = 3)
+
+
+```
+
+
+
+
+## Save script checkpoint
+save a snapshot of all objects produced by the script
+
+```{r}
+# checkpoint - 02 combine, deduplicate and processs all variants, including statistics and mutation category
+# save.image(file = "data/checkpoints/02_all_variants_analysis.RData")
+
+
+
+```
+
+
+
+
+
