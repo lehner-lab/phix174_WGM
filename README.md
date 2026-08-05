@@ -4,6 +4,7 @@ Complete mutagenesis of the genome and proteome of ΦX174
 ## Abstract
 The bacteriophage ΦX174 was the first genome to be sequenced and the first to be chemically synthesised. Here we present a complete map of the consequences of changing every nucleotide in the ΦX174 genome and every amino acid in the proteome. In total, half of nucleotide and >60% of amino acid changes impair fitness. However, this varies substantially across proteins and non-coding regions. Surprisingly, the most important mechanistic cause of reduced fitness is disruption of protein interaction interfaces, accounting for nearly half of detrimental protein variants. A further one quarter of damaging variants disrupt protein cores but one in four lack a mechanistic explanation. Mutational effects are only moderately-well predicted by state-of-the-art artificial intelligence models, but, combined with structural modelling, provide mechanistic hypotheses and insights into the DNA replication machinery. This complete mutagenesis of a biological system quantifies the limits of our current understanding of, and ability to predict, molecular biology.
 
+
 ## Repository structure
 This repository contains the metadata, reference sequences, and analysis scripts used to process deep-sequencing data from ΦX174 variant libraries and calculate variant fitness values using DiMSum.
 
@@ -23,6 +24,15 @@ phix174-WGM/
 │   ├── 04_single_amino_acid_variants.R
 │   ├── 05_evaluate_VEPs.R
 │   └── 06_evaluate_AF3_models.R
+│
+├── scripts/
+│   ├── README.md
+│   ├── 01_download_ena_fastq.sh
+│   ├── 02_concatenate_lanes.sh
+│   ├── 03_run_DiMSum.sh
+│   ├── 04_run_contacts.sh
+│   ├── 05_run_ipSAE.sh
+│   └── 06_run_internal_RMSD.sh
 │
 ├── data/
 │   ├── raw_fitness_data/
@@ -49,7 +59,6 @@ phix174-WGM/
     ├── experiment_designs/
     └── variant_identity/
 ```
-
 
 
 ## Data Availability
