@@ -11,6 +11,7 @@ editor_options:
 ```{r}
 here::here()
 
+
 ```
 
 
@@ -326,9 +327,11 @@ phix_dimsum_fitness_libraries_loaded <- c(
 for (lib in phix_dimsum_fitness_libraries_loaded) {
 
   file_path <- file.path(
+    "codes_Github_final",
     "data",
-    "raw_data",
     "raw_fitness_data",
+    #"DiMSum",
+    #"all_fitness_replicates",
     paste0(lib, ".RData")
   )
 
@@ -382,14 +385,14 @@ phix_dimsum_fitness_libraries <- mget(
 
 saveRDS(
   phix_dimsum_fitness_libraries,
-  file = "./data/raw_data/phix_dimsum_fitness_libraries.rds",
+  file = "./codes_Github_final/data/raw_fitness_data/phix_dimsum_fitness_libraries.rds",
   compress = "xz"
 )
 
 
  # load filtered data
-sub_libs <- readRDS("./data/raw_data/phix_dimsum_fitness_libraries.rds")
-list2env(sub_libs, envir = .GlobalEnv)
+#sub_libs <- readRDS("./codes_Github_final/data/raw_fitness_data/phix_dimsum_fitness_libraries.rds")
+#list2env(sub_libs, envir = .GlobalEnv)
 
 
 ```
@@ -400,8 +403,7 @@ All mutation design in the list - phix_mut_library_sub_designs
 
 ```{r}
 ## Load Substitution mut library design - all annotated
-load("./data/mutant_library_data/phix_dms_substitutions_annotated.RData")
-load("./data/mutant_library_data/pool4_twist30_libr1_mut_sub_info.RData")
+load("./codes_Github_final/data/mutant_library_annotations/phix_dms_substitutions_annotated_final.RData")
 
 # List of mutation library design data frames
 phix_mut_library_sub_designs <- c(
@@ -731,9 +733,24 @@ phix_dms_sub_libraries_mode_summary$normalization_factor <- with(
 ```
 
 
-### 2) Get normalized references for gene H and A 
-[First run next stage (3) step (1) - normalize by Syn & Non modes, then come back step (2)]
 
+### 2) Normalize within each library by it's own Syn & Non mode
+1) Syn&Non normalization: get column fitness_normalized and sigma_rescaled
+```{r}
+# Step 1) Normalize each library by it's own Syn&Non mode; get column fitness_normalized and sigma_rescaled
+# Apply normalization for all merged data frames
+for (df_name in merged_dms_sub_libraries) {
+  normalize_fitness_and_sigma(df_name, phix_dms_sub_libraries_mode_summary)
+}
+
+### after step (1), go to stage (2) and prepare data and functions for downstream rescaling ### 
+
+
+```
+
+
+
+### 3) Get normalized references for gene H and A 
 1) got a unique 1st normalized mode of nonsense mutations for gene H in the library containing both gene H and G - "pool3_twist16_lib16";
   - use the mode of nonsense mutations for gene H to build the 1st rescaling function - 'rescale_geneH_normalization', and rescaling factor - 'rescale_geneH_normalization_factor'
 2) rescaled the libraries including protein H by the 1st normalized mode of nonsense mutations and get fitness normalized2;  
@@ -761,6 +778,7 @@ rescale_geneH_normalization <- function(x) {
 }
 rescale_geneH_normalization_factor <- abs(slope <- (1 - 0.2147633) / (1 - 0))
 rescale_geneH_normalization_factor
+# [1] 0.7852367
 
 
 # 2) 2nd normalization of rescaling libraries containing only gene H: Twist 21, 22, 17, 18, 19, 20
@@ -871,6 +889,7 @@ rescale_geneA_normalization <- function(x) {
 }
 rescale_geneA_normalization_factor <- abs((1 - (-0.6418696)) / (1 - 0))
 rescale_geneA_normalization_factor
+# [1] 1.64187
 
 
 # Function to apply fitness normalization conditions
@@ -909,21 +928,10 @@ apply_fitness_and_sigma_normalization2 <- function(df_name) {
 ```
 
 
-### 3) Normalize Substitutions data
-Normalize all substitutions data; 
-1) Syn&Non normalization; 
-2) Rescaling Gene H's and Gene A's;
 
+### 4) Rescale Substitutions data
+2) Rescaling Gene H's and Gene A's data: get column fitness_normalized2 and sigma_rescaled2 
 ```{r}
-# Step 1) Normalize each library by it's own Syn&Non mode; get column fitness_normalized and sigma_rescaled
-# Apply normalization for all merged data frames
-for (df_name in merged_dms_sub_libraries) {
-  normalize_fitness_and_sigma(df_name, phix_dms_sub_libraries_mode_summary)
-}
-
-### after step (1), go back to stage (2) and prepare data and functions for downstream normalization ### 
-
-
 # Step 2) Rescale Gene H's data; get column fitness_normalized2 and sigma_rescaled2;
 # Apply the function to all merged data frames
 for (df_name in merged_dms_sub_libraries) {
@@ -987,14 +995,14 @@ phix_dms_sub_libraries_normalized <- mget(
 
 saveRDS(
   phix_dms_sub_libraries_normalized,
-  file = "./data/raw_data/phix_dms_sub_libraries_normalized.rds",
+  file = "./codes_Github_final/data/processed_fitness_data/phix_dms_sub_libraries_normalized.rds",
   compress = "xz"
 )
 
 
 # load normalized data
-sub_libs <- readRDS("./data/raw_data/phix_dms_sub_libraries_normalized.rds")
-list2env(sub_libs, envir = .GlobalEnv)
+#sub_libs <- readRDS("./codes_Github_final/data/processed_fitness_data/phix_dms_sub_libraries_normalized.rds")
+#list2env(sub_libs, envir = .GlobalEnv)
 
 
 
