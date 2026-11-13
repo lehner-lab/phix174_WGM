@@ -1,0 +1,7 @@
+wt_hydro_property	mutation_category_FDR_1aa	count	proportion	percent
+hydrophilic	Increased	85	0.028034300791556728	2.8
+hydrophilic	No effect	1468	0.4841688654353562	48.42
+hydrophilic	Detrimental	1479	0.4877968337730871	48.78
+hydrophobic	Increased	49	0.015595162316995544	1.56
+hydrophobic	No effect	1002	0.31890515595162316	31.89
+hydrophobic	Detrimental	2091	0.6654996817313813	66.55

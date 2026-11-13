@@ -1,0 +1,10 @@
+genome_nt_pos_nucleotide_class	mutation_category_FDR_1nt	count	proportion	percent
+Coding	Increased	93	0.007142308578450196	0.71
+Coding	No effect	6195	0.47576991014515013	47.58
+Coding	Detrimental	6733	0.5170877812763996	51.71
+Noncoding	Increased	41	0.06446540880503145	6.45
+Noncoding	No effect	473	0.7437106918238994	74.37
+Noncoding	Detrimental	122	0.1918238993710692	19.18
+Overlapping Coding	Increased	42	0.017206063088897994	1.72
+Overlapping Coding	No effect	1025	0.4199098730028677	41.99
+Overlapping Coding	Detrimental	1374	0.5628840639082343	56.29

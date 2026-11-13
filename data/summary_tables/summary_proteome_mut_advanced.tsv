@@ -1,0 +1,11 @@
+aa_mut_class	mutation_category_FDR_1aa	count	proportion	percent
+Missense	Increased	403	0.014199640604629858	1.42
+Missense	No effect	8068	0.28427469081427714	28.43
+Missense	Detrimental	19910	0.701525668581093	70.15
+Nonsense	No effect	15	0.009953550099535502	1
+Nonsense	Detrimental	1492	0.9900464499004645	99
+Stop-loss	No effect	20	0.21739130434782608	21.74
+Stop-loss	Detrimental	72	0.782608695652174	78.26
+Synonymous	Increased	90	0.06405693950177936	6.41
+Synonymous	No effect	1199	0.8533807829181494	85.34
+Synonymous	Detrimental	116	0.082562277580071175	8.26

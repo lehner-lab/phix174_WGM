@@ -1,0 +1,5 @@
+mutation_category_FDR_1aa	residue_structural_group_predicted	count	proportion	percent
+Detrimental	Core	5058	0.2540431943746861	25.4
+Detrimental	Interface	9478	0.47604218985434454	47.6
+Detrimental	Non-interface surface	2803	0.1407835258663988	14.08
+Detrimental	Unknown structure	2571	0.12913108990457056	12.91
