@@ -1,0 +1,552 @@
+complex,pdb_id,label_chain,auth_chain,entity_id,component_type,polymer_type,entity_description
+ribosome,6QZP,A,L5,1,RNA,polyribonucleotide,28S rRNA (3773-MER)
+ribosome,6QZP,B,L7,2,RNA,polyribonucleotide,5S rRNA (120-MER)
+ribosome,6QZP,C,L8,3,RNA,polyribonucleotide,5.8S rRNA (156-MER)
+ribosome,6QZP,D,LA,4,protein,polypeptide(L),60S ribosomal protein L8
+ribosome,6QZP,E,LB,5,protein,polypeptide(L),60S ribosomal protein L3
+ribosome,6QZP,F,LC,6,protein,polypeptide(L),60S ribosomal protein L4
+ribosome,6QZP,G,LD,7,protein,polypeptide(L),60S ribosomal protein L5
+ribosome,6QZP,H,LE,8,protein,polypeptide(L),60S ribosomal protein L6
+ribosome,6QZP,I,LF,9,protein,polypeptide(L),60S ribosomal protein L7
+ribosome,6QZP,J,LG,10,protein,polypeptide(L),60S ribosomal protein L7a
+ribosome,6QZP,K,LH,11,protein,polypeptide(L),60S ribosomal protein L9
+ribosome,6QZP,L,LI,12,protein,polypeptide(L),60S ribosomal protein L10-like
+ribosome,6QZP,M,LJ,13,protein,polypeptide(L),60S ribosomal protein L11
+ribosome,6QZP,N,LL,14,protein,polypeptide(L),60S ribosomal protein L13
+ribosome,6QZP,O,LM,15,protein,polypeptide(L),60S ribosomal protein L14
+ribosome,6QZP,P,LN,16,protein,polypeptide(L),60S ribosomal protein L15
+ribosome,6QZP,Q,LO,17,protein,polypeptide(L),60S ribosomal protein L13a
+ribosome,6QZP,R,LP,18,protein,polypeptide(L),60S ribosomal protein L17
+ribosome,6QZP,S,LQ,19,protein,polypeptide(L),60S ribosomal protein L18
+ribosome,6QZP,T,LR,20,protein,polypeptide(L),60S ribosomal protein L19
+ribosome,6QZP,U,LS,21,protein,polypeptide(L),60S ribosomal protein L18a
+ribosome,6QZP,V,LT,22,protein,polypeptide(L),60S ribosomal protein L21
+ribosome,6QZP,W,LU,23,protein,polypeptide(L),60S ribosomal protein L22
+ribosome,6QZP,X,LV,24,protein,polypeptide(L),60S ribosomal protein L23
+ribosome,6QZP,Y,LW,25,protein,polypeptide(L),60S ribosomal protein L24
+ribosome,6QZP,Z,LX,26,protein,polypeptide(L),60S ribosomal protein L23a
+ribosome,6QZP,AA,LY,27,protein,polypeptide(L),60S ribosomal protein L26
+ribosome,6QZP,BA,LZ,28,protein,polypeptide(L),60S ribosomal protein L27
+ribosome,6QZP,CA,La,29,protein,polypeptide(L),60S ribosomal protein L27a
+ribosome,6QZP,DA,Lb,30,protein,polypeptide(L),60S ribosomal protein L29
+ribosome,6QZP,EA,Lc,31,protein,polypeptide(L),60S ribosomal protein L30
+ribosome,6QZP,FA,Ld,32,protein,polypeptide(L),60S ribosomal protein L31
+ribosome,6QZP,GA,Le,33,protein,polypeptide(L),60S ribosomal protein L32
+ribosome,6QZP,HA,Lf,34,protein,polypeptide(L),60S ribosomal protein L35a
+ribosome,6QZP,IA,Lg,35,protein,polypeptide(L),60S ribosomal protein L34
+ribosome,6QZP,JA,Lh,36,protein,polypeptide(L),60S ribosomal protein L35
+ribosome,6QZP,KA,Li,37,protein,polypeptide(L),60S ribosomal protein L36
+ribosome,6QZP,LA,Lj,38,protein,polypeptide(L),60S ribosomal protein L37
+ribosome,6QZP,MA,Lk,39,protein,polypeptide(L),60S ribosomal protein L38
+ribosome,6QZP,NA,Ll,40,protein,polypeptide(L),60S ribosomal protein L39
+ribosome,6QZP,OA,Lm,41,protein,polypeptide(L),Ubiquitin-60S ribosomal protein L40
+ribosome,6QZP,PA,Ln,42,protein,polypeptide(L),60S ribosomal protein L41
+ribosome,6QZP,QA,Lo,43,protein,polypeptide(L),60S ribosomal protein L36a
+ribosome,6QZP,RA,Lp,44,protein,polypeptide(L),60S ribosomal protein L37a
+ribosome,6QZP,SA,Lr,45,protein,polypeptide(L),60S ribosomal protein L28
+ribosome,6QZP,TA,Lz,46,protein,polypeptide(L),60S ribosomal protein L10a
+ribosome,6QZP,UA,S2,47,RNA,polyribonucleotide,18S rRNA (1740-MER)
+ribosome,6QZP,VA,S6,48,RNA,polyribonucleotide,E site tRNA (75-MER)
+ribosome,6QZP,WA,SA,49,protein,polypeptide(L),40S ribosomal protein SA
+ribosome,6QZP,XA,SB,50,protein,polypeptide(L),40S ribosomal protein S3a
+ribosome,6QZP,YA,SD,51,protein,polypeptide(L),40S ribosomal protein S3
+ribosome,6QZP,ZA,SE,52,protein,polypeptide(L),"40S ribosomal protein S4, X isoform"
+ribosome,6QZP,AB,SF,53,protein,polypeptide(L),40S ribosomal protein S5
+ribosome,6QZP,BB,SH,54,protein,polypeptide(L),40S ribosomal protein S7
+ribosome,6QZP,CB,SI,55,protein,polypeptide(L),40S ribosomal protein S8
+ribosome,6QZP,DB,SK,56,protein,polypeptide(L),40S ribosomal protein S10
+ribosome,6QZP,EB,SL,57,protein,polypeptide(L),40S ribosomal protein S11
+ribosome,6QZP,FB,SP,58,protein,polypeptide(L),40S ribosomal protein S15
+ribosome,6QZP,GB,SQ,59,protein,polypeptide(L),40S ribosomal protein S16
+ribosome,6QZP,HB,SR,60,protein,polypeptide(L),40S ribosomal protein S17
+ribosome,6QZP,IB,SS,61,protein,polypeptide(L),40S ribosomal protein S18
+ribosome,6QZP,JB,ST,62,protein,polypeptide(L),40S ribosomal protein S19
+ribosome,6QZP,KB,SU,63,protein,polypeptide(L),40S ribosomal protein S20
+ribosome,6QZP,LB,SV,64,protein,polypeptide(L),40S ribosomal protein S21
+ribosome,6QZP,MB,SX,65,protein,polypeptide(L),40S ribosomal protein S23
+ribosome,6QZP,NB,Sa,66,protein,polypeptide(L),40S ribosomal protein S26
+ribosome,6QZP,OB,Sc,67,protein,polypeptide(L),40S ribosomal protein S28
+ribosome,6QZP,PB,Sd,68,protein,polypeptide(L),40S ribosomal protein S29
+ribosome,6QZP,QB,Sg,69,protein,polypeptide(L),Receptor of activated protein C kinase 1
+ribosome,6QZP,RB,SC,70,protein,polypeptide(L),40S ribosomal protein S2
+ribosome,6QZP,SB,SG,71,protein,polypeptide(L),40S ribosomal protein S6
+ribosome,6QZP,TB,SJ,72,protein,polypeptide(L),40S ribosomal protein S9
+ribosome,6QZP,UB,SM,73,protein,polypeptide(L),40S ribosomal protein S12
+ribosome,6QZP,VB,SN,74,protein,polypeptide(L),40S ribosomal protein S13
+ribosome,6QZP,WB,SO,75,protein,polypeptide(L),40S ribosomal protein S14
+ribosome,6QZP,XB,SW,76,protein,polypeptide(L),40S ribosomal protein S15a
+ribosome,6QZP,YB,SY,77,protein,polypeptide(L),40S ribosomal protein S24
+ribosome,6QZP,ZB,SZ,78,protein,polypeptide(L),40S ribosomal protein S25
+ribosome,6QZP,AC,Sb,79,protein,polypeptide(L),40S ribosomal protein S27
+ribosome,6QZP,BC,Se,80,protein,polypeptide(L),40S ribosomal protein S30
+ribosome,6QZP,CC,Sf,81,protein,polypeptide(L),Ubiquitin-40S ribosomal protein S27a
+ribosome,6QZP,DC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZC,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ED,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ID,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ND,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZD,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ME,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZE,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZF,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZG,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZH,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,II,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZI,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZJ,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZK,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ML,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZL,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QM,L5,83,ligand,NA,"(3beta)-O~3~-[(2R)-2,6-dihydroxy-2-(2-methoxy-2-oxoethyl)-6-methylheptanoyl]cephalotaxine"
+ribosome,6QZP,RM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WM,L5,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XM,L7,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YM,L7,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZM,L7,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AN,L8,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BN,L8,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CN,L8,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DN,L8,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EN,L8,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FN,L8,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GN,LA,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HN,LI,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IN,LN,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JN,LP,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KN,LS,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LN,LV,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MN,Le,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NN,Le,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ON,Lf,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PN,Lg,84,ligand,NA,ZINC ION
+ribosome,6QZP,QN,Lj,84,ligand,NA,ZINC ION
+ribosome,6QZP,RN,Lm,84,ligand,NA,ZINC ION
+ribosome,6QZP,SN,Lo,84,ligand,NA,ZINC ION
+ribosome,6QZP,TN,Lp,84,ligand,NA,ZINC ION
+ribosome,6QZP,UN,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VN,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WN,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XN,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YN,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZN,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZO,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZP,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,EQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZQ,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ER,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,UR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZR,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,DS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ES,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,HS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,IS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,JS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,KS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,LS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,MS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,NS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,OS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,PS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,QS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,RS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,SS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,TS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,US,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,VS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,WS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,XS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,YS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ZS,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,AT,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,BT,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,CT,S2,85,ligand,NA,HYGROMYCIN B
+ribosome,6QZP,DT,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,ET,S2,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,FT,SF,82,ligand,NA,MAGNESIUM ION
+ribosome,6QZP,GT,Sa,84,ligand,NA,ZINC ION
+ribosome,6QZP,HT,Sd,84,ligand,NA,ZINC ION
+ribosome,6QZP,IT,Sf,84,ligand,NA,ZINC ION
+ribosome,6QZP,JT,L5,86,water,NA,water
+ribosome,6QZP,KT,LA,86,water,NA,water
+ribosome,6QZP,LT,LB,86,water,NA,water
+ribosome,6QZP,MT,LC,86,water,NA,water
+ribosome,6QZP,NT,LF,86,water,NA,water
+ribosome,6QZP,OT,LG,86,water,NA,water
+ribosome,6QZP,PT,LH,86,water,NA,water
+ribosome,6QZP,QT,LI,86,water,NA,water
+ribosome,6QZP,RT,LY,86,water,NA,water
+ribosome,6QZP,ST,La,86,water,NA,water
+ribosome,6QZP,TT,Lb,86,water,NA,water
+ribosome,6QZP,UT,Lf,86,water,NA,water
+ribosome,6QZP,VT,Lm,86,water,NA,water
+ribosome,6QZP,WT,S2,86,water,NA,water
+ribosome,6QZP,XT,SF,86,water,NA,water
+ribosome,6QZP,YT,SL,86,water,NA,water
+ribosome,6QZP,ZT,SR,86,water,NA,water
+ribosome,6QZP,AU,SS,86,water,NA,water
+ribosome,6QZP,BU,SV,86,water,NA,water
+ribosome,6QZP,CU,SC,86,water,NA,water
+ribosome,6QZP,DU,SG,86,water,NA,water
+ribosome,6QZP,EU,SN,86,water,NA,water

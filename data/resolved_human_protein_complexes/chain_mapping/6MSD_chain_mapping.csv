@@ -1,0 +1,61 @@
+complex,pdb_id,label_chain,auth_chain,entity_id,component_type,polymer_type,entity_description
+proteasome,6MSD,A,U,1,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 1
+proteasome,6MSD,B,V,2,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 3
+proteasome,6MSD,C,W,3,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 12
+proteasome,6MSD,D,X,4,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 11
+proteasome,6MSD,E,Y,5,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 6
+proteasome,6MSD,F,Z,6,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 7
+proteasome,6MSD,G,a,7,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 13
+proteasome,6MSD,H,b,8,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 4
+proteasome,6MSD,I,c,9,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 14
+proteasome,6MSD,J,d,10,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 8
+proteasome,6MSD,K,e,11,protein,polypeptide(L),26S proteasome complex subunit SEM1
+proteasome,6MSD,L,f,12,protein,polypeptide(L),26S proteasome non-ATPase regulatory subunit 2
+proteasome,6MSD,M,A,13,protein,polypeptide(L),26S proteasome regulatory subunit 7
+proteasome,6MSD,N,B,14,protein,polypeptide(L),26S proteasome regulatory subunit 4
+proteasome,6MSD,O,C,15,protein,polypeptide(L),26S proteasome regulatory subunit 8
+proteasome,6MSD,P,D,16,protein,polypeptide(L),26S proteasome regulatory subunit 6B
+proteasome,6MSD,Q,E,17,protein,polypeptide(L),26S proteasome regulatory subunit 10B
+proteasome,6MSD,R,F,18,protein,polypeptide(L),26S proteasome regulatory subunit 6A
+proteasome,6MSD,S,u,19,protein,polypeptide(L),Ubiquitin
+proteasome,6MSD,T,w,19,protein,polypeptide(L),Ubiquitin
+proteasome,6MSD,U,G,20,protein,polypeptide(L),Proteasome subunit alpha type-6
+proteasome,6MSD,V,H,21,protein,polypeptide(L),Proteasome subunit alpha type-2
+proteasome,6MSD,W,I,22,protein,polypeptide(L),Proteasome subunit alpha type-4
+proteasome,6MSD,X,J,23,protein,polypeptide(L),Proteasome subunit alpha type-7
+proteasome,6MSD,Y,K,24,protein,polypeptide(L),Proteasome subunit alpha type-5
+proteasome,6MSD,Z,L,25,protein,polypeptide(L),Proteasome subunit alpha type-1
+proteasome,6MSD,AA,M,26,protein,polypeptide(L),Proteasome subunit alpha type-3
+proteasome,6MSD,BA,N,27,protein,polypeptide(L),Proteasome subunit beta type-6
+proteasome,6MSD,CA,O,28,protein,polypeptide(L),Proteasome subunit beta type-7
+proteasome,6MSD,DA,P,29,protein,polypeptide(L),Proteasome subunit beta type-3
+proteasome,6MSD,EA,Q,30,protein,polypeptide(L),Proteasome subunit beta type-2
+proteasome,6MSD,FA,R,31,protein,polypeptide(L),Proteasome subunit beta type-5
+proteasome,6MSD,GA,S,32,protein,polypeptide(L),Proteasome subunit beta type-1
+proteasome,6MSD,HA,T,33,protein,polypeptide(L),Proteasome subunit beta type-4
+proteasome,6MSD,IA,g,20,protein,polypeptide(L),Proteasome subunit alpha type-6
+proteasome,6MSD,JA,h,21,protein,polypeptide(L),Proteasome subunit alpha type-2
+proteasome,6MSD,KA,i,22,protein,polypeptide(L),Proteasome subunit alpha type-4
+proteasome,6MSD,LA,j,23,protein,polypeptide(L),Proteasome subunit alpha type-7
+proteasome,6MSD,MA,k,24,protein,polypeptide(L),Proteasome subunit alpha type-5
+proteasome,6MSD,NA,l,25,protein,polypeptide(L),Proteasome subunit alpha type-1
+proteasome,6MSD,OA,m,26,protein,polypeptide(L),Proteasome subunit alpha type-3
+proteasome,6MSD,PA,n,27,protein,polypeptide(L),Proteasome subunit beta type-6
+proteasome,6MSD,QA,o,28,protein,polypeptide(L),Proteasome subunit beta type-7
+proteasome,6MSD,RA,p,29,protein,polypeptide(L),Proteasome subunit beta type-3
+proteasome,6MSD,SA,q,30,protein,polypeptide(L),Proteasome subunit beta type-2
+proteasome,6MSD,TA,r,31,protein,polypeptide(L),Proteasome subunit beta type-5
+proteasome,6MSD,UA,s,32,protein,polypeptide(L),Proteasome subunit beta type-1
+proteasome,6MSD,VA,t,33,protein,polypeptide(L),Proteasome subunit beta type-4
+proteasome,6MSD,WA,c,34,ligand,NA,ZINC ION
+proteasome,6MSD,XA,A,35,ligand,NA,ADENOSINE-5'-TRIPHOSPHATE
+proteasome,6MSD,YA,A,36,ligand,NA,MAGNESIUM ION
+proteasome,6MSD,ZA,B,35,ligand,NA,ADENOSINE-5'-TRIPHOSPHATE
+proteasome,6MSD,AB,B,36,ligand,NA,MAGNESIUM ION
+proteasome,6MSD,BB,C,37,ligand,NA,ADENOSINE-5'-DIPHOSPHATE
+proteasome,6MSD,CB,D,35,ligand,NA,ADENOSINE-5'-TRIPHOSPHATE
+proteasome,6MSD,DB,D,36,ligand,NA,MAGNESIUM ION
+proteasome,6MSD,EB,E,35,ligand,NA,ADENOSINE-5'-TRIPHOSPHATE
+proteasome,6MSD,FB,E,36,ligand,NA,MAGNESIUM ION
+proteasome,6MSD,GB,F,37,ligand,NA,ADENOSINE-5'-DIPHOSPHATE
+proteasome,6MSD,HB,F,36,ligand,NA,MAGNESIUM ION
