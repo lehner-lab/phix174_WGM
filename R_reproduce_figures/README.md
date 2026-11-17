@@ -41,4 +41,3 @@ Each R Markdown script loads the corresponding supplementary dataset (Data S1–
 
 Run the scripts from the repository root directory with the required R packages and supplementary data files available.
 
-For the original data-processing workflows and additional analyses, see the `R_scripts/` directory.
