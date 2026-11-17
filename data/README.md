@@ -17,6 +17,3 @@ The `data/` directory contains input datasets, intermediate results, and analysi
 | `data/summary_tables/` | Summary statistics and analysis results used to generate manuscript figures and supplementary datasets. |
 
 The original analysis workflows are available in `R_scripts/`.
-
-## Data availability 
-All sequencing data have been deposited in the European Nucleotide Archive (ENA) at EMBL-EBI under accession number PRJEB120835. Original DiMSum output datasets and sequencing-depth downsampling analysis datasets are available on Zenodo at https://doi.org/10.5281/zenodo.23889881. EVcouplings multiple-sequence alignments for ΦX174 proteins across UniRef100, UniRef90, and MGnify+UniProt searches are available on Zenodo at https://doi.org/10.5281/zenodo.23889160. AlphaFold 3 models and structural analyses of ΦX174 protein A-DNA and protein A-C interactions are available on Zenodo at https://doi.org/10.5281/zenodo.23880305. Sequence alignments Evo-designed ΦX174 genomes are available on Zenodo at https://doi.org/10.5281/zenodo.23890094. All analysis scripts required to reproduce the analyses presented in this study are available from the project's GitHub repository.
