@@ -14,4 +14,4 @@ The analysis workflow is organized into sequential R scripts. Each script perfor
 | **07a_evo_phage_genomes_analysis.Rmd** | Analyze viable isolates of Evo-designed phage genomes and interpret their mutations using experimentally measured mutational effects. |
 | **07b_evo300_phage_genomes_analysis.Rmd** | Extend the analysis to the ~300 Evo-designed phage genomes, integrating mutational effects with experimentally validated viability and lytic performance. |
 
-The scripts are organized in the order listed above. We provide the input datasets and key intermediate output datasets required for each analysis step, as well as the key result tables used to generate the figures (see the `data/` directory).
+The scripts are organized in the order listed above. We provide the input datasets and key intermediate output datasets required for each analysis step, as well as the result tables used to generate figures (see the `data/` directory).
