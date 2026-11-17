@@ -1,4 +1,4 @@
-# R_reproduce_figures
+# Reproduce figures using supplementary data
 
 This folder contains R scripts for reproducing the analyses and figures presented in the manuscript using the published supplementary datasets (Data S1–S6). These scripts allow users to regenerate the main results and figures without rerunning the original data-processing pipelines.
 
