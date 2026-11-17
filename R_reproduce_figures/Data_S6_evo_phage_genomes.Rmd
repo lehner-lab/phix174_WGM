@@ -1,0 +1,2626 @@
+---
+title: "Evo-designed ΦX174 genome analyses"
+output: html_document
+date: "2026-11-15"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Data S6: Supplementary File 6 Analysis of Evo-designed phage genomes.xlsx
+```{r}
+# ============================================================
+# Data S6: Analysis of Evo-designed phage genomes
+# ============================================================
+
+# 1. Load required packages
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(stringr)
+
+
+# 2. Define supplementary data file
+file_path <- paste0(
+  "./codes_Github_final/Supplementary_Data/",
+  "Supplementary File 6 Analysis of Evo-designed phage genomes.xlsx"
+)
+
+stopifnot(file.exists(file_path))
+
+
+# 3. Load all worksheets
+sheet_names <- readxl::excel_sheets(file_path)
+
+data_s6 <- purrr::map(
+  sheet_names,
+  ~ readxl::read_excel(
+    file_path,
+    sheet = .x,
+    guess_max = 10000
+  )
+)
+
+names(data_s6) <- sheet_names
+
+
+# 4. Inspect workbook
+names(data_s6)
+
+purrr::map(data_s6, dim)
+
+purrr::map(data_s6, names)
+
+
+
+
+```
+
+
+
+## Main analyses
+Fig. S8A, B, C, D, E.
+
+### 1) Viable phage isolates (Fig. S8A)
+```{r}
+# ============================================================
+# Data S6: Viable Evo-designed genome mutations
+# ============================================================
+
+evo_nt_analysis <-
+  data_s6[["Evo18_viable_mutations"]]
+
+
+# Inspect data
+dim(evo_nt_analysis)
+
+names(evo_nt_analysis)
+
+head(evo_nt_analysis)
+
+dplyr::glimpse(evo_nt_analysis)
+
+
+# Check available isolates
+unique(evo_nt_analysis$isolate)
+#  [1] "Evo-Phi100"  "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi2147" "Evo-Phi2483" "Evo-Phi2498" "Evo-Phi316"  "Evo-Phi3392" "Evo-Phi36"   "Evo-Phi4"    "Evo-Phi46"   "Evo-Phi5"    "Evo-Phi63"   "Evo-Phi69"   "Evo-Phi75"  
+# [17] "Evo-PhiR1"   "Evo-PhiR2"  
+
+# Check mutation types
+table(
+  evo_nt_analysis$mutation_type,
+  useNA = "ifany"
+)
+#     deletion    insertion substitution 
+#            5           12         2080 
+
+# Check DMS availability
+table(
+  evo_nt_analysis$DMS_available,
+  useNA = "ifany"
+)
+# FALSE  TRUE 
+#    33  2064 
+
+# Check mutational-effect categories
+table(
+  evo_nt_analysis$DMS_effect_category,
+  useNA = "ifany"
+)
+#          Detrimental            Increased            No effect Strongly detrimental                 <NA> 
+#                  164                   18                 1860                   22                   33 
+
+
+# ============================================================
+# Isolate order and mutational-effect categories
+# ============================================================
+
+# Original order from evo_analysis_index
+evo_isolate_order <- c(
+  "Evo-Phi4",
+  "Evo-Phi5",
+  "Evo-Phi36",
+  "Evo-Phi46",
+  "Evo-Phi63",
+  "Evo-Phi69",
+  "Evo-Phi75",
+  "Evo-Phi100",
+  "Evo-Phi108",
+  "Evo-Phi111",
+  "Evo-Phi114",
+  "Evo-Phi316",
+  "Evo-Phi2147",
+  "Evo-Phi2483",
+  "Evo-Phi2498",
+  "Evo-Phi3392",
+  "Evo-PhiR1",
+  "Evo-PhiR2"
+)
+
+
+# Original mutation categories
+effect_levels <- c(
+  "Increased",
+  "No effect",
+  "Detrimental",
+  "Strongly detrimental"
+)
+
+
+# Original colors
+effect_colors <- c(
+  "Increased" = "#A1A9D0",
+  "No effect" = "#D9D9D9",
+  "Detrimental" = "#F4A6A6",
+  "Strongly detrimental" = "#F0988C"
+)
+
+
+# Apply annotations
+evo_nt_analysis <- evo_nt_analysis %>%
+  dplyr::mutate(
+    isolate = factor(
+      isolate,
+      levels = evo_isolate_order
+    ),
+
+    DMS_effect_category_lethal = factor(
+      DMS_effect_category,
+      levels = effect_levels
+    )
+  )
+
+
+# Check that no isolate was lost during factor conversion
+setdiff(
+  unique(as.character(
+    data_s6[["Evo18_viable_mutations"]]$isolate
+  )),
+  evo_isolate_order
+)
+# character(0)
+
+
+# ============================================================
+# Prepare nucleotide mutational-effect summary
+# ============================================================
+
+prepare_stacked_percent_data <- function(
+    data,
+    class_var,
+    category_var,
+    facet_var = NULL
+) {
+
+  class_var <- rlang::ensym(class_var)
+  category_var <- rlang::ensym(category_var)
+
+  if (is.null(facet_var)) {
+
+    summary_df <- data %>%
+      dplyr::filter(
+        !is.na(!!class_var),
+        !is.na(!!category_var)
+      ) %>%
+      dplyr::count(
+        !!class_var,
+        !!category_var,
+        name = "count"
+      ) %>%
+      dplyr::group_by(!!class_var) %>%
+      dplyr::mutate(
+        total_count = sum(count),
+        percent = 100 * count / total_count
+      ) %>%
+      dplyr::ungroup()
+
+    total_df <- summary_df %>%
+      dplyr::distinct(
+        !!class_var,
+        total_count
+      )
+
+    return(
+      list(
+        summary_df = summary_df,
+        total_df = total_df
+      )
+    )
+  }
+
+  facet_var <- rlang::ensym(facet_var)
+
+  summary_df <- data %>%
+    dplyr::filter(
+      !is.na(!!class_var),
+      !is.na(!!category_var),
+      !is.na(!!facet_var)
+    ) %>%
+    dplyr::count(
+      !!facet_var,
+      !!class_var,
+      !!category_var,
+      name = "count"
+    ) %>%
+    dplyr::group_by(
+      !!facet_var,
+      !!class_var
+    ) %>%
+    dplyr::mutate(
+      total_count = sum(count),
+      percent = 100 * count / total_count
+    ) %>%
+    dplyr::ungroup()
+
+  total_df <- summary_df %>%
+    dplyr::distinct(
+      !!facet_var,
+      !!class_var,
+      total_count
+    )
+
+  list(
+    summary_df = summary_df,
+    total_df = total_df
+  )
+}
+
+nt_effect_context_plot_data <-
+  prepare_stacked_percent_data(
+    data = evo_nt_analysis %>%
+      dplyr::filter(
+        mutation_type == "substitution",
+        DMS_available
+      ),
+
+    class_var = isolate,
+    category_var = DMS_effect_category_lethal
+  )
+
+# Inspect summary
+print(nt_effect_context_plot_data$summary_df)
+print(nt_effect_context_plot_data$total_df)
+
+
+
+# ============================================================
+# Plot donut plots showing proportions
+# ============================================================
+
+plot_donut_percent <- function(
+    df,
+    category_col = Category,
+    count_col = count,
+    percent_col = NULL,
+    title = "Composition",
+    label_acc = 0.1,
+    palette = NULL,
+    show_count = FALSE
+) {
+
+  cat_sym <- rlang::enquo(category_col)
+  cnt_sym <- rlang::enquo(count_col)
+  pct_sym <- rlang::enquo(percent_col)
+
+  # ----------------------------------------------------------
+  # Collapse to category level
+  # ----------------------------------------------------------
+
+  if (!rlang::quo_is_null(pct_sym)) {
+
+    df_cat <- df %>%
+      dplyr::group_by(!!cat_sym) %>%
+      dplyr::summarise(
+        percent = sum(!!pct_sym, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        percent = dplyr::if_else(
+          percent > 1,
+          percent / 100,
+          percent
+        ),
+        count = NA_integer_
+      )
+
+  } else {
+
+    df_cat <- df %>%
+      dplyr::group_by(!!cat_sym) %>%
+      dplyr::summarise(
+        count = sum(!!cnt_sym, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        percent = count / sum(count)
+      )
+  }
+
+  # ----------------------------------------------------------
+  # Labels
+  # ----------------------------------------------------------
+
+  if (show_count) {
+
+    df_cat <- df_cat %>%
+      dplyr::mutate(
+        label = paste0(
+          scales::percent(
+            percent,
+            accuracy = label_acc
+          ),
+          "\n(n=",
+          scales::comma(count),
+          ")"
+        )
+      )
+
+  } else {
+
+    df_cat <- df_cat %>%
+      dplyr::mutate(
+        label = scales::percent(
+          percent,
+          accuracy = label_acc
+        )
+      )
+  }
+
+  # ----------------------------------------------------------
+  # Donut
+  # ----------------------------------------------------------
+
+  p <- ggplot2::ggplot(
+    df_cat,
+    ggplot2::aes(
+      x = 2,
+      y = percent,
+      fill = !!cat_sym
+    )
+  ) +
+    ggplot2::geom_col(
+      color = "white",
+      width = 0.9
+    ) +
+    ggplot2::coord_polar(
+      theta = "y"
+    ) +
+    ggplot2::xlim(
+      0.5,
+      2.5
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(
+        label = label
+      ),
+      position = ggplot2::position_stack(
+        vjust = 0.5
+      ),
+      size = 4
+    ) +
+    ggplot2::labs(
+      title = title,
+      x = NULL,
+      y = NULL,
+      fill = rlang::as_name(cat_sym)
+    ) +
+    ggplot2::theme_void() +
+    ggplot2::theme(
+      legend.position = "none"
+    )
+
+  if (!is.null(palette)) {
+
+    p <- p +
+      ggplot2::scale_fill_manual(
+        values = palette,
+        drop = FALSE
+      )
+  }
+
+  p
+}
+
+
+# ============================================================
+# Stacked bar plot
+# Updated: make plot_stacked_bar() aggregate count internally according to the dimensions actually being plotted
+# - internally aggregates counts
+# - recalculates totals and percentages
+# ============================================================
+
+plot_stacked_bar <- function(
+    summary_df,
+    total_df = NULL,
+    class_name,
+    category_name,
+    fill_values,
+    fill_legend_title,
+    plot_title = NULL,
+    x_label = "Class",
+    y_label = NULL,
+    facet_name = NULL,
+    x_text_angle = 45,
+    y_type = c("percent", "count"),
+    show_total_labels = TRUE,
+    aggregate_counts = TRUE
+) {
+
+  y_type <- match.arg(y_type)
+
+
+  # ----------------------------------------------------------
+  # Internally aggregate counts
+  # ----------------------------------------------------------
+
+  if (aggregate_counts) {
+
+    grouping_vars <- c(
+      class_name,
+      category_name
+    )
+
+    # If faceting, retain facet as part of grouping
+    if (!is.null(facet_name)) {
+      grouping_vars <- c(
+        facet_name,
+        grouping_vars
+      )
+    }
+
+
+    summary_df <- summary_df %>%
+
+      dplyr::group_by(
+        dplyr::across(
+          dplyr::all_of(
+            grouping_vars
+          )
+        )
+      ) %>%
+
+      dplyr::summarise(
+        count = sum(
+          count,
+          na.rm = TRUE
+        ),
+        .groups = "drop"
+      )
+
+
+    # --------------------------------------------------------
+    # Recalculate totals
+    #
+    # Without facet:
+    #   total per class
+    #
+    # With facet:
+    #   total per class within each facet
+    # --------------------------------------------------------
+
+    total_group_vars <- class_name
+
+    if (!is.null(facet_name)) {
+      total_group_vars <- c(
+        facet_name,
+        class_name
+      )
+    }
+
+
+    total_df <- summary_df %>%
+
+      dplyr::group_by(
+        dplyr::across(
+          dplyr::all_of(
+            total_group_vars
+          )
+        )
+      ) %>%
+
+      dplyr::summarise(
+        total_count = sum(
+          count,
+          na.rm = TRUE
+        ),
+        .groups = "drop"
+      )
+
+
+    # --------------------------------------------------------
+    # Recalculate percentages
+    # --------------------------------------------------------
+
+    summary_df <- summary_df %>%
+
+      dplyr::left_join(
+        total_df,
+        by = total_group_vars
+      ) %>%
+
+      dplyr::mutate(
+        percent =
+          100 * count / total_count
+      )
+  }
+
+
+  # ----------------------------------------------------------
+  # Select Y variable
+  # ----------------------------------------------------------
+
+  if (y_type == "percent") {
+
+    y_var <- "percent"
+
+    if (is.null(y_label)) {
+      y_label <- "Proportion (%)"
+    }
+
+  } else {
+
+    y_var <- "count"
+
+    if (is.null(y_label)) {
+      y_label <- "Count"
+    }
+  }
+
+
+  # ----------------------------------------------------------
+  # Base plot
+  # ----------------------------------------------------------
+
+  p <- ggplot2::ggplot(
+    summary_df,
+    ggplot2::aes(
+      x = .data[[class_name]],
+      y = .data[[y_var]],
+      fill = .data[[category_name]]
+    )
+  ) +
+
+    ggplot2::geom_col(
+      position = "stack",
+      width = 0.9,
+      color = "black"
+    ) +
+
+    ggplot2::scale_fill_manual(
+      values = fill_values,
+      name = fill_legend_title,
+      drop = FALSE
+    ) +
+
+    ggplot2::labs(
+      title = plot_title,
+      x = x_label,
+      y = y_label
+    ) +
+
+    ggplot2::theme_classic() +
+
+    ggplot2::theme(
+
+      axis.text.x =
+        ggplot2::element_text(
+          angle = x_text_angle,
+          hjust =
+            ifelse(
+              x_text_angle == 0,
+              0.5,
+              1
+            )
+        ),
+
+      strip.background =
+        ggplot2::element_blank(),
+
+      strip.text =
+        ggplot2::element_text(
+          face = "bold"
+        )
+    )
+
+
+  # ----------------------------------------------------------
+  # Y-axis
+  # ----------------------------------------------------------
+
+  if (y_type == "percent") {
+
+    p <- p +
+
+      ggplot2::scale_y_continuous(
+        breaks = seq(
+          0,
+          100,
+          25
+        ),
+        expand = c(
+          0,
+          0
+        )
+      ) +
+
+      ggplot2::coord_cartesian(
+        ylim = c(
+          0,
+          110
+        ),
+        clip = "off"
+      )
+
+  } else {
+
+    p <- p +
+
+      ggplot2::scale_y_continuous(
+        expand =
+          ggplot2::expansion(
+            mult = c(
+              0,
+              0.12
+            )
+          )
+      )
+  }
+
+
+  # ----------------------------------------------------------
+  # Total labels
+  # ----------------------------------------------------------
+
+  if (show_total_labels) {
+
+    if (y_type == "percent") {
+
+      p <- p +
+
+        ggplot2::geom_text(
+          data = total_df,
+
+          ggplot2::aes(
+            x = .data[[class_name]],
+            y = 105,
+            label =
+              scales::comma(
+                total_count
+              )
+          ),
+
+          inherit.aes = FALSE,
+          size = 3.5,
+          vjust = 0
+        )
+
+    } else {
+
+      p <- p +
+
+        ggplot2::geom_text(
+          data = total_df,
+
+          ggplot2::aes(
+            x = .data[[class_name]],
+            y = total_count,
+            label =
+              scales::comma(
+                total_count
+              )
+          ),
+
+          inherit.aes = FALSE,
+          size = 3.5,
+          vjust = -0.4
+        )
+    }
+  }
+
+
+  # ----------------------------------------------------------
+  # Faceting
+  # ----------------------------------------------------------
+
+  if (!is.null(facet_name)) {
+
+    p <- p +
+
+      ggplot2::facet_wrap(
+        stats::as.formula(
+          paste(
+            "~",
+            facet_name
+          )
+        ),
+        ncol = 1
+      )
+  }
+
+
+  p
+}
+
+
+
+# ============================================================
+# Plot 1: Mutational effects of substitutions by isolate
+# ============================================================
+
+p_nt_effect_context <- plot_stacked_bar(
+  summary_df = nt_effect_context_plot_data$summary_df,
+  total_df = nt_effect_context_plot_data$total_df,
+
+  class_name = "isolate",
+  category_name = "DMS_effect_category_lethal",
+
+  fill_values = effect_colors,
+  fill_legend_title = "Mutational effect",
+
+  plot_title = "Fitness effects of measured nucleotide substitutions",
+
+  x_label = "Viable phage isolate",
+  y_label = "Counts",
+
+  y_type = "count",
+
+  show_total_labels = TRUE,
+
+  aggregate_counts = TRUE
+)
+
+print(p_nt_effect_context)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/p_nt_effect_context.pdf",
+  #plot = p_nt_effect_context,
+  #width = 9,
+  #height = 3.5
+#)
+
+
+
+# ============================================================
+# Identify substitution-only viable isolates
+# ============================================================
+
+substitution_only_isolates <-
+  evo_nt_analysis %>%
+  dplyr::group_by(isolate) %>%
+  dplyr::summarise(
+    n_substitutions = sum(
+      mutation_type == "substitution",
+      na.rm = TRUE
+    ),
+
+    n_other_mutations = sum(
+      is.na(mutation_type) |
+      mutation_type != "substitution"
+    ),
+
+    .groups = "drop"
+  ) %>%
+  dplyr::filter(
+    n_substitutions > 0,
+    n_other_mutations == 0
+  ) %>%
+  dplyr::pull(isolate) %>%
+  as.character()
+
+
+# Preserve metadata order
+substitution_only_isolate_order <-
+  evo_isolate_order[
+    evo_isolate_order %in%
+      substitution_only_isolates
+  ]
+
+
+# Inspect selected isolates
+print(substitution_only_isolates)
+# [1] "Evo-Phi4"    "Evo-Phi5"    "Evo-Phi46"   "Evo-Phi69"   "Evo-Phi75"   "Evo-Phi100"  "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi3392" "Evo-PhiR1"   "Evo-PhiR2"  
+
+print(substitution_only_isolate_order)
+# [1] "Evo-Phi4"    "Evo-Phi5"    "Evo-Phi46"   "Evo-Phi69"   "Evo-Phi75"   "Evo-Phi100"  "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi3392" "Evo-PhiR1"   "Evo-PhiR2"  
+
+
+
+# ============================================================
+# Prepare unique nucleotide substitutions
+# ============================================================
+
+evo_nt_analysis_subs <-
+  evo_nt_analysis %>%
+  dplyr::filter(
+    isolate %in% substitution_only_isolates,
+    mutation_type == "substitution"
+  ) %>%
+  dplyr::mutate(
+    isolate = factor(
+      isolate,
+      levels = substitution_only_isolate_order
+    )
+  )
+
+
+# Unique substitutions with available DMS measurements
+evo_nt_unique_effects <-
+  evo_nt_analysis_subs %>%
+  dplyr::filter(
+    DMS_available
+  ) %>%
+  dplyr::distinct(
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+
+# Summary
+evo_nt_unique_effects %>%
+  dplyr::count(
+    DMS_effect_category_lethal
+  )
+# # A tibble: 4 × 2
+#   DMS_effect_category_lethal     n
+#   <fct>                      <int>
+# 1 Increased                      4
+# 2 No effect                    415
+# 3 Detrimental                   36
+# 4 Strongly detrimental          13
+
+
+# ============================================================
+# Donut plot: Unique nucleotide substitutions
+# ============================================================
+
+# Prepare category counts
+nt_donut_data <-
+  evo_nt_unique_effects %>%
+  dplyr::filter(
+    !is.na(DMS_effect_category_lethal)
+  ) %>%
+  dplyr::count(
+    DMS_effect_category_lethal,
+    name = "count"
+  )
+
+
+# Generate donut plot
+p_nt_effect_donut <- plot_donut_percent(
+  df = nt_donut_data,
+
+  category_col = DMS_effect_category_lethal,
+
+  count_col = count,
+
+  title = "Unique nucleotide substitutions",
+
+  palette = effect_colors,
+
+  show_count = TRUE
+)
+
+print(p_nt_effect_donut)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/p_nt_effect_donut.pdf",
+  #plot = p_nt_effect_donut,
+  #width = 3,
+  #height = 3
+#)
+
+
+
+
+```
+
+
+### 2) ~300 evo-designed genomes (Fig. S8B, C)
+```{r}
+
+# ============================================================
+# Data S6: Analysis of ~300 Evo-designed phage genomes
+# ============================================================
+
+# 1. Extract supplementary datasets
+evo300_nt_analysis <-
+  data_s6[["Evo300_all_mutations"]]
+
+evo300_viability_predictors <-
+  data_s6[["Evo300_genome_summary"]]
+
+
+# 2. Inspect datasets
+dim(evo300_nt_analysis)
+dim(evo300_viability_predictors)
+
+names(evo300_nt_analysis)
+names(evo300_viability_predictors)
+
+
+# 3. Check genome identifiers
+dplyr::n_distinct(
+  evo300_viability_predictors$original_design_id
+)
+
+dplyr::n_distinct(
+  evo300_nt_analysis$original_design_id
+)
+
+
+# 4. Inspect viability and synthesis status
+table(
+  evo300_viability_predictors$rebooting_viable,
+  useNA = "ifany"
+)
+# FALSE  TRUE  <NA> 
+#   269    16    17 
+
+table(
+  evo300_viability_predictors$failed_DNA_synthesis,
+  useNA = "ifany"
+)
+# FALSE  TRUE 
+#   285    17 
+
+
+# 5. Inspect similarity bins
+table(
+  evo300_viability_predictors$nearest_natural_similarity_bin,
+  useNA = "ifany"
+)
+#    <90  90–92  92–94  94–96  96–98 98–100 
+#    184     14     23     35     33     13 
+
+
+
+# ============================================================
+# Panel A: Strongly detrimental mutations vs natural similarity
+# ============================================================
+
+# 1. Define similarity bin order
+similarity_bin_order <- c(
+  "<90",
+  "90–92",
+  "92–94",
+  "94–96",
+  "96–98",
+  "98–100"
+)
+
+
+# 2. Prepare genome-level data
+evo300_panelA_data <-
+  evo300_viability_predictors %>%
+  dplyr::filter(
+    failed_DNA_synthesis == FALSE,
+    !is.na(rebooting_viable),
+    is.finite(prop_strongly_detrimental),
+    !is.na(nearest_natural_similarity_bin)
+  ) %>%
+  dplyr::mutate(
+    viability_state = dplyr::case_when(
+      rebooting_viable &
+        dplyr::coalesce(
+          acquired_mutations_during_rebooting,
+          FALSE
+        ) ~
+        "Viable after acquired mutation(s)",
+
+      rebooting_viable ~ "Viable",
+
+      TRUE ~ "Nonviable"
+    ),
+
+    nearest_natural_similarity_bin = factor(
+      nearest_natural_similarity_bin,
+      levels = similarity_bin_order
+    )
+  ) %>%
+  dplyr::filter(
+    !is.na(nearest_natural_similarity_bin)
+  )
+
+
+# 3. Check included genomes
+evo300_panelA_data %>%
+  dplyr::count(
+    nearest_natural_similarity_bin,
+    viability_state
+  )
+
+
+# 4. Median proportion within each similarity bin
+evo300_panelA_bin_summary <-
+  evo300_panelA_data %>%
+  dplyr::group_by(
+    nearest_natural_similarity_bin
+  ) %>%
+  dplyr::summarise(
+    n_genomes = dplyr::n(),
+
+    median_prop_strongly_detrimental = median(
+      prop_strongly_detrimental,
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  )
+
+
+print(evo300_panelA_bin_summary)
+# # A tibble: 6 × 3
+#   nearest_natural_similarity_bin n_genomes median_prop_strongly_detrimental
+#   <fct>                              <int>                            <dbl>
+# 1 <90                                  177                           0.230 
+# 2 90–92                                 14                           0.136 
+# 3 92–94                                 20                           0.0909
+# 4 94–96                                 31                           0.0602
+# 5 96–98                                 30                           0.0245
+# 6 98–100                                13                           0.0122
+
+
+
+# ============================================================
+# Panel A: Plot (presented Fig. S8C)
+# ============================================================
+
+# Determine space for n labels
+panelA_y_max <- max(
+  evo300_panelA_data$prop_strongly_detrimental,
+  na.rm = TRUE
+)
+
+panelA_label_y <- max(
+  panelA_y_max * 1.07,
+  panelA_y_max + 0.025
+)
+
+p_panelA <-
+  ggplot2::ggplot(
+    evo300_panelA_data,
+    ggplot2::aes(
+      x = nearest_natural_similarity_bin,
+      y = prop_strongly_detrimental
+    )
+  ) +
+
+  # Nonviable genomes
+  ggplot2::geom_jitter(
+    data = evo300_panelA_data %>%
+      dplyr::filter(
+        viability_state == "Nonviable"
+      ),
+
+    width = 0.18,
+    height = 0,
+
+    size = 2,
+    alpha = 0.5,
+    color = "black"
+  ) +
+
+  # Viable genomes
+  ggplot2::geom_jitter(
+    data = evo300_panelA_data %>%
+      dplyr::filter(
+        viability_state != "Nonviable"
+      ),
+
+    ggplot2::aes(
+      fill = viability_state
+    ),
+
+    width = 0.18,
+    height = 0,
+
+    shape = 21,
+    size = 3.2,
+    stroke = 0.6,
+    color = "black"
+  ) +
+
+  ggplot2::scale_fill_manual(
+    values = c(
+      "Viable" = "#A8D5A2",
+
+      "Viable after acquired mutation(s)" = "#F2C879"
+    ),
+
+    name = NULL
+  ) +
+
+  # Median within each similarity bin
+  ggplot2::geom_crossbar(
+    data = evo300_panelA_bin_summary,
+
+    ggplot2::aes(
+      x = nearest_natural_similarity_bin,
+
+      y = median_prop_strongly_detrimental,
+
+      ymin = median_prop_strongly_detrimental,
+      ymax = median_prop_strongly_detrimental
+    ),
+
+    inherit.aes = FALSE,
+
+    width = 0.45,
+    linewidth = 0.5,
+    color = "red"
+  ) +
+
+  # Number of genomes per similarity bin
+  ggplot2::geom_text(
+    data = evo300_panelA_bin_summary,
+
+    ggplot2::aes(
+      x = nearest_natural_similarity_bin,
+      y = panelA_label_y,
+      label = paste0("n=", n_genomes)
+    ),
+
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+
+  ggplot2::scale_y_continuous(
+    labels = scales::percent_format(
+      accuracy = 1
+    )
+  ) +
+
+  ggplot2::coord_cartesian(
+    ylim = c(
+      0,
+      panelA_label_y * 1.05
+    ),
+    clip = "off"
+  ) +
+
+  ggplot2::labs(
+    x = "Nearest-natural sequence similarity (%)",
+
+    y = "Fraction of strongly detrimental substitutions"
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    legend.position = "top"
+  )
+
+
+print(p_panelA)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/p_evo_analyses_panelA.pdf",
+  #plot = p_panelA,
+  #width = 5,
+  #height = 3
+#)
+
+
+
+# ============================================================
+# Panel B: Strongly detrimental substitutions by genome
+# ============================================================
+
+# 1. Prepare genome classifications
+evo300_strongly_detrimental_by_genome <-
+  evo300_viability_predictors %>%
+  dplyr::filter(
+    failed_DNA_synthesis == FALSE,
+    !is.na(rebooting_viable),
+    !is.na(contains_strongly_detrimental)
+  ) %>%
+  dplyr::mutate(
+    viability = dplyr::if_else(
+      rebooting_viable,
+      "Viable",
+      "Nonviable"
+    ),
+
+    strongly_detrimental_status = dplyr::if_else(
+      contains_strongly_detrimental,
+      "≥1 strongly detrimental SNV",
+      "No strongly detrimental SNV"
+    ),
+
+    viability = factor(
+      viability,
+      levels = c(
+        "Nonviable",
+        "Viable"
+      )
+    ),
+
+    strongly_detrimental_status = factor(
+      strongly_detrimental_status,
+      levels = c(
+        "≥1 strongly detrimental SNV",
+        "No strongly detrimental SNV"
+      )
+    )
+  )
+
+
+# 2. Count genomes by viability and mutation status
+evo300_panelB_data <-
+  evo300_strongly_detrimental_by_genome %>%
+  dplyr::count(
+    viability,
+    strongly_detrimental_status,
+    name = "n_genomes"
+  ) %>%
+  tidyr::complete(
+    viability,
+    strongly_detrimental_status,
+    fill = list(n_genomes = 0L)
+  ) %>%
+  dplyr::group_by(
+    viability
+  ) %>%
+  dplyr::mutate(
+    n_total = sum(n_genomes),
+
+    fraction = n_genomes / n_total,
+
+    percent = 100 * fraction
+  ) %>%
+  dplyr::ungroup()
+
+
+# 3. Inspect results
+print(evo300_panelB_data)
+# # A tibble: 4 × 6
+#   viability strongly_detrimental_status n_genomes n_total fraction percent
+#   <fct>     <fct>                           <int>   <int>    <dbl>   <dbl>
+# 1 Nonviable ≥1 strongly detrimental SNV       268     269  0.996    99.6  
+# 2 Nonviable No strongly detrimental SNV         1     269  0.00372   0.372
+# 3 Viable    ≥1 strongly detrimental SNV        10      16  0.625    62.5  
+# 4 Viable    No strongly detrimental SNV         6      16  0.375    37.5  
+
+
+# ============================================================
+# Panel B: Plot (presented Fig. S8B)
+# ============================================================
+
+p_panelB <-
+  ggplot2::ggplot(
+    evo300_panelB_data,
+    ggplot2::aes(
+      x = fraction,
+      y = viability,
+      fill = strongly_detrimental_status
+    )
+  ) +
+
+  ggplot2::geom_col(
+    width = 0.65,
+    color = "black"
+  ) +
+
+  ggplot2::scale_fill_manual(
+    values = c(
+      "≥1 strongly detrimental SNV" = "#85A6B7",
+      "No strongly detrimental SNV" = "gray85"
+    ),
+    name = NULL
+  ) +
+
+  ggplot2::scale_x_continuous(
+    labels = scales::percent_format(
+      accuracy = 1
+    ),
+
+    breaks = seq(
+      0, 1, 0.25
+    ),
+
+    expand = c(0, 0)
+  ) +
+
+  ggplot2::geom_text(
+    ggplot2::aes(
+      label = ifelse(
+        n_genomes > 0,
+        paste0(
+          n_genomes,
+          "/",
+          n_total,
+          "\n",
+          sprintf("%.1f%%", percent)
+        ),
+        ""
+      )
+    ),
+
+    position = ggplot2::position_stack(
+      vjust = 0.5
+    ),
+
+    size = 3.8
+  ) +
+
+  ggplot2::labs(
+    x = "Fraction of genomes",
+    y = NULL
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    legend.position = "top"
+  )
+
+
+print(p_panelB)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/p_evo_analyses_panelB.pdf",
+  #plot = p_panelB,
+  #width = 3.5,
+  #height = 2.5
+#)
+
+
+
+
+```
+
+
+### 3) Lytic performance (Fig. S8D)
+```{r}
+# ============================================================
+# Data S6: Mutational features vs. lytic performance
+# ============================================================
+
+evo16_correlation_data_actual <-
+  data_s6[["Evo16_lytic_performance"]]
+
+# Inspect dataset
+dim(evo16_correlation_data_actual)
+names(evo16_correlation_data_actual)
+head(evo16_correlation_data_actual)
+
+dplyr::glimpse(evo16_correlation_data_actual)
+
+# Check isolates
+unique(evo16_correlation_data_actual$isolate)
+
+# Check mutation acquisition
+table(
+  evo16_correlation_data_actual$acquired_mutations_during_rebooting,
+  useNA = "ifany"
+)
+# FALSE  TRUE 
+#     9     7 
+
+
+# ============================================================
+# Define predictors and panel labels
+# ============================================================
+
+plot_spec_8 <- tibble::tibble(
+  predictor = c(
+    "n_detrimental",
+    "prop_detrimental",
+    "median_fitness_detrimental",
+    "n_strongly_detrimental",
+    "prop_strongly_detrimental",
+    "median_fitness_strongly_detrimental",
+    "min_DMS_fitness",
+    "nearest_natural_sequence_similarity"
+  ),
+
+  panel_group = c(
+    "Detrimental",
+    "Detrimental",
+    "Detrimental",
+    "Strongly detrimental",
+    "Strongly detrimental",
+    "Strongly detrimental",
+    "Whole-DMS data",
+    "Baseline"
+  ),
+
+  panel_metric = c(
+    "Number",
+    "Fraction",
+    "Median fitness",
+    "Number",
+    "Fraction",
+    "Median fitness",
+    "Minimum fitness",
+    "Similarity (%)"
+  )
+) %>%
+  dplyr::mutate(
+    panel_label = paste0(
+      panel_group, "\n", panel_metric
+    )
+  )
+
+
+# Original 4 x 2 panel order
+desired_panel_order <- c(
+  "Detrimental\nNumber",
+  "Detrimental\nFraction",
+  "Detrimental\nMedian fitness",
+  "Whole-DMS data\nMinimum fitness",
+  "Strongly detrimental\nNumber",
+  "Strongly detrimental\nFraction",
+  "Strongly detrimental\nMedian fitness",
+  "Baseline\nSimilarity (%)"
+)
+
+
+# Check required columns before plotting
+required_cols <- c(
+  "isolate",
+  "acquired_mutations_during_rebooting",
+  "GrowthRateMin_mean",
+  plot_spec_8$predictor
+)
+
+setdiff(
+  required_cols,
+  names(evo16_correlation_data_actual)
+)
+# character(0)
+
+
+# ============================================================
+# Prepare Evo16 scatter-plot data
+# ============================================================
+
+stopifnot(
+  all(required_cols %in%
+        names(evo16_correlation_data_actual))
+)
+
+evo16_scatter_long <-
+  purrr::map_dfr(
+    seq_len(nrow(plot_spec_8)),
+    function(i) {
+
+      this_predictor <- plot_spec_8$predictor[i]
+
+      evo16_correlation_data_actual %>%
+        dplyr::transmute(
+          isolate,
+          acquired_mutations_during_rebooting,
+          GrowthRateMin_mean,
+
+          predictor = this_predictor,
+
+          panel_group = plot_spec_8$panel_group[i],
+          panel_metric = plot_spec_8$panel_metric[i],
+          panel_label = plot_spec_8$panel_label[i],
+
+          x = .data[[this_predictor]]
+        )
+    }
+  ) %>%
+  dplyr::mutate(
+    viability_display = dplyr::case_when(
+      acquired_mutations_during_rebooting %in% TRUE ~
+        "Viable after acquired mutation(s)",
+
+      TRUE ~ "Viable"
+    ),
+
+    panel_label = factor(
+      panel_label,
+      levels = desired_panel_order
+    )
+  )
+
+
+# Keep complete observations for each predictor
+evo16_scatter_plot_data <-
+  evo16_scatter_long %>%
+  dplyr::filter(
+    is.finite(x),
+    is.finite(GrowthRateMin_mean)
+  )
+
+
+# Inspect sample sizes
+evo16_scatter_plot_data %>%
+  dplyr::count(
+    panel_label,
+    name = "n"
+  )
+# # A tibble: 8 × 2
+#   panel_label                                n
+#   <fct>                                  <int>
+# 1 "Detrimental\nNumber"                     16
+# 2 "Detrimental\nFraction"                   16
+# 3 "Detrimental\nMedian fitness"             16
+# 4 "Whole-DMS data\nMinimum fitness"         16
+# 5 "Strongly detrimental\nNumber"            16
+# 6 "Strongly detrimental\nFraction"          16
+# 7 "Strongly detrimental\nMedian fitness"     9
+# 8 "Baseline\nSimilarity (%)"                16
+
+
+# ============================================================
+# Calculate Spearman correlations
+# ============================================================
+
+# Common y-axis range
+growth_min <- min(
+  evo16_scatter_plot_data$GrowthRateMin_mean,
+  na.rm = TRUE
+)
+
+growth_max <- max(
+  evo16_scatter_plot_data$GrowthRateMin_mean,
+  na.rm = TRUE
+)
+
+growth_range <- growth_max - growth_min
+
+if (growth_range == 0) {
+  growth_range <- 1
+}
+
+# Reserve space above data points for statistics
+stats_y_pos <- growth_max + 0.12 * growth_range
+
+
+# Calculate correlations
+evo16_scatter_stats <-
+  evo16_scatter_plot_data %>%
+  dplyr::group_by(
+    predictor,
+    panel_group,
+    panel_metric,
+    panel_label
+  ) %>%
+  dplyr::group_modify(
+    ~ {
+
+      df <- .x
+
+      n <- nrow(df)
+
+      if (
+        n >= 3 &&
+        dplyr::n_distinct(df$x) > 1 &&
+        dplyr::n_distinct(df$GrowthRateMin_mean) > 1
+      ) {
+
+        test <- suppressWarnings(
+          stats::cor.test(
+            df$x,
+            df$GrowthRateMin_mean,
+            method = "spearman",
+            exact = FALSE
+          )
+        )
+
+        rho <- unname(test$estimate)
+        p_value <- test$p.value
+
+      } else {
+
+        rho <- NA_real_
+        p_value <- NA_real_
+      }
+
+      tibble::tibble(
+        n = n,
+        rho = rho,
+        p_value = p_value,
+        x_min = min(df$x),
+        x_max = max(df$x)
+      )
+    }
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+    x_range = x_max - x_min,
+
+    x_pos = dplyr::if_else(
+      is.finite(x_range) & x_range > 0,
+      x_max - 0.03 * x_range,
+      x_max
+    ),
+
+    y_pos = stats_y_pos,
+
+    stat_label = paste0(
+      "Spearman \u03c1 = ",
+      sprintf("%.2f", rho),
+      "\nP = ",
+      format.pval(
+        p_value,
+        digits = 2,
+        eps = 0.001
+      ),
+      ", n = ",
+      n
+    )
+  )
+
+
+# Inspect correlation results
+evo16_scatter_stats %>%
+  dplyr::select(
+    panel_label,
+    n,
+    rho,
+    p_value
+  )
+# # A tibble: 8 × 4
+#   panel_label                                n    rho p_value
+#   <fct>                                  <int>  <dbl>   <dbl>
+# 1 "Detrimental\nMedian fitness"             16  0.136  0.616 
+# 2 "Strongly detrimental\nMedian fitness"     9 -0.55   0.125 
+# 3 "Whole-DMS data\nMinimum fitness"         16 -0.587  0.0168
+# 4 "Detrimental\nNumber"                     16  0.407  0.118 
+# 5 "Strongly detrimental\nNumber"            16  0.331  0.211 
+# 6 "Baseline\nSimilarity (%)"                16 -0.168  0.535 
+# 7 "Detrimental\nFraction"                   16  0.429  0.0969
+# 8 "Strongly detrimental\nFraction"          16  0.409  0.116 
+
+
+# ============================================================
+# Plot: Mutational features vs. lytic performance
+# ============================================================
+
+p_evo16_correlation_panel <-
+  ggplot2::ggplot(
+    evo16_scatter_plot_data,
+    ggplot2::aes(
+      x = x,
+      y = GrowthRateMin_mean
+    )
+  ) +
+
+  # Individual viable genomes
+  ggplot2::geom_point(
+    ggplot2::aes(
+      fill = viability_display
+    ),
+    shape = 21,
+    size = 3,
+    stroke = 0.6,
+    color = "black"
+  ) +
+
+  # Spearman statistics
+  ggplot2::geom_text(
+    data = evo16_scatter_stats,
+    ggplot2::aes(
+      x = x_pos,
+      y = y_pos,
+      label = stat_label
+    ),
+    inherit.aes = FALSE,
+    hjust = 1,
+    vjust = 1,
+    size = 3.1,
+    lineheight = 1.05
+  ) +
+
+  # Original colors
+  ggplot2::scale_fill_manual(
+    values = c(
+      "Viable" = "#A8D5A2",
+      "Viable after acquired mutation(s)" = "#F2C879"
+    ),
+    name = NULL
+  ) +
+
+  # Shared y-axis range with room for annotations
+  ggplot2::scale_y_continuous(
+    limits = c(
+      growth_min - 0.03 * growth_range,
+      growth_max + 0.20 * growth_range
+    ),
+    expand = ggplot2::expansion(
+      mult = c(0, 0)
+    )
+  ) +
+
+  # Four columns, two rows
+  ggplot2::facet_wrap(
+    ~ panel_label,
+    ncol = 4,
+    scales = "free_x"
+  ) +
+
+  ggplot2::labs(
+    x = NULL,
+
+    y = paste0(
+      "Steepest host growth decline\n",
+      "(more negative = stronger lytic performance)"
+    ),
+
+    title =
+      "Associations between mutational metrics and lytic performance"
+  ) +
+
+  ggplot2::theme_classic(
+    base_size = 11
+  ) +
+
+  ggplot2::theme(
+    legend.position = "bottom",
+
+    strip.background = ggplot2::element_rect(
+      fill = "gray90",
+      color = "black",
+      linewidth = 0.4
+    ),
+
+    strip.text = ggplot2::element_text(
+      face = "bold",
+      size = 9.5,
+      lineheight = 1.0
+    ),
+
+    axis.title.x = ggplot2::element_blank(),
+
+    axis.text.x = ggplot2::element_text(
+      size = 8.5
+    ),
+
+    axis.text.y = ggplot2::element_text(
+      size = 8.5
+    ),
+
+    axis.title.y = ggplot2::element_text(
+      size = 10.5
+    ),
+
+    plot.title = ggplot2::element_text(
+      face = "bold",
+      size = 12
+    ),
+
+    plot.title.position = "plot",
+
+    panel.spacing = grid::unit(
+      0.35,
+      "lines"
+    )
+  )
+
+print(p_evo16_correlation_panel)
+
+#ggplot2::ggsave(
+  #filename = "./plots/p_evo16_correlation_panel.pdf",
+  #plot = p_evo16_correlation_panel,
+  #width = 8,
+  #height = 5
+#)
+
+
+
+```
+
+
+### 4) Mutational effects of single-nucleotide substitutions (Fig. S8E)
+Include potentially rescuing mutations across genomes viable after acquiring rebooting mutations.
+```{r}
+# ============================================================
+# Heatmap metadata
+# ============================================================
+
+# Use the Evo16 dataset for the lytic ranking
+evo_lytic_ranking <-
+  data_s6[["Evo16_lytic_performance"]] %>%
+  dplyr::select(
+    isolate,
+    lytic_rank_Evo
+  ) %>%
+  dplyr::distinct(isolate, .keep_all = TRUE)
+
+
+# Check the similarity-score column name
+similarity_col <- "nearest_natural_sequence_similarity"
+
+stopifnot(
+  similarity_col %in%
+    names(evo300_viability_predictors)
+)
+
+# 1) Viable genomes with lytic-performance measurements
+heatmap_viable_metadata <-
+  evo300_viability_predictors %>%
+  dplyr::filter(
+    failed_DNA_synthesis == FALSE,
+    rebooting_viable %in% TRUE,
+    isolate %in% evo_lytic_ranking$isolate
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    .keep_all = TRUE
+  )
+
+# 2) Nonviable genomes with 98-100% natural similarity
+heatmap_nonviable_metadata <-
+  evo300_viability_predictors %>%
+  dplyr::filter(
+    failed_DNA_synthesis == FALSE,
+    rebooting_viable %in% FALSE,
+    .data[[similarity_col]] >= 98,
+    .data[[similarity_col]] <= 100
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    .keep_all = TRUE
+  )
+
+# 3) Combine metadata
+heatmap_metadata <-
+  dplyr::bind_rows(
+    heatmap_viable_metadata,
+    heatmap_nonviable_metadata
+  ) %>%
+  dplyr::left_join(
+    evo_lytic_ranking,
+    by = "isolate"
+  ) %>%
+  dplyr::mutate(
+    heatmap_group = dplyr::if_else(
+      rebooting_viable,
+      "Viable",
+      "Nonviable (98–100% similarity)"
+    ),
+
+    heatmap_group = factor(
+      heatmap_group,
+      levels = c(
+        "Viable",
+        "Nonviable (98–100% similarity)"
+      )
+    )
+  )
+
+# 4) Unique labels when multiple designs share an isolate
+heatmap_metadata <-
+  heatmap_metadata %>%
+  dplyr::group_by(isolate) %>%
+  dplyr::mutate(
+    heatmap_label = dplyr::if_else(
+      dplyr::n() == 1,
+      isolate,
+      paste0(isolate, " | ", original_design_id)
+    )
+  ) %>%
+  dplyr::ungroup()
+
+
+# Viable: order by lytic performance
+viable_row_order <-
+  heatmap_metadata %>%
+  dplyr::filter(rebooting_viable) %>%
+  dplyr::arrange(lytic_rank_Evo) %>%
+  dplyr::pull(heatmap_label)
+#  [1] "Evo-Phi2483" "Evo-Phi69"   "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi46"   "Evo-Phi2498" "Evo-Phi5"    "Evo-Phi100"  "Evo-Phi2147" "Evo-Phi75"   "Evo-Phi36"   "Evo-Phi4"    "Evo-Phi3392" "Evo-Phi316"  "Evo-Phi63"
+
+# Nonviable: order by natural similarity
+nonviable_row_order <-
+  heatmap_metadata %>%
+  dplyr::filter(!rebooting_viable) %>%
+  dplyr::arrange(
+    dplyr::desc(.data[[similarity_col]])
+  ) %>%
+  dplyr::pull(heatmap_label)
+# [1] "Evo-Phi33"   "Evo-Phi31"   "Evo-Phi119"  "Evo-Phi3802" "Evo-Phi113"  "Evo-Phi3479" "Evo-Phi19"  
+
+heatmap_row_order <- c(
+  viable_row_order,
+  nonviable_row_order
+)
+#  [1] "Evo-Phi2483" "Evo-Phi69"   "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi46"   "Evo-Phi2498" "Evo-Phi5"    "Evo-Phi100"  "Evo-Phi2147" "Evo-Phi75"   "Evo-Phi36"   "Evo-Phi4"    "Evo-Phi3392" "Evo-Phi316"  "Evo-Phi63"  
+# [17] "Evo-Phi33"   "Evo-Phi31"   "Evo-Phi119"  "Evo-Phi3802" "Evo-Phi113"  "Evo-Phi3479" "Evo-Phi19"  
+
+
+# Inspect
+heatmap_metadata %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    heatmap_label,
+    heatmap_group,
+    lytic_rank_Evo,
+    dplyr::all_of(similarity_col)
+  )
+
+
+
+# ============================================================
+# Data S6: Rebooting-associated nucleotide changes
+# ============================================================
+
+rescued_rebooting_changes <-
+  data_s6[["Evo7_rebooting_SNV_changes"]]
+
+# Inspect dataset
+dim(rescued_rebooting_changes)
+names(rescued_rebooting_changes)
+head(rescued_rebooting_changes)
+
+# Check rebooting change types
+table(
+  rescued_rebooting_changes$rebooting_change,
+  useNA = "ifany"
+)
+#  Changed allele    New mutation Reversion to WT 
+#               1              24             110 
+
+# Check included isolates
+unique(rescued_rebooting_changes$isolate)
+
+# Inspect available DMS-related columns
+grep(
+  "DMS|fitness|replication|mutation_id",
+  names(rescued_rebooting_changes),
+  value = TRUE
+)
+
+
+# 1) Standardize rebooting changes
+rescued_rebooting_changes <-
+  rescued_rebooting_changes %>%
+  dplyr::mutate(
+    rebooting_change_plot = dplyr::case_when(
+      rebooting_change %in% c(
+        "New mutation",
+        "Changed allele"
+      ) ~ "New mutation",
+
+      rebooting_change == "Reversion to WT" ~
+        "Reversion to WT",
+
+      TRUE ~ NA_character_
+    )
+  )
+
+# Standardize mutation-effect categories
+standardize_DMS_category <- function(x) {
+
+  dplyr::case_when(
+    x %in% c(
+      "Increased replication",
+      "Increased",
+      "Beneficial"
+    ) ~ "Increased",
+
+    x %in% c(
+      "No measurable effect",
+      "No effect",
+      "Neutral"
+    ) ~ "No effect",
+
+    x %in% c(
+      "Reduced replication",
+      "Detrimental"
+    ) ~ "Detrimental",
+
+    x %in% c(
+      "Strongly detrimental",
+      "Lethal"
+    ) ~ "Strongly detrimental",
+
+    TRUE ~ "DMS not covered"
+  )
+}
+
+# 2) Prepare rebooting events
+names(rescued_rebooting_changes)
+
+heatmap_rescue_events <-
+  rescued_rebooting_changes %>%
+
+  # Only viable genomes included in the heatmap
+  dplyr::semi_join(
+    heatmap_metadata %>%
+      dplyr::filter(rebooting_viable) %>%
+      dplyr::select(original_design_id),
+    by = "original_design_id"
+  ) %>%
+
+  dplyr::filter(
+    !is.na(rebooting_change_plot)
+  ) %>%
+
+  dplyr::mutate(
+    # DMS effect categories
+    designed_DMS_category_plot =
+      standardize_DMS_category(
+        designed_DMS_effect_category
+      ),
+
+    recovered_DMS_category_plot =
+      standardize_DMS_category(
+        recovered_DMS_effect_category
+      ),
+
+    # Location of the rebooting symbol
+    plot_mutation_id = dplyr::case_when(
+      rebooting_change_plot == "Reversion to WT" ~
+        designed_mutation_id,
+
+      rebooting_change_plot == "New mutation" ~
+        recovered_mutation_id,
+
+      TRUE ~ NA_character_
+    ),
+
+    # Genomic position
+    genome_position_numeric =
+      dplyr::coalesce(
+        suppressWarnings(
+          as.integer(genome_position)
+        ),
+
+        suppressWarnings(
+          as.integer(
+            stringr::str_extract(
+              plot_mutation_id,
+              "[0-9]+"
+            )
+          )
+        )
+      )
+  ) %>%
+  dplyr::filter(
+    !is.na(plot_mutation_id)
+  )
+
+# Inspect
+heatmap_rescue_events %>%
+  dplyr::select(
+    isolate,
+    genome_position_numeric,
+    designed_mutation_id,
+    recovered_mutation_id,
+    rebooting_change_plot,
+    designed_DMS_replication_score,
+    designed_DMS_category_plot,
+    recovered_DMS_replication_score,
+    recovered_DMS_category_plot
+  ) %>%
+  dplyr::arrange(
+    isolate,
+    genome_position_numeric
+  ) %>%
+  print(n = Inf, width = Inf)
+
+
+
+# ============================================================
+# Designed detrimental mutations
+# ============================================================
+
+names(evo300_nt_analysis)
+
+heatmap_designed_damaging <-
+  evo300_nt_analysis %>%
+
+  dplyr::semi_join(
+    heatmap_metadata %>%
+      dplyr::select(original_design_id),
+    by = "original_design_id"
+  ) %>%
+
+  dplyr::filter(
+    mutation_type == "substitution",
+    DMS_available
+  ) %>%
+
+  dplyr::mutate(
+    designed_DMS_category_plot =
+      standardize_DMS_category(
+        DMS_effect_category_lethal
+      )
+  ) %>%
+
+  dplyr::filter(
+    designed_DMS_category_plot %in% c(
+      "Detrimental",
+      "Strongly detrimental"
+    )
+  ) %>%
+
+  dplyr::transmute(
+    original_design_id,
+    isolate,
+    mutation_id,
+
+    genome_position_numeric =
+      as.integer(genome_position),
+
+    designed_DMS_fitness =
+      DMS_replication_score,
+
+    designed_DMS_category_plot
+  ) %>%
+
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+
+# ============================================================
+# Designed mutations associated with rebooting changes
+# ============================================================
+
+names(heatmap_rescue_events)
+
+heatmap_designed_rebooting_context <-
+  heatmap_rescue_events %>%
+  dplyr::filter(
+    !is.na(designed_mutation_id)
+  ) %>%
+  dplyr::transmute(
+    original_design_id,
+    isolate,
+
+    mutation_id = designed_mutation_id,
+
+    genome_position_numeric =
+      dplyr::coalesce(
+        suppressWarnings(
+          as.integer(genome_position)
+        ),
+
+        suppressWarnings(
+          as.integer(
+            stringr::str_extract(
+              designed_mutation_id,
+              "[0-9]+"
+            )
+          )
+        )
+      ),
+
+    designed_DMS_replication_score,
+    designed_DMS_category_plot
+  ) %>%
+  dplyr::rename(
+    designed_DMS_fitness = designed_DMS_replication_score
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+
+# ============================================================
+# Combine ordinary detrimental mutations with rebooting-related designed mutations
+# ============================================================
+
+heatmap_designed_display <-
+  dplyr::bind_rows(
+    heatmap_designed_damaging,
+    heatmap_designed_rebooting_context
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+# Inspect
+heatmap_designed_display %>%
+  dplyr::filter(
+    isolate == "Evo-Phi5"
+  ) %>%
+  dplyr::arrange(genome_position_numeric) %>%
+  print(n = Inf, width = Inf)
+
+
+
+# ============================================================
+# Mutation axis
+# ============================================================
+
+heatmap_mutation_axis <-
+  dplyr::bind_rows(
+
+    heatmap_designed_display %>%
+      dplyr::transmute(
+        mutation_id,
+        genome_position_numeric
+      ),
+
+    heatmap_rescue_events %>%
+      dplyr::filter(
+        rebooting_change_plot == "New mutation"
+      ) %>%
+      dplyr::transmute(
+        mutation_id = recovered_mutation_id,
+        genome_position_numeric
+      )
+  ) %>%
+  dplyr::filter(
+    !is.na(mutation_id),
+    !is.na(genome_position_numeric)
+  ) %>%
+  dplyr::distinct(
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::arrange(
+    genome_position_numeric,
+    mutation_id
+  )
+
+heatmap_mutation_order <-
+  heatmap_mutation_axis$mutation_id
+
+
+
+# ============================================================
+# Complete mutation heatmap matrix
+# ============================================================
+
+combined_heatmap_data <-
+  tidyr::crossing(
+    original_design_id =
+      heatmap_metadata$original_design_id,
+
+    mutation_id =
+      heatmap_mutation_order
+  ) %>%
+
+  dplyr::left_join(
+    heatmap_metadata %>%
+      dplyr::select(
+        original_design_id,
+        isolate,
+        heatmap_label,
+        heatmap_group,
+        rebooting_viable,
+        lytic_rank_Evo
+      ),
+
+    by = "original_design_id",
+    relationship = "many-to-one"
+  ) %>%
+
+  dplyr::left_join(
+    heatmap_designed_display %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id,
+        designed_DMS_fitness
+      ),
+
+    by = c(
+      "original_design_id",
+      "mutation_id"
+    ),
+    relationship = "many-to-one"
+  ) %>%
+
+  dplyr::mutate(
+    mutation_id = factor(
+      mutation_id,
+      levels = heatmap_mutation_order
+    ),
+
+    heatmap_label = factor(
+      heatmap_label,
+      levels = rev(heatmap_row_order)
+    )
+  )
+
+
+
+# ============================================================
+# New mutations and reversions
+# ============================================================
+
+heatmap_new_mutations <-
+  heatmap_rescue_events %>%
+  dplyr::filter(
+    rebooting_change_plot == "New mutation"
+  ) %>%
+  dplyr::left_join(
+    heatmap_metadata %>%
+      dplyr::select(
+        original_design_id,
+        heatmap_label,
+        heatmap_group
+      ),
+
+    by = "original_design_id",
+    relationship = "many-to-one"
+  ) %>%
+  dplyr::mutate(
+    plot_mutation_id = factor(
+      recovered_mutation_id,
+      levels = heatmap_mutation_order
+    ),
+
+    heatmap_label = factor(
+      heatmap_label,
+      levels = rev(heatmap_row_order)
+    ),
+
+    rebooting_symbol = "New mutation"
+  )
+
+
+heatmap_reversions <-
+  heatmap_rescue_events %>%
+  dplyr::filter(
+    rebooting_change_plot == "Reversion to WT"
+  ) %>%
+  dplyr::left_join(
+    heatmap_metadata %>%
+      dplyr::select(
+        original_design_id,
+        heatmap_label,
+        heatmap_group
+      ),
+
+    by = "original_design_id",
+    relationship = "many-to-one"
+  ) %>%
+  dplyr::mutate(
+    plot_mutation_id = factor(
+      designed_mutation_id,
+      levels = heatmap_mutation_order
+    ),
+
+    heatmap_label = factor(
+      heatmap_label,
+      levels = rev(heatmap_row_order)
+    ),
+
+    rebooting_symbol = "Reversion to WT"
+  )
+
+
+
+# ============================================================
+# Final heatmap: Designed mutations and rebooting changes (presented Fig. S8E)
+# ============================================================
+
+replication_colors <- c(
+  "darkred",
+  "red",
+  "gray88",
+  "blue"
+)
+
+replication_breaks <- c(
+  -1, 0, 1, 1.5
+)
+
+
+p_combined_heatmap_fitness <-
+  ggplot2::ggplot(
+    combined_heatmap_data,
+    ggplot2::aes(
+      x = mutation_id,
+      y = heatmap_label
+    )
+  ) +
+
+  # Background cells
+  ggplot2::geom_tile(
+    fill = "#F5F5F5",
+    color = "white",
+    linewidth = 0.12
+  ) +
+
+  # Designed mutation replication scores
+  ggplot2::geom_tile(
+    data = combined_heatmap_data %>%
+      dplyr::filter(
+        !is.na(designed_DMS_fitness)
+      ),
+
+    ggplot2::aes(
+      fill = designed_DMS_fitness
+    ),
+
+    color = "white",
+    linewidth = 0.12
+  ) +
+
+  ggplot2::scale_fill_gradientn(
+    colors = replication_colors,
+    values = scales::rescale(replication_breaks),
+    limits = c(-1, 1.5),
+    oob = scales::squish,
+    name = "Replication score"
+  ) +
+
+  # New or replacement mutations
+  ggplot2::geom_point(
+    data = heatmap_new_mutations %>%
+      dplyr::filter(
+        !is.na(recovered_DMS_replication_score)
+      ),
+
+    ggplot2::aes(
+      x = plot_mutation_id,
+      y = heatmap_label,
+      color = recovered_DMS_replication_score,
+      shape = rebooting_symbol
+    ),
+
+    inherit.aes = FALSE,
+    size = 2.5
+  ) +
+
+  ggplot2::scale_color_gradientn(
+    colors = replication_colors,
+    values = scales::rescale(replication_breaks),
+    limits = c(-1, 1.5),
+    oob = scales::squish,
+    guide = "none"
+  ) +
+
+  # Reversions to WT
+  ggplot2::geom_point(
+    data = heatmap_reversions,
+
+    ggplot2::aes(
+      x = plot_mutation_id,
+      y = heatmap_label,
+      shape = rebooting_symbol
+    ),
+
+    inherit.aes = FALSE,
+    size = 0.8,
+    stroke = 0.4,
+    color = "black"
+  ) +
+
+  # Symbol legend
+  ggplot2::scale_shape_manual(
+    values = c(
+      "New mutation" = 16,
+      "Reversion to WT" = 4
+    ),
+    name = "Change during rebooting"
+  ) +
+
+  # Viability groups
+  ggplot2::facet_grid(
+    heatmap_group ~ .,
+    scales = "free_y",
+    space = "free_y"
+  ) +
+
+  # Mutation labels on top
+  ggplot2::scale_x_discrete(
+    position = "top"
+  ) +
+
+  ggplot2::labs(
+    title = paste0(
+      "Replication effects of designed mutations ",
+      "and changes during phage rebooting"
+    ),
+    x = "Selected nucleotide substitutions",
+    y = NULL
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(
+      angle = 90,
+      hjust = 0,
+      vjust = 0.5,
+      size = 5
+    ),
+
+    axis.title.x = ggplot2::element_text(
+      size = 10
+    ),
+
+    axis.text.y = ggplot2::element_text(
+      size = 8
+    ),
+
+    axis.title.y = ggplot2::element_blank(),
+
+    axis.ticks = ggplot2::element_blank(),
+
+    strip.background = ggplot2::element_rect(
+      fill = "gray90",
+      color = "black"
+    ),
+
+    strip.text.y = ggplot2::element_text(
+      face = "bold",
+      size = 9
+    ),
+
+    panel.spacing.y = grid::unit(
+      0.4,
+      "lines"
+    ),
+
+    legend.position = "bottom",
+    legend.box = "vertical",
+
+    legend.title = ggplot2::element_text(
+      face = "bold",
+      size = 9
+    ),
+
+    legend.text = ggplot2::element_text(
+      size = 8
+    )
+  ) +
+
+  ggplot2::guides(
+    fill = ggplot2::guide_colorbar(
+      order = 1,
+      barwidth = 10,
+      barheight = 1,
+      direction = "horizontal",
+      ticks.colour = "black",
+      title.position = "top",
+      title.hjust = 0.5
+    ),
+
+    shape = ggplot2::guide_legend(
+      order = 2,
+      title.position = "top",
+      title.hjust = 0.5,
+      nrow = 1
+    )
+  )
+
+print(p_combined_heatmap_fitness)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/p_combined_heatmap_fitness.pdf",
+  #plot = p_combined_heatmap_fitness,
+  #width = 10,
+  #height = 6
+#)
+
+
+
+
+```
+
+
+
+## Save checkpoints
+```{r}
+save.image(
+  file = "./codes_Github_final/run_Supplementary_Data.RData",
+  compress = "xz"
+)
+
+
+```
+
+
+

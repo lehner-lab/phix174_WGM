@@ -1,0 +1,7715 @@
+---
+title: "phix_interpreting_Evo300_designed_phages"
+output: html_document
+date: "2026-11-12"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Set working working directory
+```{r}
+here::here()
+
+citation("pwalign")
+# To cite package ‘pwalign’ in publications use:
+
+  #Aboyoun P, Gentleman R (2025). _pwalign: Perform pairwise sequence alignments_. doi:10.18129/B9.bioc.pwalign <https://doi.org/10.18129/B9.bioc.pwalign>, R package version 1.4.0,
+  #<https://bioconductor.org/packages/pwalign>.
+
+#A BibTeX entry for LaTeX users is
+
+  #@Manual{,
+    #title = {pwalign: Perform pairwise sequence alignments},
+    #author = {Patrick Aboyoun and Robert Gentleman},
+    #year = {2025},
+    #note = {R package version 1.4.0},
+    #url = {https://bioconductor.org/packages/pwalign},
+    #doi = {10.18129/B9.bioc.pwalign},
+  #}
+
+
+```
+
+
+
+## Load Functions
+### 1) Process data
+```{r}
+# load packages
+#library(tidyverse)
+#library(Biostrings)
+#library(pwalign)
+
+# ============================================================
+# Convert aligned reference/query strings into mutation blocks
+# ============================================================
+
+call_mutations_from_alignment <- function(
+    aligned_ref,
+    aligned_query,
+    level = c("nt", "aa"),
+    protein = NULL
+) {
+  
+  level <- match.arg(level)
+  
+  ref_chars <- strsplit(aligned_ref, "")[[1]]
+  query_chars <- strsplit(aligned_query, "")[[1]]
+  
+  if (length(ref_chars) != length(query_chars)) {
+    stop("Aligned reference and query must have the same length.")
+  }
+  
+  
+  # ----------------------------------------------------------
+  # Track reference and query coordinates across alignment
+  # ----------------------------------------------------------
+  
+  ref_pos <- integer(length(ref_chars))
+  query_pos <- integer(length(query_chars))
+  
+  r <- 0L
+  q <- 0L
+  
+  for (i in seq_along(ref_chars)) {
+    
+    if (ref_chars[i] != "-") {
+      r <- r + 1L
+      ref_pos[i] <- r
+    } else {
+      ref_pos[i] <- r
+    }
+    
+    if (query_chars[i] != "-") {
+      q <- q + 1L
+      query_pos[i] <- q
+    } else {
+      query_pos[i] <- q
+    }
+  }
+  
+  
+  alignment_tbl <- tibble(
+    alignment_position = seq_along(ref_chars),
+    ref_char = ref_chars,
+    query_char = query_chars,
+    ref_position = ref_pos,
+    query_position = query_pos
+  ) %>%
+    dplyr::mutate(
+      event = dplyr::case_when(
+        
+        ref_char == query_char ~ "match",
+        
+        ref_char != "-" &
+          query_char != "-" ~ "substitution",
+        
+        ref_char != "-" &
+          query_char == "-" ~ "deletion",
+        
+        ref_char == "-" &
+          query_char != "-" ~ "insertion",
+        
+        TRUE ~ "unknown"
+      )
+    )
+  
+  
+  # ----------------------------------------------------------
+  # Substitutions
+  # ----------------------------------------------------------
+  
+  substitutions <- alignment_tbl %>%
+    dplyr::filter(event == "substitution") %>%
+    dplyr::transmute(
+      mutation_type = "substitution",
+      
+      ref_start = ref_position,
+      ref_end = ref_position,
+      
+      query_start = query_position,
+      query_end = query_position,
+      
+      ref_allele = ref_char,
+      alt_allele = query_char
+    )
+  
+  
+  # ----------------------------------------------------------
+  # Group contiguous indels
+  # ----------------------------------------------------------
+  
+  indel_tbl <- alignment_tbl %>%
+    dplyr::filter(event %in% c("insertion", "deletion"))
+  
+  if (nrow(indel_tbl) > 0) {
+    
+    #indel_tbl <- indel_tbl %>%
+      #dplyr::mutate(
+        #new_block =
+          #event != dplyr::lag(event, default = first(event)) |
+          #alignment_position !=
+            #dplyr::lag(
+              #alignment_position,
+              #default = first(alignment_position)
+            #) + 1,
+        
+        #block_id = cumsum(new_block)
+      #)
+    
+    indel_tbl <- indel_tbl %>%
+        dplyr::mutate(
+          
+          new_block =
+            dplyr::row_number() == 1L |
+            event != dplyr::lag(event) |
+            alignment_position !=
+              dplyr::lag(alignment_position) + 1L,
+          
+          block_id = cumsum(new_block)
+        )
+    
+    indels <- indel_tbl %>%
+      dplyr::group_by(event, block_id) %>%
+      dplyr::summarise(
+        
+        ref_start = min(ref_position),
+        ref_end = max(ref_position),
+        
+        query_start = min(query_position),
+        query_end = max(query_position),
+        
+        ref_allele = paste0(
+          ref_char[ref_char != "-"],
+          collapse = ""
+        ),
+        
+        alt_allele = paste0(
+          query_char[query_char != "-"],
+          collapse = ""
+        ),
+        
+        .groups = "drop"
+      ) %>%
+      dplyr::rename(
+        mutation_type = event
+      ) %>%
+      dplyr::select(
+        mutation_type,
+        ref_start,
+        ref_end,
+        query_start,
+        query_end,
+        ref_allele,
+        alt_allele
+      )
+    
+  } else {
+    
+    indels <- tibble(
+      mutation_type = character(),
+      ref_start = integer(),
+      ref_end = integer(),
+      query_start = integer(),
+      query_end = integer(),
+      ref_allele = character(),
+      alt_allele = character()
+    )
+  }
+  
+  
+  mutations <- dplyr::bind_rows(
+    substitutions,
+    indels
+  ) %>%
+    dplyr::arrange(
+      ref_start,
+      query_start
+    )
+  
+  
+  # ----------------------------------------------------------
+  # Add mutation IDs
+  # ----------------------------------------------------------
+  
+  if (level == "nt") {
+    
+    mutations <- mutations %>%
+      dplyr::mutate(
+        
+        mutation_id = dplyr::case_when(
+          
+          mutation_type == "substitution" ~
+            paste0(
+              ref_allele,
+              ref_start,
+              alt_allele
+            ),
+          
+          mutation_type == "deletion" &
+            ref_start == ref_end ~
+            paste0(
+              ref_start,
+              "del",
+              ref_allele
+            ),
+          
+          mutation_type == "deletion" ~
+            paste0(
+              ref_start,
+              "_",
+              ref_end,
+              "del",
+              ref_allele
+            ),
+          
+          mutation_type == "insertion" ~
+            paste0(
+              ref_start,
+              "_",
+              ref_start + 1L,
+              "ins",
+              alt_allele
+            )
+        ),
+        
+        mutation_id_full = paste0(
+          "nt_",
+          mutation_id
+        )
+      )
+    
+  } else {
+    
+    if (is.null(protein)) {
+      stop("protein must be supplied for amino-acid mutations.")
+    }
+    
+    mutations <- mutations %>%
+      dplyr::mutate(
+        
+        mutation_id = dplyr::case_when(
+          
+          mutation_type == "substitution" ~
+            paste0(
+              "gp",
+              protein,
+              "_",
+              ref_allele,
+              ref_start,
+              alt_allele
+            ),
+          
+          mutation_type == "deletion" &
+            ref_start == ref_end ~
+            paste0(
+              "gp",
+              protein,
+              "_",
+              ref_start,
+              "del",
+              ref_allele
+            ),
+          
+          mutation_type == "deletion" ~
+            paste0(
+              "gp",
+              protein,
+              "_",
+              ref_start,
+              "_",
+              ref_end,
+              "del",
+              ref_allele
+            ),
+          
+          mutation_type == "insertion" ~
+            paste0(
+              "gp",
+              protein,
+              "_",
+              ref_start,
+              "_",
+              ref_start + 1L,
+              "ins",
+              alt_allele
+            )
+        )
+      )
+  }
+  
+  
+  list(
+    mutations = mutations,
+    coordinate_map = alignment_tbl
+  )
+}
+
+
+# ============================================================
+# Align one Evo genome against WT and call nucleotide mutations
+# ============================================================
+
+align_and_call_nt_mutations <- function(
+    reference_sequence,
+    query_sequence,
+    isolate,
+    accession_version = NA_character_
+) {
+  
+  reference_sequence <- toupper(
+    gsub("\\s+", "", reference_sequence)
+  )
+  
+  query_sequence <- toupper(
+    gsub("\\s+", "", query_sequence)
+  )
+  
+  
+  ref <- Biostrings::DNAString(reference_sequence)
+  query <- Biostrings::DNAString(query_sequence)
+  
+  
+  nt_matrix <- pwalign::nucleotideSubstitutionMatrix(
+    match = 2,
+    mismatch = -3,
+    baseOnly = TRUE
+  )
+  
+  
+  aln <- pwalign::pairwiseAlignment(
+    pattern = query,
+    subject = ref,
+    type = "global",
+    substitutionMatrix = nt_matrix,
+    gapOpening = 5,
+    gapExtension = 2
+  )
+  
+  
+  # subject = WT
+  # pattern = Evo
+  
+  aligned_ref <- as.character(
+    pwalign::alignedSubject(aln)
+  )
+  
+  aligned_query <- as.character(
+    pwalign::alignedPattern(aln)
+  )
+  
+  
+  calls <- call_mutations_from_alignment(
+    aligned_ref = aligned_ref,
+    aligned_query = aligned_query,
+    level = "nt"
+  )
+  
+  
+  mutations <- calls$mutations %>%
+    dplyr::mutate(
+      isolate = isolate,
+      accession_version = accession_version,
+      .before = 1
+    )
+  
+  
+  coordinate_map <- calls$coordinate_map %>%
+    dplyr::mutate(
+      isolate = isolate,
+      accession_version = accession_version,
+      .before = 1
+    )
+  
+  
+  qc <- tibble(
+    isolate = isolate,
+    accession_version = accession_version,
+    
+    reference_length = nchar(reference_sequence),
+    query_length = nchar(query_sequence),
+    aligned_length = nchar(aligned_ref),
+    
+    alignment_score = as.numeric(
+      BiocGenerics::score(aln)
+    ),
+    
+    n_substitutions = sum(
+      mutations$mutation_type == "substitution"
+    ),
+    
+    n_insertions = sum(
+      mutations$mutation_type == "insertion"
+    ),
+    
+    n_deletions = sum(
+      mutations$mutation_type == "deletion"
+    ),
+    
+    inserted_nt = sum(
+      nchar(
+        mutations$alt_allele[
+          mutations$mutation_type == "insertion"
+        ]
+      )
+    ),
+    
+    deleted_nt = sum(
+      nchar(
+        mutations$ref_allele[
+          mutations$mutation_type == "deletion"
+        ]
+      )
+    )
+  )
+  
+  
+  list(
+    alignment = aln,
+    aligned_reference = aligned_ref,
+    aligned_query = aligned_query,
+    coordinate_map = coordinate_map,
+    mutations = mutations,
+    QC = qc
+  )
+}
+
+
+# ============================================================
+# Helper: Run Spearman correlations in EVO analyses
+# ============================================================
+
+run_spearman_one <- function(
+    data,
+    predictor,
+    outcome = "lytic_rank_Evo"
+) {
+
+  df <-
+    data %>%
+    dplyr::select(
+      x = dplyr::all_of(predictor),
+      y = dplyr::all_of(outcome)
+    ) %>%
+    tidyr::drop_na()
+
+
+  test <-
+    stats::cor.test(
+      df$x,
+      df$y,
+      method = "spearman",
+      exact = FALSE
+    )
+
+
+  tibble::tibble(
+
+    predictor =
+      predictor,
+
+    n =
+      nrow(df),
+
+    rho =
+      unname(
+        test$estimate
+      ),
+
+    p_value =
+      test$p.value
+  )
+}
+
+
+
+
+```
+
+
+
+### 2) Plotting
+```{r}
+# Function to make heatmaps 
+build_mutation_heatmap_data <- function(
+    genome_metadata,
+    mutation_data,
+    rescue_changes = NULL,
+    rescue_annotation = NULL
+) {
+
+  # --------------------------------------------------------
+  # Genome metadata
+  # --------------------------------------------------------
+
+  genomes <- genome_metadata %>%
+    dplyr::mutate(
+
+      viability_state =
+        dplyr::case_when(
+
+          viability_group == "Nonviable" ~
+            "Nonviable",
+
+          acquired_mutations_during_rebooting ~
+            "Viable after rescue",
+
+          rebooting_viable ~
+            "Viable",
+
+          TRUE ~
+            "Other"
+        )
+    )
+
+
+  # --------------------------------------------------------
+  # Add rescue annotations when available
+  # --------------------------------------------------------
+
+  if (!is.null(rescue_annotation)) {
+
+    genomes <- genomes %>%
+      dplyr::left_join(
+        rescue_annotation %>%
+          dplyr::select(
+            original_design_id,
+            pure_SNV_rescue,
+            single_SNV_rescue,
+            n_rebooting_SNV_changes,
+            n_rebooting_indel_changes
+          ),
+        by = "original_design_id",
+        relationship = "one-to-one"
+      )
+
+  } else {
+
+    genomes <- genomes %>%
+      dplyr::mutate(
+        pure_SNV_rescue = FALSE,
+        single_SNV_rescue = FALSE,
+        n_rebooting_SNV_changes = 0L,
+        n_rebooting_indel_changes = 0L
+      )
+  }
+
+
+  genomes <- genomes %>%
+    dplyr::mutate(
+
+      pure_SNV_rescue =
+        tidyr::replace_na(
+          pure_SNV_rescue,
+          FALSE
+        ),
+
+      single_SNV_rescue =
+        tidyr::replace_na(
+          single_SNV_rescue,
+          FALSE
+        ),
+
+      # concise row labels
+      heatmap_label =
+        dplyr::case_when(
+
+          single_SNV_rescue ~
+            paste0(
+              isolate,
+              " | Viable after rescue | 1 SNV"
+            ),
+
+          viability_state ==
+            "Viable after rescue" ~
+            paste0(
+              isolate,
+              " | Viable after rescue"
+            ),
+
+          viability_state ==
+            "Viable" ~
+            paste0(
+              isolate,
+              " | Viable"
+            ),
+
+          TRUE ~
+            paste0(
+              isolate,
+              " | Nonviable"
+            )
+        ),
+
+      viability_state =
+        factor(
+          viability_state,
+          levels = c(
+            "Nonviable",
+            "Viable after rescue",
+            "Viable"
+          )
+        )
+    ) %>%
+    dplyr::arrange(
+      viability_state,
+      isolate
+    )
+
+
+  # --------------------------------------------------------
+  # Designed detrimental/lethal substitutions
+  # --------------------------------------------------------
+
+  designed_focus <- mutation_data %>%
+    dplyr::filter(
+      mutation_type == "substitution",
+      DMS_effect_category %in%
+        c(
+          "Detrimental",
+          "Lethal"
+        )
+    ) %>%
+    dplyr::mutate(
+      genome_position_numeric =
+        as.integer(genome_position)
+    ) %>%
+    dplyr::distinct(
+      original_design_id,
+      mutation_id,
+      .keep_all = TRUE
+    )
+
+
+  # --------------------------------------------------------
+  # Rescue events belonging to genomes in this subset
+  # --------------------------------------------------------
+
+  if (!is.null(rescue_changes)) {
+
+    rescue_subset <- rescue_changes %>%
+      dplyr::semi_join(
+        genomes %>%
+          dplyr::select(
+            original_design_id
+          ),
+        by = "original_design_id"
+      ) %>%
+      dplyr::mutate(
+
+        plot_mutation_id =
+          dplyr::case_when(
+
+            rebooting_change ==
+              "Reversion to WT" ~
+              designed_mutation_id,
+
+            rebooting_change %in%
+              c(
+                "New mutation",
+                "Changed allele"
+              ) ~
+              recovered_mutation_id,
+
+            TRUE ~
+              NA_character_
+          )
+      ) %>%
+      dplyr::filter(
+        !is.na(plot_mutation_id)
+      )
+
+  } else {
+
+    rescue_subset <- tibble::tibble(
+      original_design_id = character(),
+      isolate = character(),
+      genome_position = integer(),
+      rebooting_change = character(),
+      plot_mutation_id = character()
+    )
+  }
+
+
+  # --------------------------------------------------------
+  # Mutation universe:
+  # designed damaging mutations + rescue mutations
+  # --------------------------------------------------------
+
+  mutation_axis <- dplyr::bind_rows(
+
+    designed_focus %>%
+      dplyr::transmute(
+        mutation_id,
+        genome_position_numeric
+      ),
+
+    rescue_subset %>%
+      dplyr::transmute(
+        mutation_id =
+          plot_mutation_id,
+
+        genome_position_numeric =
+          as.integer(
+            genome_position
+          )
+      )
+  ) %>%
+
+    dplyr::filter(
+      !is.na(mutation_id),
+      !is.na(genome_position_numeric)
+    ) %>%
+
+    dplyr::distinct(
+      mutation_id,
+      .keep_all = TRUE
+    ) %>%
+
+    dplyr::arrange(
+      genome_position_numeric,
+      mutation_id
+    )
+
+
+  mutation_order <-
+    mutation_axis$mutation_id
+
+  genome_order <-
+    genomes$heatmap_label
+
+
+  # --------------------------------------------------------
+  # Build complete genome × mutation matrix
+  # --------------------------------------------------------
+
+  heatmap <- tidyr::crossing(
+
+    original_design_id =
+      genomes$original_design_id,
+
+    mutation_id =
+      mutation_order
+  ) %>%
+
+    dplyr::left_join(
+      genomes %>%
+        dplyr::select(
+          original_design_id,
+          isolate,
+          heatmap_label,
+          viability_state,
+          dplyr::any_of(
+            c(
+              "has_indel",
+              "n_indel_events",
+              "single_SNV_rescue"
+            )
+          )
+        ),
+      by = "original_design_id",
+      relationship = "many-to-one"
+    ) %>%
+
+    dplyr::left_join(
+      designed_focus %>%
+        dplyr::select(
+          original_design_id,
+          mutation_id,
+          DMS_effect_category
+        ) %>%
+        dplyr::distinct(),
+      by = c(
+        "original_design_id",
+        "mutation_id"
+      ),
+      relationship = "many-to-one"
+    ) %>%
+
+    dplyr::mutate(
+
+      heatmap_category =
+        dplyr::case_when(
+
+          DMS_effect_category ==
+            "Lethal" ~
+            "Lethal",
+
+          DMS_effect_category ==
+            "Detrimental" ~
+            "Detrimental",
+
+          TRUE ~
+            "Absent"
+        ),
+
+      mutation_id =
+        factor(
+          mutation_id,
+          levels =
+            mutation_order
+        ),
+
+      heatmap_label =
+        factor(
+          heatmap_label,
+          levels =
+            genome_order
+        )
+    )
+
+
+  # --------------------------------------------------------
+  # Prepare rescue overlay
+  # --------------------------------------------------------
+
+  rescue_overlay <- rescue_subset %>%
+    dplyr::left_join(
+      genomes %>%
+        dplyr::select(
+          original_design_id,
+          heatmap_label,
+          single_SNV_rescue
+        ),
+      by = "original_design_id",
+      relationship = "many-to-one"
+    ) %>%
+
+    dplyr::mutate(
+
+      plot_mutation_id =
+        factor(
+          plot_mutation_id,
+          levels =
+            mutation_order
+        ),
+
+      heatmap_label =
+        factor(
+          heatmap_label,
+          levels =
+            genome_order
+        )
+    )
+
+
+  list(
+    genomes = genomes,
+    mutation_axis = mutation_axis,
+    heatmap = heatmap,
+    rescue_overlay = rescue_overlay
+  )
+}
+
+
+
+
+```
+
+
+
+
+
+## Process Evo 300 candidate genomes
+Mutation calling in Evo 300 genomes, and compare mutations in Viable vs. Non-viable
+
+### 1) load genomes and metadata
+Evo 300 genomes metadata preparation.
+ - Sheet 1. Generated bacteriophage genome candidates, metrics, assembly fragments, and viability.
+ - Sheet 5. Top 10 nucleotide BLAST hits and mutation metrics for viable generated, nonviable generated, and natural bacteriophage genomes. 
+   - Sheet 5 doesnt have the original design id rather a Query column that mixes viable phages id with designed id for nonviable phages, so to merge BLAST results in sheet 5 back to sheet 1, we can use isolate id + viability.
+   
+- evo300_metadata_final
+
+```{r}
+# ============================================================
+# Load all 302 Evo-designed genomes (Sheet 1. Generated bacteriophage genome candidates, metrics, assembly fragments, and viability.)
+# ============================================================
+
+## Read Sheet 1 from the supplementary Excel file
+library(readxl)
+
+evo_supplement_file <-
+  "./codes_Github_final/data/Generative design of bacteriophages with genome language models/science.aec2657_data_s1.xlsx"
+
+excel_sheets(evo_supplement_file)
+
+evo_sheet1_raw <- readxl::read_excel(
+  evo_supplement_file,
+  sheet = 2
+)
+
+head(evo_sheet1_raw, 5)
+nrow(evo_sheet1_raw)
+# [1] 302
+
+evo_sheet1_raw %>%
+  dplyr::summarise(
+    n_rows = dplyr::n(),
+    n_unique_ids =
+      dplyr::n_distinct(
+        synthesisbatch_model_parameters_prompt_id
+      )
+  )
+
+evo_sheet1_raw %>%
+  dplyr::summarise(
+    n_rows = dplyr::n(),
+    n_unique_sequences = dplyr::n_distinct(sequence),
+    n_duplicate_sequences = n_rows - n_unique_sequences
+  )
+# # A tibble: 1 × 3
+#   n_rows n_unique_sequences n_duplicate_sequences
+#    <int>              <int>                 <int>
+# 1    302                296                     6
+
+evo_sheet1_raw %>%
+  dplyr::count(
+    post_rebooting_viability,
+    sort = TRUE
+  )
+# # A tibble: 4 × 2
+#   post_rebooting_viability                          n
+#   <chr>                                         <int>
+# 1 nonviable                                       269
+# 2 nonviable, failed DNA synthesis                  17
+# 3 viable                                            9
+# 4 viable, acquired mutation(s) during rebooting     7
+
+evo_sheet1_raw %>%
+  dplyr::filter(
+    grepl(
+      "^viable",
+      post_rebooting_viability
+    )
+  ) %>%
+  dplyr::select(
+    synthesisbatch_model_parameters_prompt_id,
+    post_rebooting_viability,
+    genome_length,
+    mmseqs_percent_identity_to_phix174
+  ) %>%
+  print(n = Inf, width = Inf)
+
+summary(
+  evo_sheet1_raw$mmseqs_percent_identity_to_phix174
+)
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#   60.19   80.69   91.06   87.88   94.99  100.00 
+
+summary(
+  evo_sheet1_raw$genome_length
+)
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#   4117    5386    5454    5477    5670    5998 
+
+
+
+# ============================================================
+# Load Top 10 nucleotide BLAST hits and mutation metrics for viable generated, nonviable generated, and natural bacteriophage genomes. (Sheet 5)
+# ============================================================
+
+evo_sheet5_raw <- readxl::read_excel(
+  evo_supplement_file,
+  sheet = 6
+)
+
+head(evo_sheet5_raw, 5)
+nrow(evo_sheet5_raw)
+# [1] 4910
+
+evo_sheet5_top1 <- evo_sheet5_raw %>%
+  dplyr::filter(
+    `Hit Rank` == 1
+  ) %>%
+  dplyr::mutate(
+
+    # Standardize Query names:
+    # Evo-Φ4 -> Evo-Phi4
+    isolate = stringr::str_replace_all(
+      Query,
+      "\u03a6",
+      "Phi"
+    ),
+
+    category_original = Category
+  )
+
+evo_sheet5_top1 %>%
+  dplyr::count(
+    category_original,
+    sort = TRUE
+  )
+
+# # A tibble: 5 × 2
+#   category_original             n
+#   <chr>                     <int>
+# 1 Nonviable generated         286
+# 2 ΦX174 variant               134
+# 3 Lab-evolved ΦX174 variant    39
+# 4 Viable generated             16
+# 5 ΦX174-like isolate           16
+
+# Confirmed no duplicated generated isolate names
+evo_sheet5_top1 %>%
+  dplyr::filter(
+    stringr::str_detect(
+      category_original,
+      "generated"
+    )
+  ) %>%
+  dplyr::count(
+    isolate,
+    sort = TRUE
+  ) %>%
+  dplyr::filter(
+    n > 1
+  )
+
+evo_nearest_natural_top1 <- evo_sheet5_top1 %>%
+  dplyr::transmute(
+
+    category_original,
+
+    query_original = Query,
+    isolate,
+
+    nearest_natural_accession =
+      Accession,
+
+    nearest_natural_description =
+      Description,
+
+    nearest_natural_percent_identity =
+      `Percent Identity`,
+
+    nearest_natural_sequence_similarity =
+      sequence_similarity,
+
+    nearest_natural_query_coverage =
+      `Query Cover %`,
+
+    nearest_natural_alignment_length =
+      `Alignment Length`,
+
+    nearest_natural_subject_length =
+      `Subject Length`,
+
+    nearest_natural_gaps =
+      Gaps,
+
+    nearest_natural_mismatches =
+      Mismatches,
+
+    nearest_natural_synonymous_substitutions =
+      synonymous_substitutions,
+
+    nearest_natural_nonsynonymous_substitutions =
+      nonsynonymous_substitutions,
+
+    nearest_natural_intergenic_substitutions =
+      intergenic_substitutions,
+
+    nearest_natural_indel_events =
+      indel_events,
+
+    nearest_natural_indel_total_nt =
+      indel_total_nt,
+
+    nearest_natural_total_mutation_events =
+      total_mutation_events,
+
+    nearest_natural_estimated_snv =
+      estimated_snv
+  )
+
+evo_nearest_natural_top1 %>%
+  dplyr::summarise(
+    n_different = sum(
+      nearest_natural_percent_identity !=
+        nearest_natural_sequence_similarity,
+      na.rm = TRUE
+    ),
+
+    max_difference = max(
+      abs(
+        nearest_natural_percent_identity -
+          nearest_natural_sequence_similarity
+      ),
+      na.rm = TRUE
+    )
+  )
+# # A tibble: 1 × 2
+#   n_different max_difference
+#         <int>          <dbl>
+# 1         270           96.8
+
+
+
+# ============================================================
+# Separate generated designs from recovered viable genomes
+# ============================================================
+
+evo_generated_nearest_natural <- evo_nearest_natural_top1 %>%
+  dplyr::filter(
+    category_original %in% c(
+      "Viable generated",
+      "Nonviable generated"
+    )
+  )
+
+evo_generated_nearest_natural %>%
+  dplyr::summarise(
+    n_rows = dplyr::n(),
+    n_unique_isolates =
+      dplyr::n_distinct(isolate)
+  )
+# # A tibble: 1 × 2
+#   n_rows n_unique_isolates
+#    <int>             <int>
+# 1    302               302
+
+
+
+# ============================================================
+# Build master metadata table for all 302 Evo-designed genomes
+# ============================================================
+
+evo300_metadata <- evo_sheet1_raw %>%
+
+  dplyr::mutate(
+
+    # --------------------------------------------------------
+    # Internal design identifiers
+    # --------------------------------------------------------
+
+    design_number = dplyr::row_number(),
+
+    design_id = sprintf(
+      "EvoDesign_%03d",
+      design_number
+    ),
+
+    original_design_id =
+      synthesisbatch_model_parameters_prompt_id,
+
+
+    # --------------------------------------------------------
+    # Extract published Evo-phage isolate number/name
+    #
+    # Example:
+    # ..._genome_4_umi294
+    #       ↓
+    # Evo-Phi4
+    # --------------------------------------------------------
+
+    isolate_number = stringr::str_match(
+      synthesisbatch_model_parameters_prompt_id,
+      "genome_([0-9]+)_umi"
+    )[, 2],
+
+    isolate = dplyr::if_else(
+      !is.na(isolate_number),
+      paste0(
+        "Evo-Phi",
+        isolate_number
+      ),
+      NA_character_
+    ),
+
+
+    # --------------------------------------------------------
+    # Original rebooting phenotype
+    # --------------------------------------------------------
+
+    viability_original =
+      post_rebooting_viability,
+
+
+    # --------------------------------------------------------
+    # Binary biological viability
+    #
+    # DNA-synthesis failures are NA because those genomes
+    # were not biologically tested for rebooting.
+    # --------------------------------------------------------
+
+    rebooting_viable = dplyr::case_when(
+
+      post_rebooting_viability %in% c(
+        "viable",
+        "viable, acquired mutation(s) during rebooting"
+      ) ~ TRUE,
+
+      post_rebooting_viability == "nonviable" ~ FALSE,
+
+      post_rebooting_viability ==
+        "nonviable, failed DNA synthesis" ~ NA,
+
+      TRUE ~ NA
+    ),
+
+
+    # --------------------------------------------------------
+    # More detailed phenotype flags
+    # --------------------------------------------------------
+
+    acquired_mutations_during_rebooting =
+      post_rebooting_viability ==
+      "viable, acquired mutation(s) during rebooting",
+
+    failed_DNA_synthesis =
+      post_rebooting_viability ==
+      "nonviable, failed DNA synthesis",
+
+
+    # --------------------------------------------------------
+    # Simple viability category for plotting/reporting
+    # --------------------------------------------------------
+
+    viability_group = dplyr::case_when(
+
+      post_rebooting_viability == "viable" ~
+        "Viable",
+
+      post_rebooting_viability ==
+        "viable, acquired mutation(s) during rebooting" ~
+        "Viable after acquired mutation(s)",
+
+      post_rebooting_viability == "nonviable" ~
+        "Nonviable",
+
+      post_rebooting_viability ==
+        "nonviable, failed DNA synthesis" ~
+        "DNA synthesis failed",
+
+      TRUE ~ "Unknown"
+    )
+  ) %>%
+
+  dplyr::transmute(
+
+    # --------------------------------------------------------
+    # Identifiers
+    # --------------------------------------------------------
+
+    design_id,
+    design_number,
+    original_design_id,
+
+    isolate,
+    isolate_number,
+
+
+    # --------------------------------------------------------
+    # Genome sequence
+    # --------------------------------------------------------
+
+    sequence,
+    genome_length,
+    gc_content,
+    max_nt_homopolymer_length,
+
+
+    # --------------------------------------------------------
+    # Genome / ORF annotation supplied by the authors
+    # --------------------------------------------------------
+
+    prodigal_orf_count,
+    prodigal_orf_lengths,
+    total_prodigal_orfs_length,
+    prodigal_coding_density,
+    max_prodigal_aa_homopolymer_len,
+
+    protein_database_hit_count,
+    checkv_quality,
+
+    mmseqs_percent_identity_to_phix174,
+    
+    architecture_similarity_score,
+
+    tropism_protein_mmseqs_target,
+    tropism_protein_mmseqs_e_value,
+    tropism_protein_mmseqs_percent_identity,
+
+    average_protein_percent_identity,
+    num_syntenic_genes,
+    non_syntenic_genes,
+    non_syntenic_annotations,
+    total_num_genes,
+
+
+    # --------------------------------------------------------
+    # Rebooting outcome
+    # --------------------------------------------------------
+
+    viability_original,
+    viability_group,
+    rebooting_viable,
+    acquired_mutations_during_rebooting,
+    failed_DNA_synthesis
+  )
+
+evo300_metadata %>%
+  dplyr::count(design_id) %>%
+  dplyr::filter(n > 1)
+# A tibble: 0 × 2
+# ℹ 2 variables: design_id <chr>, n <int>
+# Confirm the design_id is unique
+
+evo300_metadata %>%
+  dplyr::count(isolate) %>%
+  dplyr::filter(n > 1)
+# # A tibble: 13 × 2
+#    isolate       n
+#    <chr>     <int>
+#  1 Evo-Phi1      2
+#  2 Evo-Phi16     2
+#  3 Evo-Phi2      2
+#  4 Evo-Phi22     2
+#  5 Evo-Phi25     2
+#  6 Evo-Phi27     2
+#  7 Evo-Phi29     2
+#  8 Evo-Phi36     2
+#  9 Evo-Phi4      2
+# 10 Evo-Phi58     2
+# 11 Evo-Phi59     2
+# 12 Evo-Phi6      2
+# 13 Evo-Phi9      2
+# Some isolates can have duplicated labels
+
+evo300_metadata %>%
+  dplyr::count(
+    viability_group,
+    rebooting_viable,
+    failed_DNA_synthesis
+  )
+# # A tibble: 4 × 4
+#   viability_group                   rebooting_viable failed_DNA_synthesis     n
+#   <chr>                             <lgl>            <lgl>                <int>
+# 1 DNA synthesis failed              NA               TRUE                    17
+# 2 Nonviable                         FALSE            FALSE                  269
+# 3 Viable                            TRUE             FALSE                    9
+# 4 Viable after acquired mutation(s) TRUE             FALSE                    7
+
+#evo300_metadata %>%
+  #dplyr::select(
+    #original_design_id,
+    #isolate_number,
+    #isolate
+  #) %>%
+  #dplyr::slice_head(n = 20) %>%
+  #print(
+    #n = 20,
+    #width = Inf
+  #)
+
+evo300_metadata %>%
+  dplyr::summarise(
+    n_rows = dplyr::n(),
+
+    n_unique_original_design_id =
+      dplyr::n_distinct(
+        original_design_id
+      ),
+
+    n_unique_isolate =
+      dplyr::n_distinct(
+        isolate
+      )
+  )
+# # A tibble: 1 × 3
+#   n_rows n_unique_original_design_id n_unique_isolate
+#    <int>                       <int>            <int>
+# 1    302                         302              289
+
+evo300_metadata %>%
+  dplyr::summarise(
+    n_designs = dplyr::n(),
+    n_with_isolate = sum(!is.na(isolate)),
+    n_missing_isolate = sum(is.na(isolate)),
+    n_unique_isolates = dplyr::n_distinct(
+      isolate,
+      na.rm = TRUE
+    )
+  )
+# # A tibble: 1 × 4
+#   n_designs n_with_isolate n_missing_isolate n_unique_isolates
+#       <int>          <int>             <int>             <int>
+# 1       302            302                 0               289
+
+evo300_metadata %>%
+  dplyr::filter(
+    rebooting_viable == TRUE
+  ) %>%
+  dplyr::select(
+    isolate,
+    isolate_number,
+    viability_group,
+    genome_length,
+    mmseqs_percent_identity_to_phix174
+  ) %>%
+  dplyr::arrange(
+    as.numeric(isolate_number)
+  )
+# # A tibble: 16 × 5
+#    isolate     isolate_number viability_group                   genome_length mmseqs_percent_identity_to_phix174
+#    <chr>       <chr>          <chr>                                     <dbl>                              <dbl>
+#  1 Evo-Phi4    4              Viable after acquired mutation(s)          5386                               96.7
+#  2 Evo-Phi5    5              Viable after acquired mutation(s)          5392                               93.8
+#  3 Evo-Phi36   36             Viable                                     5349                               97.1
+#  4 Evo-Phi46   46             Viable                                     5386                               96.9
+#  5 Evo-Phi63   63             Viable                                     5654                               93.2
+#  6 Evo-Phi69   69             Viable after acquired mutation(s)          5537                               97.6
+#  7 Evo-Phi75   75             Viable                                     5386                               97.9
+#  8 Evo-Phi100  100            Viable                                     5386                               97.4
+#  9 Evo-Phi108  108            Viable                                     5386                               97.3
+# 10 Evo-Phi111  111            Viable after acquired mutation(s)          5386                               98.0
+# 11 Evo-Phi114  114            Viable after acquired mutation(s)          5386                               98.5
+# 12 Evo-Phi316  316            Viable                                     5387                               98.5
+# 13 Evo-Phi2147 2147           Viable                                     5632                               93.7
+# 14 Evo-Phi2483 2483           Viable after acquired mutation(s)          5613                               94.9
+# 15 Evo-Phi2498 2498           Viable                                     5575                               95.4
+# 16 Evo-Phi3392 3392           Viable after acquired mutation(s)          5948                               88.7
+
+
+
+# ============================================================
+# Merge evo design metadata with the nucleotide BLAST results
+# ============================================================
+
+names(evo_generated_nearest_natural)
+
+evo300_metadata <- evo300_metadata %>%
+  dplyr::mutate(
+    generated_status = dplyr::case_when(
+
+      rebooting_viable == TRUE ~
+        "Viable generated",
+
+      rebooting_viable == FALSE ~
+        "Nonviable generated",
+
+      failed_DNA_synthesis ~
+        "DNA synthesis failed",
+
+      TRUE ~
+        NA_character_
+    )
+  )
+
+# Add normalized synthesis ID to evo300_metadata
+evo300_metadata <- evo300_metadata %>%
+  dplyr::mutate(
+    original_design_id_no_umi =
+      stringr::str_remove(
+        original_design_id,
+        "_umi[0-9]+$"
+      )
+  )
+
+# Normalize Sheet 5 query/isolate identifiers
+evo_generated_nearest_natural <- evo_generated_nearest_natural %>%
+  dplyr::mutate(
+    sheet5_design_id_no_umi =
+      stringr::str_remove(
+        isolate,
+        "_umi[0-9]+$"
+      )
+  )
+
+evo_generated_nearest_natural %>%
+  dplyr::count(category_original)
+# # A tibble: 2 × 2
+#   category_original       n
+#   <chr>               <int>
+# 1 Nonviable generated   286
+# 2 Viable generated       16
+
+# Primary Sheet 5 lookup using normalized synthesis ID
+sheet5_primary_lookup <- evo_generated_nearest_natural %>%
+  dplyr::filter(
+    sheet5_design_id_no_umi %in%
+      evo300_metadata$original_design_id_no_umi
+  )
+
+
+
+# ============================================================
+# Primary join
+# ============================================================
+
+evo300_metadata_stage1 <- evo300_metadata %>%
+  dplyr::left_join(
+    sheet5_primary_lookup %>%
+      dplyr::select(
+        sheet5_design_id_no_umi,
+        dplyr::everything()
+      ),
+    by = c(
+      "original_design_id_no_umi" =
+        "sheet5_design_id_no_umi"
+    ),
+    suffix = c("", "_sheet5")
+  )
+
+evo300_metadata_stage1 %>%
+  dplyr::summarise(
+    n_designs = dplyr::n(),
+
+    n_primary_matched =
+      sum(
+        !is.na(
+          nearest_natural_sequence_similarity
+        )
+      ),
+
+    n_unmatched =
+      sum(
+        is.na(
+          nearest_natural_sequence_similarity
+        )
+      )
+  )
+# # A tibble: 1 × 3
+#   n_designs n_primary_matched n_unmatched
+#       <int>             <int>       <int>
+# 1       302               286          16
+
+# 16 unmatched are those 'viable generated'
+used_sheet5_ids <-
+  sheet5_primary_lookup$sheet5_design_id_no_umi
+
+sheet5_secondary_lookup <-
+  evo_generated_nearest_natural %>%
+  dplyr::filter(
+    !sheet5_design_id_no_umi %in%
+      used_sheet5_ids
+  )
+
+
+
+# ============================================================
+# Secondary join
+# ============================================================
+
+evo300_stage2_matches <- evo300_metadata_stage1 %>%
+  dplyr::filter(
+    is.na(
+      nearest_natural_sequence_similarity
+    )
+  ) %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    generated_status
+  ) %>%
+  dplyr::left_join(
+    sheet5_secondary_lookup,
+    by = c(
+      "isolate" = "isolate",
+      "generated_status" =
+        "category_original"
+    )
+  )
+
+evo300_stage2_patch <- evo300_stage2_matches %>%
+  dplyr::select(
+    dplyr::any_of(
+      names(evo300_metadata_stage1)
+    )
+  )
+
+evo300_stage2_patch %>%
+  dplyr::count(
+    original_design_id
+  ) %>%
+  dplyr::filter(
+    n > 1
+  )
+# A tibble: 0 × 2
+# ℹ 2 variables: original_design_id <chr>, n <int>
+# Confirms that Make sure each synthesis ID occurs once
+
+
+
+# ============================================================
+# Patch stage 1 with stage 2
+# ============================================================
+
+evo300_metadata_final <- dplyr::rows_patch(
+  evo300_metadata_stage1,
+  evo300_stage2_patch,
+  by = "original_design_id"
+)
+
+evo300_metadata_final %>%
+  dplyr::summarise(
+    n_rows =
+      dplyr::n(),
+
+    n_unique_designs =
+      dplyr::n_distinct(
+        original_design_id
+      ),
+
+    n_with_nearest_natural_similarity =
+      sum(
+        !is.na(
+          nearest_natural_sequence_similarity
+        )
+      ),
+
+    n_missing_nearest_natural_similarity =
+      sum(
+        is.na(
+          nearest_natural_sequence_similarity
+        )
+      )
+  )
+
+# # A tibble: 1 × 4
+#   n_rows n_unique_designs n_with_nearest_natural_similarity n_missing_nearest_natural_similarity
+#    <int>            <int>                             <int>                                <int>
+# 1    302              302                               302                                    0
+
+stage2_ids <- evo300_stage2_matches$original_design_id
+
+evo300_metadata_final <- evo300_metadata_final %>%
+  dplyr::mutate(
+    sheet5_match_method =
+      dplyr::case_when(
+
+        original_design_id %in% stage2_ids ~
+          "isolate + category",
+
+        !is.na(
+          nearest_natural_sequence_similarity
+        ) ~
+          "normalized synthesis ID",
+
+        TRUE ~
+          "unmatched"
+      )
+  )
+
+evo300_metadata_final %>%
+  dplyr::count(
+    sheet5_match_method
+  )
+
+# # A tibble: 2 × 2
+#   sheet5_match_method         n
+#   <chr>                   <int>
+# 1 isolate + category         16
+# 2 normalized synthesis ID   286
+
+
+# Double check the phage isolates after two-steps joining
+evo300_metadata_final %>%
+  dplyr::filter(
+    sheet5_match_method ==
+      "isolate + category"
+  ) %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    viability_group,
+    nearest_natural_accession,
+    nearest_natural_sequence_similarity
+  ) %>%
+  print(
+    n = Inf,
+    width = Inf
+  )
+# # A tibble: 16 × 5
+#    original_design_id                                                        isolate     viability_group                   nearest_natural_accession nearest_natural_sequence_similarity
+#    <chr>                                                                     <chr>       <chr>                             <chr>                                                   <dbl>
+#  1 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_316_umi21   Evo-Phi316  Viable                            EF380009                                                 98.7
+#  2 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_2147_umi93  Evo-Phi2147 Viable                            DQ079890                                                 93.2
+#  3 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_2483_umi109 Evo-Phi2483 Viable after acquired mutation(s) HM775311                                                 95.1
+#  4 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_2498_umi110 Evo-Phi2498 Viable                            HM753662                                                 95.9
+#  5 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_3392_umi151 Evo-Phi3392 Viable after acquired mutation(s) DQ079891                                                 98.1
+#  6 batch_3_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_114_umi182  Evo-Phi114  Viable after acquired mutation(s) DQ079891                                                 98.7
+#  7 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_75_umi194  Evo-Phi75   Viable                            GU385905                                                 97.9
+#  8 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_100_umi219 Evo-Phi100  Viable                            DQ079890                                                 97.6
+#  9 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_108_umi226 Evo-Phi108  Viable                            DQ079885                                                 98.3
+# 10 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_111_umi229 Evo-Phi111  Viable after acquired mutation(s) EF380009                                                 98.1
+# 11 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_63_umi243  Evo-Phi63   Viable                            DQ079891                                                 95.2
+# 12 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_69_umi249  Evo-Phi69   Viable after acquired mutation(s) EF380009                                                 98.8
+# 13 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_36_umi285  Evo-Phi36   Viable                            DQ079891                                                 97.7
+# 14 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294   Evo-Phi4    Viable after acquired mutation(s) DQ079891                                                 97.1
+# 15 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_46_umi295  Evo-Phi46   Viable                            AF274751                                                 97.3
+# 16 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_5_umi300   Evo-Phi5    Viable after acquired mutation(s) DQ079885                                                 97.4
+
+
+# Supplement the sequence similarity bins used in the paper
+evo300_metadata_final <- evo300_metadata_final %>%
+  dplyr::mutate(
+
+    nearest_natural_similarity_bin =
+      dplyr::case_when(
+
+        nearest_natural_sequence_similarity >= 98 &
+          nearest_natural_sequence_similarity <= 100 ~
+          "98–100",
+
+        nearest_natural_sequence_similarity >= 96 ~
+          "96–98",
+
+        nearest_natural_sequence_similarity >= 94 ~
+          "94–96",
+
+        nearest_natural_sequence_similarity >= 92 ~
+          "92–94",
+
+        nearest_natural_sequence_similarity >= 90 ~
+          "90–92",
+
+        TRUE ~
+          "<90"
+      ),
+
+    nearest_natural_similarity_bin =
+      factor(
+        nearest_natural_similarity_bin,
+        levels = c(
+          "<90",
+          "90–92",
+          "92–94",
+          "94–96",
+          "96–98",
+          "98–100"
+        )
+      )
+  )
+
+
+# Reproduce their viability calculation
+viability_by_nearest_natural_similarity <-
+  evo300_metadata_final %>%
+
+  dplyr::filter(
+    !failed_DNA_synthesis,
+    !is.na(rebooting_viable),
+    nearest_natural_sequence_similarity >= 90
+  ) %>%
+
+  dplyr::group_by(
+    nearest_natural_similarity_bin
+  ) %>%
+
+  dplyr::summarise(
+    n_tested =
+      dplyr::n(),
+
+    n_viable =
+      sum(rebooting_viable),
+
+    n_nonviable =
+      sum(!rebooting_viable),
+
+    viability_rate =
+      n_viable / n_tested,
+
+    viability_percent =
+      100 * viability_rate,
+
+    .groups = "drop"
+  )
+
+viability_by_nearest_natural_similarity
+
+# # A tibble: 5 × 6
+#   nearest_natural_similarity_bin n_tested n_viable n_nonviable viability_rate viability_percent
+#   <fct>                             <int>    <int>       <int>          <dbl>             <dbl>
+# 1 90–92                                14        0          14         0                   0   
+# 2 92–94                                20        1          19         0.05                5   
+# 3 94–96                                31        3          28         0.0968              9.68
+# 4 96–98                                30        6          24         0.2                20   
+# 5 98–100                               13        6           7         0.462              46.2 
+# Reproduced the results - 46.2% genomes with 98-100% similarity are viable
+
+
+
+
+# Verify the DNA sequences before alignment
+evo300_sequence_QC <- evo300_metadata_final %>%
+  dplyr::mutate(
+
+    sequence_length_calculated =
+      nchar(sequence),
+
+    length_matches_metadata =
+      sequence_length_calculated == genome_length,
+
+    sequence_upper =
+      toupper(sequence),
+
+    has_non_ACGT =
+      stringr::str_detect(
+        sequence_upper,
+        "[^ACGT]"
+      )
+  ) %>%
+  dplyr::select(
+    design_id,
+    genome_length,
+    sequence_length_calculated,
+    length_matches_metadata,
+    has_non_ACGT
+  )
+
+evo300_sequence_QC %>%
+  dplyr::count(
+    length_matches_metadata
+  )
+# # A tibble: 1 × 2
+#   length_matches_metadata     n
+#   <lgl>                   <int>
+# 1 TRUE                      302
+# [1] TRUE x 302
+
+
+
+
+```
+
+
+Viable phages growth ranking 
+ - Sheet 7 
+```{r}
+## Read Sheet 7 from the supplementary Excel file
+#library(readxl)
+
+evo_supplement_file <-
+  "./codes_Github_final/data/Generative design of bacteriophages with genome language models/science.aec2657_data_s1.xlsx"
+
+excel_sheets(evo_supplement_file)
+
+evo_sheet7_raw <- readxl::read_excel(
+  evo_supplement_file,
+  sheet = 8
+)
+
+head(evo_sheet7_raw, 5)
+# # A tibble: 5 × 4
+#   Phage     GrowthRateMin_mean MinOD_mean TimeToMin_mean
+#   <chr>                  <dbl>      <dbl>          <dbl>
+# 1 WA10                 -0.0133     0.0563           135 
+# 2 Evo-Φ2483            -0.0123     0.0644           128.
+# 3 NC51                 -0.0118     0.0612           147.
+# 4 Evo-Φ69              -0.0116     0.0738           140 
+# 5 S13                  -0.0123     0.0776           150 
+
+#View(evo_sheet7_raw)
+
+# ============================================================
+# Extract Evo-phage lytic ranking from Sheet 7
+# Sheet order: More lytic -> Less lytic
+# ============================================================
+
+evo_lytic_ranking <- evo_sheet7_raw %>%
+  dplyr::mutate(
+    
+    # Rank across the complete table:
+    # 1 = most lytic
+    # larger value = less lytic
+    lytic_rank_all_phages = dplyr::row_number()
+    
+  ) %>%
+  dplyr::filter(
+    grepl("^Evo-", Phage)
+  ) %>%
+  dplyr::mutate(
+    
+    # Convert paper naming convention:
+    # Evo-Φ69 -> Evo-Phi69
+    isolate = gsub(
+      "Φ",
+      "Phi",
+      Phage,
+      fixed = TRUE
+    )
+    
+  ) %>%
+  dplyr::select(
+    isolate,
+    Phage,
+    lytic_rank_all_phages,
+    GrowthRateMin_mean,
+    MinOD_mean,
+    TimeToMin_mean
+  )
+
+nrow(evo_lytic_ranking)
+# [1] 16
+
+# Evo-only ranks
+evo_lytic_ranking <- evo_lytic_ranking %>%
+  dplyr::arrange(
+    lytic_rank_all_phages
+  ) %>%
+  dplyr::mutate(
+    lytic_rank_Evo = dplyr::row_number()
+  )
+
+
+# Check phage names matched in both tables
+#sort(evo_lytic_ranking$isolate)
+#sort(evo_mutational_burden_by_phage$isolate)
+
+
+
+
+```
+
+
+### 2) Mutation calling and classification.
+Batch-align all 302 genome sequences to the exact ΦX174 WT genome, call substitutions and indels, and produce a clean per-genome QC/summary table.
+ - FUNCTION: align_and_call_nt_mutations(), validated in the 16 annotated viable genomes.
+ - use $original_design_id as the unique key throughout, because some phage isolates share same indexes.
+- evo300_alignment_results
+```{r}
+# ============================================================
+# Step 2A. Prepare genome-alignment input
+# ============================================================
+
+evo300_alignment_input <- evo300_metadata_final %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    sequence,
+    genome_length,
+    mmseqs_percent_identity_to_phix174,
+    nearest_natural_sequence_similarity,
+    nearest_natural_similarity_bin,
+    architecture_similarity_score,
+    viability_group,
+    rebooting_viable,
+    acquired_mutations_during_rebooting,
+    failed_DNA_synthesis
+  )
+
+dim(evo300_alignment_input)
+# [1] 302   12
+
+# QC
+evo300_alignment_input %>%
+  dplyr::summarise(
+    n_genomes = dplyr::n(),
+    n_unique_design_ids =
+      dplyr::n_distinct(original_design_id),
+    n_unique_sequences =
+      dplyr::n_distinct(sequence)
+  )
+# # A tibble: 1 × 3
+#   n_genomes n_unique_design_ids n_unique_sequences
+#       <int>               <int>              <int>
+# 1       302                 302                296
+
+
+# test the existing alignment function on one genome, for example Phi4
+evo300_alignment_input %>%
+  dplyr::filter(
+    isolate == "Evo-Phi4"
+  ) %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    genome_length,
+    mmseqs_percent_identity_to_phix174,
+    viability_group
+  )
+# # A tibble: 2 × 5
+#   original_design_id                                                      isolate  genome_length mmseqs_percent_identity_to_phix174 viability_group                  
+#   <chr>                                                                   <chr>            <dbl>                              <dbl> <chr>                            
+# 1 batch_2_evo2_microviridae_ft_6k_temp05_topk4_prompt99bp_genome_4_umi180 Evo-Phi4          5049                               74.6 Nonviable                        
+# 2 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294 Evo-Phi4          5386                               96.7 Viable after acquired mutation(s)
+
+#test_design_id <- "batch_2_evo2_microviridae_ft_6k_temp05_topk4_prompt99bp_genome_4_umi180"
+#test_design_id <- "batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294"
+
+#test_sequence <- evo300_alignment_input %>%
+  #dplyr::filter(
+    #original_design_id == test_design_id
+  #) %>%
+  #dplyr::pull(sequence)
+
+#test_alignment <- align_and_call_nt_mutations(
+  #reference_seq = phix174_reference$genome,
+  #query_seq = test_sequence,
+  
+  #isolate = "Evo-Phi4"
+  #isolate = test_design_id
+#)
+
+#test_alignment
+
+#str(
+  #test_alignment,
+  #max.level = 2
+#)
+
+
+
+# ============================================================
+# Step 2B. Safe wrapper around existing alignment function
+# ============================================================
+
+process_evo300_genome <- function(
+    original_design_id,
+    sequence
+) {
+
+  tryCatch(
+
+    {
+
+      result <- align_and_call_nt_mutations(
+        reference_seq = phix174_reference$genome,
+        query_seq = sequence,
+
+        # Pass unique ID into legacy "isolate" argument
+        isolate = original_design_id
+      )
+
+      list(
+        original_design_id = original_design_id,
+        success = TRUE,
+        result = result,
+        error = NA_character_
+      )
+    },
+
+    error = function(e) {
+
+      list(
+        original_design_id = original_design_id,
+        success = FALSE,
+        result = NULL,
+        error = conditionMessage(e)
+      )
+    }
+  )
+}
+
+
+# Run a small pilot first
+#evo300_alignment_pilot_input <- evo300_alignment_input %>%
+  #dplyr::arrange(
+    #mmseqs_percent_identity_to_phix174
+  #) %>%
+  #dplyr::slice(
+    #unique(
+      #round(
+        #seq(
+          #1,
+          #dplyr::n(),
+          #length.out = 10
+        #)
+      #)
+    #)
+  #)
+
+#evo300_alignment_pilot_input %>%
+  #dplyr::select(
+    #original_design_id,
+    #isolate,
+    #genome_length,
+    #mmseqs_percent_identity_to_phix174
+  #)
+
+#evo300_alignment_pilot <- purrr::map2(
+  #evo300_alignment_pilot_input$original_design_id,
+  #evo300_alignment_pilot_input$sequence,
+  #process_evo300_genome
+#)
+
+#names(evo300_alignment_pilot) <-
+  #evo300_alignment_pilot_input$original_design_id
+
+#purrr::map_dfr(
+  #evo300_alignment_pilot,
+  #function(x) {
+
+    #tibble::tibble(
+      #original_design_id =
+        #x$original_design_id,
+
+      #success =
+        #x$success,
+
+      #error =
+        #x$error
+    #)
+  #}
+#)
+# Confirmed all success
+
+
+
+# ============================================================
+# Step 2C. Batch alignment of all 302 Evo-designed genomes
+# ============================================================
+
+evo300_alignment_results <- purrr::map2(
+  evo300_alignment_input$original_design_id,
+  evo300_alignment_input$sequence,
+  process_evo300_genome
+)
+
+names(evo300_alignment_results) <-
+  evo300_alignment_input$original_design_id
+
+evo300_alignment_results[[
+  "batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294"
+]]
+
+names(evo300_alignment_results)
+names(evo300_alignment_results[[
+  "batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294"
+]])
+
+#evo300_alignment_results$batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294
+  #$original_design_id
+  #$success
+  #$result
+  #$result$alignment
+  #$result$aligned_reference
+  #$result$aligned_query
+  #$result$coordinate_map
+  #$result$mutations
+  #$result$QC
+  #$error
+
+# ============================================================
+# Step 2D. Batch status / failures
+# ============================================================
+
+evo300_alignment_status <- purrr::map_dfr(
+  evo300_alignment_results,
+  function(x) {
+
+    tibble::tibble(
+      original_design_id =
+        x$original_design_id,
+
+      alignment_success =
+        x$success,
+
+      alignment_error =
+        x$error
+    )
+  }
+) %>%
+
+  # Join readable metadata back
+  dplyr::left_join(
+    evo300_metadata %>%
+      dplyr::select(
+        original_design_id,
+        isolate,
+        genome_length,
+        mmseqs_percent_identity_to_phix174,
+        viability_group
+      ),
+    by = "original_design_id"
+  )
+
+evo300_alignment_status %>%
+  dplyr::count(
+    alignment_success
+  )
+
+# # A tibble: 1 × 2
+#   alignment_success     n
+#   <lgl>             <int>
+# 1 TRUE                302
+
+
+
+## A quick troubleshooting of sequence alignment, because I found 178 vs 180 substitutions for both Evo-phi4 in synthesis table is 178, in the viable table, its 180
+#synthesis_phi4_id <-
+  #"batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294"
+
+#synthesis_phi4_seq <- evo300_metadata %>%
+  #dplyr::filter(
+    #original_design_id == synthesis_phi4_id
+  #) %>%
+  #dplyr::pull(sequence)
+
+#names(evo_genomes)
+
+#str(
+  #evo_genomes,
+  #max.level = 1
+#)
+
+#viable_phi4_seq <- evo_genomes %>%
+  #dplyr::filter(
+    #isolate == "Evo-Phi4"
+  #) %>%
+  #dplyr::pull(genome_sequence)
+  
+#phi4_rebooting_comparison <- align_and_call_nt_mutations(
+  #reference_seq = synthesis_phi4_seq,
+  #query_seq = viable_phi4_seq,
+  #isolate = "Evo-Phi4_rebooting_comparison"
+#)
+
+#phi4_rebooting_comparison$QC
+
+# # A tibble: 1 × 11
+#   isolate                       accession_version reference_length query_length aligned_length alignment_score n_substitutions n_insertions n_deletions inserted_nt deleted_nt
+#   <chr>                         <chr>                        <int>        <int>          <int>           <dbl>           <int>        <int>       <int>       <int>      <int>
+# 1 Evo-Phi4_rebooting_comparison NA                            5386         5386           5386           10762               2            0           0           0          0
+
+#phi4_rebooting_comparison$mutations
+
+# # A tibble: 2 × 11
+#   isolate                       accession_version mutation_type ref_start ref_end query_start query_end ref_allele alt_allele mutation_id mutation_id_full
+#   <chr>                         <chr>             <chr>             <int>   <int>       <int>     <int> <chr>      <chr>      <chr>       <chr>           
+# 1 Evo-Phi4_rebooting_comparison NA                substitution        834     834         834       834 G          A          G834A       nt_G834A        
+# 2 Evo-Phi4_rebooting_comparison NA                substitution       5250    5250        5250      5250 C          A          C5250A      nt_C5250A       
+
+
+#viable_phi4_vs_WT <- align_and_call_nt_mutations(
+  #reference_seq = phix174_reference$genome,
+  #query_seq = viable_phi4_seq,
+  #isolate = "Evo-Phi4_viable"
+#)
+
+#nrow(test_alignment$mutations)
+# [1] 178
+#nrow(viable_phi4_vs_WT$mutations)
+# [1] 180
+
+
+#synthesis_phi4_ids <-
+  #test_alignment$mutations$mutation_id
+
+#viable_phi4_ids <-
+  #viable_phi4_vs_WT$mutations$mutation_id
+
+
+
+# Mutations present only after rebooting
+#setdiff(
+  #viable_phi4_ids,
+  #synthesis_phi4_ids
+#)
+# [1] "G834A"  "C5250A"
+
+
+# Mutations present in the designed sequence but absent
+# from the recovered viable phage
+#setdiff(
+  #synthesis_phi4_ids,
+  #viable_phi4_ids
+#)
+# character(0)
+
+
+# Later, for the 7 genomes annotated as “viable, acquired mutation(s) during rebooting,” systematically compare designed vs recovered viable genomes, collect the acquired changes, and check whether those changes tend to reverse or compensate for DMS-predicted detrimental states.
+#rebooting_acquired_mutations_manual <- tibble::tibble(
+  #isolate = "Evo-Phi4",
+  #original_design_id =
+    #"batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294",
+  #acquired_mutation = c(
+    #"G834A",
+    #"C5250A"
+  #)
+#)
+
+
+
+```
+
+
+
+### 3) Summarise the mutation tables from evo300 genomes alignment
+- evo300_nt_mutations
+- evo300_alignment_QC
+```{r}
+# ============================================================
+# Step 3A. Combine mutation calls from all 302 genomes
+# ============================================================
+
+evo300_nt_mutations <- purrr::map_dfr(
+  evo300_alignment_results,
+  function(x) {
+
+    if (!x$success) {
+      return(NULL)
+    }
+
+    mut <- x$result$mutations
+
+    if (nrow(mut) == 0) {
+      return(NULL)
+    }
+
+    mut %>%
+      dplyr::mutate(
+        original_design_id =
+          x$original_design_id,
+        .before = 1
+      )
+  }
+)
+
+names(evo300_nt_mutations)
+#  [1] "original_design_id" "isolate"            "accession_version"  "mutation_type"      "ref_start"          "ref_end"            "query_start"        "query_end"          "ref_allele"         "alt_allele"        
+# [11] "mutation_id"        "mutation_id_full"  
+
+head(
+  evo300_nt_mutations
+)
+
+
+# rename/drop the existing isolate column with duplicated information
+evo300_nt_mutations <- evo300_nt_mutations %>%
+  dplyr::select(
+    -dplyr::any_of("isolate")
+  ) %>%
+  dplyr::left_join(
+    evo300_metadata %>%
+      dplyr::select(
+        original_design_id,
+        isolate
+      ),
+    by = "original_design_id"
+  ) %>%
+  dplyr::relocate(
+    original_design_id,
+    isolate
+  )
+
+#names(evo300_nt_mutations)
+dim(evo300_nt_mutations)
+# [1] 161179     12
+
+evo300_nt_mutations %>%
+  dplyr::count(
+    mutation_type,
+    sort = TRUE
+  )
+# # A tibble: 3 × 2
+#   mutation_type      n
+#   <chr>          <int>
+# 1 substitution  134382
+# 2 insertion      16190
+# 3 deletion       10607
+
+
+
+# ============================================================
+# Step 3B. Combine alignment QC
+# ============================================================
+
+evo300_alignment_QC <- purrr::map_dfr(
+  evo300_alignment_results,
+  function(x) {
+
+    if (!x$success) {
+      return(NULL)
+    }
+
+    x$result$QC %>%
+      dplyr::mutate(
+        original_design_id =
+          x$original_design_id,
+        .before = 1
+      )
+  }
+)
+
+# remove the legacy isolate and join the correct display name (if necessary)
+evo300_alignment_QC <- evo300_alignment_QC %>%
+  dplyr::select(
+    -dplyr::any_of("isolate")
+  ) %>%
+  dplyr::left_join(
+    evo300_metadata %>%
+      dplyr::select(
+        original_design_id,
+        isolate,
+        genome_length,
+        mmseqs_percent_identity_to_phix174,
+        architecture_similarity_score,
+        viability_group,
+        rebooting_viable,
+        acquired_mutations_during_rebooting,
+        failed_DNA_synthesis
+      ),
+    by = "original_design_id"
+  ) %>%
+  dplyr::relocate(
+    original_design_id,
+    isolate
+  )
+
+names(evo300_alignment_QC)
+
+head(
+  evo300_alignment_QC
+)
+
+
+
+
+```
+
+Merge DMS data to nt substitutions
+- evo300_nt_analysis
+- evo300_mutational_burden
+```{r}
+# ============================================================
+# Step 4A. Create a substitution-only long table for DMS annotation.
+# ============================================================
+
+evo300_nt_substitutions <- evo300_nt_mutations %>%
+  dplyr::filter(
+    mutation_type == "substitution"
+  )
+
+evo300_nt_substitutions %>%
+  dplyr::summarise(
+    n_rows = dplyr::n(),
+    n_designs = dplyr::n_distinct(original_design_id),
+    n_unique_mutations = dplyr::n_distinct(mutation_id)
+  )
+# # A tibble: 1 × 3
+#   n_rows n_designs n_unique_mutations
+#    <int>     <int>              <int>
+# 1 134382       302              15804
+
+
+
+# ============================================================
+# Step 4B. Join DMS onto all 302 substitutions.
+# ============================================================
+
+evo300_nt_analysis <- evo300_nt_substitutions %>%
+  dplyr::left_join(
+    phix_nt_DMS_merge,
+    by = c(
+      "mutation_id" = "mutation_id"
+    )
+  )
+
+evo300_nt_analysis <- evo300_nt_analysis %>%
+  dplyr::mutate(
+    DMS_available =
+      !is.na(DMS_effect_category)
+  )
+
+
+# Add genomic context annotations
+genomic_context_levels <- c(
+  "Noncoding",
+  "Single coding",
+  "Overlapping coding",
+  "DMS not covered"
+)
+
+evo300_nt_analysis <- evo300_nt_analysis %>%
+  dplyr::mutate(
+
+    DMS_available =
+      !is.na(DMS_effect_category),
+
+    DMS_status =
+      dplyr::if_else(
+        DMS_available,
+        "DMS covered",
+        "DMS not covered"
+      ),
+    
+    genomic_context_chr =
+      dplyr::case_when(
+
+        nucleotide_class ==
+          "Overlapping Coding" ~
+          "Overlapping coding",
+
+        nucleotide_class ==
+          "Coding" ~
+          "Single coding",
+
+        nucleotide_class ==
+          "Noncoding" ~
+          "Noncoding",
+
+        TRUE ~
+          "DMS not covered"
+      ),
+
+    genomic_context =
+      factor(
+        genomic_context_chr,
+        levels = genomic_context_levels
+      ),
+
+    fitness_group =
+      dplyr::case_when(
+
+        DMS_effect_category %in% c(
+          "Detrimental",
+          "Strongly detrimental"
+        ) ~ "Detrimental",
+  
+        DMS_effect_category %in% c(
+          "Increased",
+          "No effect"
+        ) ~ "Non-detrimental",
+        
+        TRUE ~
+          "DMS not covered"
+      )
+  )
+
+table(evo300_nt_analysis$fitness_group)
+#    Detrimental DMS not covered Non-detrimental 
+#          56050            1905           76427 
+
+head(evo300_nt_analysis)
+names(evo300_nt_analysis)
+
+
+
+# Add the simplified fitness grouping
+#evo300_nt_analysis <- evo300_nt_analysis %>%
+  #dplyr::mutate(
+
+    #fitness_group =
+      #dplyr::case_when(
+
+        #DMS_effect_category %in% c(
+          #"Beneficial",
+          #"Neutral"
+        #) ~
+          #"Non-detrimental",
+
+        #DMS_effect_category %in% c(
+          #"Detrimental",
+          #"Lethal"
+        #) ~
+          #"Detrimental",
+
+        #TRUE ~
+          #NA_character_
+      #)
+  #)
+
+
+# Join design metadata
+evo300_nt_analysis <- evo300_nt_analysis %>%
+  dplyr::left_join(
+    evo300_metadata_final %>%
+      dplyr::select(
+        original_design_id,
+        isolate,
+        genome_length,
+
+        mmseqs_percent_identity_to_phix174,
+
+        nearest_natural_sequence_similarity,
+        nearest_natural_similarity_bin,
+        nearest_natural_accession,
+
+        architecture_similarity_score,
+
+        viability_group,
+        rebooting_viable,
+        acquired_mutations_during_rebooting,
+        failed_DNA_synthesis
+      ),
+    by = "original_design_id",
+    suffix = c("", "_metadata")
+  )
+
+evo300_nt_analysis <- evo300_nt_analysis %>%
+  dplyr::select(
+    -dplyr::any_of("isolate_metadata")
+  )
+
+head(as.data.frame(evo300_nt_analysis), 0)
+names(evo300_nt_analysis)
+table(evo300_nt_analysis$DMS_effect_category)
+#   Increased   No effect Detrimental 
+#        1339       76427       56050 
+
+
+# ============================================================
+# Step 4C. NT mutational burden per designed genome
+# ============================================================
+
+table(evo300_nt_analysis$DMS_effect_category_lethal)
+#            Increased            No effect          Detrimental Strongly detrimental 
+#                 1339                76427                24598                31452 
+
+evo300_nt_burden_by_design <- evo300_nt_analysis %>%
+  dplyr::group_by(
+    original_design_id
+  ) %>%
+  dplyr::summarise(
+
+    n_nt_substitutions =
+      dplyr::n(),
+
+    n_nt_DMS =
+      sum(
+        DMS_available,
+        na.rm = TRUE
+      ),
+
+    n_nt_DMS_not_covered =
+      sum(
+        !DMS_available,
+        na.rm = TRUE
+      ),
+
+    prop_nt_DMS_covered =
+      n_nt_DMS /
+      n_nt_substitutions,
+
+    n_nt_beneficial =
+      sum(
+        DMS_effect_category_lethal == "Increased",
+        na.rm = TRUE
+      ),
+
+    n_nt_neutral =
+      sum(
+        DMS_effect_category_lethal == "No effect",
+        na.rm = TRUE
+      ),
+
+    n_nt_detrimental =
+      sum(
+        DMS_effect_category_lethal == "Detrimental",
+        na.rm = TRUE
+      ),
+
+    n_nt_lethal =
+      sum(
+        DMS_effect_category_lethal == "Strongly detrimental",
+        na.rm = TRUE
+      ),
+
+    n_nt_deleterious =
+      n_nt_detrimental +
+      n_nt_lethal,
+
+    n_nt_non_detrimental =
+      n_nt_beneficial +
+      n_nt_neutral,
+
+    prop_nt_detrimental =
+      dplyr::if_else(
+        n_nt_DMS > 0,
+        n_nt_detrimental /
+          n_nt_DMS,
+        NA_real_
+      ),
+
+    prop_nt_lethal =
+      dplyr::if_else(
+        n_nt_DMS > 0,
+        n_nt_lethal /
+          n_nt_DMS,
+        NA_real_
+      ),
+
+    prop_nt_deleterious =
+      dplyr::if_else(
+        n_nt_DMS > 0,
+        n_nt_deleterious /
+          n_nt_DMS,
+        NA_real_
+      ),
+
+    .groups = "drop"
+  )
+
+names(evo300_nt_burden_by_design)
+#  [1] "original_design_id"   "n_nt_substitutions"   "n_nt_DMS"             "n_nt_DMS_not_covered" "prop_nt_DMS_covered"  "n_nt_beneficial"      "n_nt_neutral"         "n_nt_detrimental"     "n_nt_lethal"         
+# [10] "n_nt_deleterious"     "n_nt_non_detrimental" "prop_nt_detrimental"  "prop_nt_lethal"       "prop_nt_deleterious" 
+
+
+# ============================================================
+# Noncoding NT burden
+# ============================================================
+
+evo300_noncoding_burden <- evo300_nt_analysis %>%
+  dplyr::filter(
+    genomic_context == "Noncoding",
+    DMS_available
+  ) %>%
+  dplyr::group_by(
+    original_design_id
+  ) %>%
+  dplyr::summarise(
+
+    n_noncoding_DMS =
+      dplyr::n(),
+
+    n_noncoding_beneficial =
+      sum(
+        DMS_effect_category_lethal == "Increased",
+        na.rm = TRUE
+      ),
+
+    n_noncoding_neutral =
+      sum(
+        DMS_effect_category_lethal == "No effect",
+        na.rm = TRUE
+      ),
+
+    n_noncoding_detrimental =
+      sum(
+        DMS_effect_category_lethal == "Detrimental",
+        na.rm = TRUE
+      ),
+
+    n_noncoding_lethal =
+      sum(
+        DMS_effect_category_lethal == "Strongly detrimental",
+        na.rm = TRUE
+      ),
+
+    n_noncoding_deleterious =
+      n_noncoding_detrimental +
+      n_noncoding_lethal,
+
+    n_noncoding_non_detrimental =
+      n_noncoding_beneficial +
+      n_noncoding_neutral,
+
+    prop_noncoding_deleterious =
+      dplyr::if_else(
+        n_noncoding_DMS > 0,
+        n_noncoding_deleterious /
+          n_noncoding_DMS,
+        NA_real_
+      ),
+
+    .groups = "drop"
+  )
+
+names(evo300_noncoding_burden)
+# [1] "original_design_id"          "n_noncoding_DMS"             "n_noncoding_beneficial"      "n_noncoding_neutral"         "n_noncoding_detrimental"     "n_noncoding_lethal"          "n_noncoding_deleterious"    
+# [8] "n_noncoding_non_detrimental" "prop_noncoding_deleterious" 
+
+
+# ============================================================
+# Final per-design mutational-burden table
+# ============================================================
+
+evo300_mutational_burden <- evo300_metadata_final %>%
+
+  dplyr::left_join(
+    evo300_alignment_QC %>%
+      dplyr::select(
+        original_design_id,
+
+        reference_length,
+        query_length,
+        aligned_length,
+        alignment_score,
+
+        n_substitutions,
+        n_insertions,
+        n_deletions,
+
+        inserted_nt,
+        deleted_nt
+      ),
+    by = "original_design_id"
+  ) %>%
+
+  dplyr::left_join(
+    evo300_nt_burden_by_design,
+    by = "original_design_id"
+  ) %>%
+
+  dplyr::left_join(
+    evo300_noncoding_burden,
+    by = "original_design_id"
+  ) %>%
+
+  dplyr::mutate(
+
+    has_insertion =
+      n_insertions > 0,
+
+    has_deletion =
+      n_deletions > 0,
+
+    has_indel =
+      has_insertion |
+      has_deletion,
+
+    substitution_only =
+      !has_indel
+  )
+
+names(evo300_mutational_burden)
+#  [1] "design_id"                                   "design_number"                               "original_design_id"                          "isolate"                                    
+#  [5] "isolate_number"                              "sequence"                                    "genome_length"                               "gc_content"                                 
+#  [9] "max_nt_homopolymer_length"                   "prodigal_orf_count"                          "prodigal_orf_lengths"                        "total_prodigal_orfs_length"                 
+# [13] "prodigal_coding_density"                     "max_prodigal_aa_homopolymer_len"             "protein_database_hit_count"                  "checkv_quality"                             
+# [17] "mmseqs_percent_identity_to_phix174"          "architecture_similarity_score"               "tropism_protein_mmseqs_target"               "tropism_protein_mmseqs_e_value"             
+# [21] "tropism_protein_mmseqs_percent_identity"     "average_protein_percent_identity"            "num_syntenic_genes"                          "non_syntenic_genes"                         
+# [25] "non_syntenic_annotations"                    "total_num_genes"                             "viability_original"                          "viability_group"                            
+# [29] "rebooting_viable"                            "acquired_mutations_during_rebooting"         "failed_DNA_synthesis"                        "generated_status"                           
+# [33] "original_design_id_no_umi"                   "category_original"                           "query_original"                              "isolate_sheet5"                             
+# [37] "nearest_natural_accession"                   "nearest_natural_description"                 "nearest_natural_percent_identity"            "nearest_natural_sequence_similarity"        
+# [41] "nearest_natural_query_coverage"              "nearest_natural_alignment_length"            "nearest_natural_subject_length"              "nearest_natural_gaps"                       
+# [45] "nearest_natural_mismatches"                  "nearest_natural_synonymous_substitutions"    "nearest_natural_nonsynonymous_substitutions" "nearest_natural_intergenic_substitutions"   
+# [49] "nearest_natural_indel_events"                "nearest_natural_indel_total_nt"              "nearest_natural_total_mutation_events"       "nearest_natural_estimated_snv"              
+# [53] "sheet5_match_method"                         "nearest_natural_similarity_bin"              "reference_length"                            "query_length"                               
+# [57] "aligned_length"                              "alignment_score"                             "n_substitutions"                             "n_insertions"                               
+# [61] "n_deletions"                                 "inserted_nt"                                 "deleted_nt"                                  "n_nt_substitutions"                         
+# [65] "n_nt_DMS"                                    "n_nt_DMS_not_covered"                        "prop_nt_DMS_covered"                         "n_nt_beneficial"                            
+# [69] "n_nt_neutral"                                "n_nt_detrimental"                            "n_nt_lethal"                                 "n_nt_deleterious"                           
+# [73] "n_nt_non_detrimental"                        "prop_nt_detrimental"                         "prop_nt_lethal"                              "prop_nt_deleterious"                        
+# [77] "n_noncoding_DMS"                             "n_noncoding_beneficial"                      "n_noncoding_neutral"                         "n_noncoding_detrimental"                    
+# [81] "n_noncoding_lethal"                          "n_noncoding_deleterious"                     "n_noncoding_non_detrimental"                 "prop_noncoding_deleterious"                 
+# [85] "has_insertion"                               "has_deletion"                                "has_indel"                                   "substitution_only"            
+
+
+# QC after all the merge steps above
+evo300_mutational_burden %>%
+  dplyr::summarise(
+    n_designs =
+      dplyr::n(),
+
+    median_substitutions =
+      median(
+        n_substitutions,
+        na.rm = TRUE
+      ),
+
+    min_substitutions =
+      min(
+        n_substitutions,
+        na.rm = TRUE
+      ),
+
+    max_substitutions =
+      max(
+        n_substitutions,
+        na.rm = TRUE
+      ),
+
+    median_DMS_coverage =
+      median(
+        prop_nt_DMS_covered,
+        na.rm = TRUE
+      )
+  )
+
+# # A tibble: 1 × 5
+#   n_designs median_substitutions min_substitutions max_substitutions median_DMS_coverage
+#       <int>                <dbl>             <int>             <int>               <dbl>
+# 1       302                 304.                45              1966               0.996
+
+
+evo300_mutational_burden %>%
+  dplyr::arrange(
+    mmseqs_percent_identity_to_phix174
+  ) %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    mmseqs_percent_identity_to_phix174,
+    n_substitutions,
+    n_nt_DMS,
+    prop_nt_DMS_covered,
+    n_nt_deleterious,
+    prop_nt_deleterious,
+    viability_group
+  ) %>%
+  print(
+    n = 20
+  )
+
+table(evo300_mutational_burden$has_indel[evo300_mutational_burden$viability_group != "DNA synthesis failed"])
+# FALSE  TRUE 
+#    19   266 
+
+table(evo300_mutational_burden$viability_group)
+#             DNA synthesis failed                         Nonviable                            Viable Viable after acquired mutation(s) 
+#                               17                               269                                 9                                 7 
+
+table(evo300_mutational_burden$viability_group[evo300_mutational_burden$genome_length == 5386])
+#                        Nonviable                            Viable Viable after acquired mutation(s) 
+#                               12                                 4                                 3 
+
+
+
+```
+
+
+
+### 4) Evo 300 genomes viability analysis
+```{r}
+# ============================================================
+# Step 5A. Make the viability-analysis dataset
+# ============================================================
+
+evo300_viability_analysis <- evo300_mutational_burden %>%
+  dplyr::filter(
+    !failed_DNA_synthesis,
+    !is.na(rebooting_viable)
+  )
+
+evo300_viability_analysis %>%
+  dplyr::count(
+    rebooting_viable
+  )
+
+# # A tibble: 2 × 2
+#   rebooting_viable     n
+#   <lgl>            <int>
+# 1 FALSE              269
+# 2 TRUE                16
+
+
+n_viable_tested <- evo300_viability_analysis %>%
+  dplyr::filter(rebooting_viable) %>%
+  nrow()
+# [1] 16
+
+n_nonviable_tested <- evo300_viability_analysis %>%
+  dplyr::filter(!rebooting_viable) %>%
+  nrow()
+# [1] 269
+
+
+# Check the genome alignment similarity
+evo300_viability_analysis %>%
+  dplyr::group_by(
+    rebooting_viable
+  ) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+
+    min_identity =
+      min(
+        mmseqs_percent_identity_to_phix174,
+        na.rm = TRUE
+      ),
+
+    Q1_identity =
+      quantile(
+        mmseqs_percent_identity_to_phix174,
+        0.25,
+        na.rm = TRUE
+      ),
+
+    median_identity =
+      median(
+        mmseqs_percent_identity_to_phix174,
+        na.rm = TRUE
+      ),
+
+    mean_identity =
+      mean(
+        mmseqs_percent_identity_to_phix174,
+        na.rm = TRUE
+      ),
+
+    Q3_identity =
+      quantile(
+        mmseqs_percent_identity_to_phix174,
+        0.75,
+        na.rm = TRUE
+      ),
+
+    max_identity =
+      max(
+        mmseqs_percent_identity_to_phix174,
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  )
+
+# # A tibble: 2 × 8
+#   rebooting_viable     n min_identity Q1_identity median_identity mean_identity Q3_identity max_identity
+#   <lgl>            <int>        <dbl>       <dbl>           <dbl>         <dbl>       <dbl>        <dbl>
+# 1 FALSE              269         60.2        78.6            90.4          87.1        94.7        100  
+# 2 TRUE                16         88.7        94.6            97.0          96.0        97.7         98.5
+
+
+# Use the corrected nearest-natural similarity [Updated from the sheet 5]
+viability_by_nearest_natural_similarity <-
+  evo300_viability_analysis %>%
+  dplyr::filter(
+    nearest_natural_sequence_similarity >= 90
+  ) %>%
+  dplyr::group_by(
+    nearest_natural_similarity_bin
+  ) %>%
+  dplyr::summarise(
+    n_tested =
+      dplyr::n(),
+
+    n_viable =
+      sum(rebooting_viable),
+
+    n_nonviable =
+      sum(!rebooting_viable),
+
+    viability_rate =
+      n_viable /
+      n_tested,
+
+    viability_percent =
+      100 *
+      viability_rate,
+
+    .groups = "drop"
+  )
+
+viability_by_nearest_natural_similarity
+# # A tibble: 5 × 6
+#   nearest_natural_similarity_bin n_tested n_viable n_nonviable viability_rate viability_percent
+#   <fct>                             <int>    <int>       <int>          <dbl>             <dbl>
+# 1 90–92                                14        0          14         0                   0   
+# 2 92–94                                20        1          19         0.05                5   
+# 3 94–96                                31        3          28         0.0968              9.68
+# 4 96–98                                30        6          24         0.2                20   
+# 5 98–100                               13        6           7         0.462              46.2 
+
+
+
+# ============================================================
+# Step 5B. Focus on the 98–100% ΦX174-identity group
+# ============================================================
+
+evo300_high_similarity <- evo300_viability_analysis %>%
+  dplyr::filter(
+    nearest_natural_sequence_similarity >= 98,
+    nearest_natural_sequence_similarity <= 100
+  )
+
+evo300_high_similarity %>%
+  dplyr::count(
+    rebooting_viable
+  )
+# # A tibble: 2 × 2
+#   rebooting_viable     n
+#   <lgl>            <int>
+# 1 FALSE                7
+# 2 TRUE                 6
+
+evo300_high_similarity %>%
+  dplyr::summarise(
+    n_tested =
+      dplyr::n(),
+
+    n_viable =
+      sum(rebooting_viable),
+
+    n_nonviable =
+      sum(!rebooting_viable),
+
+    viability_percent =
+      100 *
+      mean(rebooting_viable)
+  )
+
+# # A tibble: 1 × 4
+#   n_tested n_viable n_nonviable viability_percent
+#      <int>    <int>       <int>             <dbl>
+# 1       13        6           7              46.2
+
+
+
+# ============================================================
+# Step 5C. Make a mutation-frequency table across the 302 designs
+# ============================================================
+
+# How often is each specific ΦX174 substitution found among designed genomes?
+
+evo300_mutation_frequency <- evo300_nt_analysis %>%
+  dplyr::filter(
+    mutation_type == "substitution",
+    DMS_available
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::group_by(
+    mutation_id
+  ) %>%
+  dplyr::summarise(
+    
+    n_designs = dplyr::n_distinct(
+      original_design_id
+    ),
+
+    n_viable = dplyr::n_distinct(
+      original_design_id[
+        rebooting_viable %in% TRUE
+      ]
+    ),
+
+    n_nonviable = dplyr::n_distinct(
+      original_design_id[
+        rebooting_viable %in% FALSE
+      ]
+    ),
+
+    DMS_effect_category =
+      dplyr::first(
+        DMS_effect_category
+      ),
+
+    fitness_group =
+      dplyr::first(
+        fitness_group
+      ),
+
+    genomic_context =
+      dplyr::first(
+        genomic_context
+      ),
+    
+    frequency_all_designs =
+      n_designs / 302,
+
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(
+    dplyr::desc(n_designs)
+  )
+
+# Add viable/nonviable mutation frequencies
+evo300_mutation_frequency <- evo300_mutation_frequency %>%
+  dplyr::mutate(
+    freq_viable =
+      n_viable / n_viable_tested,
+
+    freq_nonviable =
+      n_nonviable / n_nonviable_tested,
+
+    frequency_difference =
+      freq_viable - freq_nonviable
+  )
+
+
+
+# ============================================================
+# Step 5D. Build exactly the per-phage mutation-category table
+# ============================================================
+
+evo300_effect_counts_by_design <- evo300_nt_analysis %>%
+  dplyr::filter(
+    DMS_available
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::group_by(
+    original_design_id
+  ) %>%
+  dplyr::summarise(
+    n_DMS = dplyr::n(),
+
+    n_beneficial =
+      sum(
+        DMS_effect_category == "Increased repilcation"
+      ),
+
+    n_neutral =
+      sum(
+        DMS_effect_category == "No measurable effect"
+      ),
+
+    n_detrimental =
+      sum(
+        DMS_effect_category == "Reduced replication"
+      ),
+
+    n_lethal =
+      sum(
+        DMS_effect_category == "Strongly detrimental"
+      ),
+
+    n_deleterious =
+      n_detrimental +
+      n_lethal,
+
+    n_non_detrimental =
+      n_beneficial +
+      n_neutral,
+
+    prop_detrimental =
+      n_detrimental / n_DMS,
+
+    prop_lethal =
+      n_lethal / n_DMS,
+
+    prop_deleterious =
+      n_deleterious / n_DMS,
+
+    .groups = "drop"
+  ) %>%
+  dplyr::left_join(
+    evo300_metadata_final %>%
+      dplyr::select(
+        original_design_id,
+        isolate,
+        viability_group,
+        rebooting_viable,
+        genome_length,
+        nearest_natural_sequence_similarity,
+        nearest_natural_similarity_bin,
+        architecture_similarity_score
+      ),
+    by = "original_design_id"
+  ) %>%
+  dplyr::left_join(
+    evo300_alignment_QC %>%
+      dplyr::select(
+        original_design_id,
+        n_substitutions,
+        n_insertions,
+        n_deletions,
+        inserted_nt,
+        deleted_nt
+      ),
+    by = "original_design_id"
+  )
+
+
+
+# ============================================================
+# Step 5E. Compare the mutational burden between viable and nonviable genomes
+# ============================================================
+
+evo300_WT_length_substitution_only <-
+  evo300_viability_analysis %>%
+  dplyr::filter(
+    genome_length == 5386,
+    !has_indel
+  )
+
+evo300_WT_length_substitution_only %>%
+  dplyr::count(
+    rebooting_viable,
+    has_indel
+  )
+
+# # A tibble: 2 × 3
+#   rebooting_viable has_indel     n
+#   <lgl>            <lgl>     <int>
+# 1 FALSE            FALSE        12
+# 2 TRUE             FALSE         7
+
+
+
+# ============================================================
+# Step 5F. Compare the mutational burden between viable and nonviable genomes
+# ============================================================
+
+# Make a compact summary table
+evo300_viability_burden_summary <- evo300_viability_analysis %>%
+  dplyr::group_by(rebooting_viable) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+
+    median_n_DMS =
+      median(n_nt_DMS, na.rm = TRUE),
+
+    median_n_detrimental =
+      median(n_nt_detrimental, na.rm = TRUE),
+
+    median_n_lethal =
+      median(n_nt_lethal, na.rm = TRUE),
+
+    median_n_deleterious =
+      median(n_nt_deleterious, na.rm = TRUE),
+
+    median_prop_detrimental =
+      median(prop_nt_detrimental, na.rm = TRUE),
+
+    median_prop_lethal =
+      median(prop_nt_lethal, na.rm = TRUE),
+
+    median_prop_deleterious =
+      median(prop_nt_deleterious, na.rm = TRUE),
+
+    median_similarity =
+      median(
+        nearest_natural_sequence_similarity,
+        na.rm = TRUE
+      ),
+
+    prop_with_indel =
+      mean(has_indel, na.rm = TRUE),
+
+    .groups = "drop"
+  )
+
+evo300_viability_burden_summary
+
+# # A tibble: 2 × 11
+#   rebooting_viable     n median_n_DMS median_n_detrimental median_n_lethal median_n_deleterious median_prop_detrimental median_prop_lethal median_prop_deleterious median_similarity prop_with_indel
+#   <lgl>            <int>        <dbl>                <dbl>           <dbl>                <dbl>                   <dbl>              <dbl>                   <dbl>             <dbl>           <dbl>
+# 1 FALSE              269          351                   58              71                  140                  0.169             0.194                    0.378               82.2           0.955
+# 2 TRUE                16          115                   10               1                   11                  0.0900            0.00796                  0.0908              97.7           0.562
+
+
+# ============================================================
+# Step 5G. Deleterious NT substitutions with rich annotation
+# ============================================================
+
+head(as.data.frame(evo300_nt_analysis), 0)
+
+evo300_deleterious_mutations <- evo300_nt_analysis %>%
+  dplyr::filter(
+    DMS_available,
+    DMS_effect_category %in% c(
+      "Detrimental"
+      #"Lethal"
+      #"Reduced replication"
+      )
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::select(
+
+    # design identity
+    original_design_id,
+    isolate,
+
+    # NT mutation
+    mutation_id,
+    mutation_id_full,
+    genome_position,
+    ref_start,
+    ref_end,
+    ref_allele,
+    alt_allele,
+    WT_nt_DMS,
+    mutant_nt_DMS,
+
+    # DMS measurements
+    DMS_fitness,
+    DMS_FDR,
+    DMS_effect_size,
+    DMS_effect_category,
+    DMS_effect_category_lethal,
+    #DMS_effect_category_cutoff,
+    #DMS_mutation_direction,
+
+    # genomic context
+    genomic_context,
+    genomic_context_chr,
+    nt_noncoding,
+    nt_coding,
+    nt_overlap_orf,
+    nucleotide_class,
+    genome_annotation,
+
+    # regulatory annotation
+    RBS,
+    RBS_gene,
+    promoter,
+    promoter_gene,
+    terminator,
+    terminator_gene,
+    ori,
+
+    # coding consequence
+    affected_genes,
+    aa_mutation_IDs,
+    aa_mutation_class,
+
+    # design phenotype
+    viability_group,
+    rebooting_viable,
+    acquired_mutations_during_rebooting,
+    failed_DNA_synthesis,
+
+    # sequence/design metadata
+    genome_length,
+    mmseqs_percent_identity_to_phix174,
+    nearest_natural_sequence_similarity,
+    nearest_natural_similarity_bin,
+    nearest_natural_accession,
+    architecture_similarity_score
+  )
+
+
+
+# ============================================================
+# Frequency of each deleterious mutation across designs
+# ============================================================
+
+# n_viable_tested # 16
+
+# n_nonviable_tested # 269
+
+evo300_deleterious_frequency <- evo300_deleterious_mutations %>%
+  dplyr::group_by(
+    mutation_id
+  ) %>%
+  dplyr::summarise(
+
+    # mutation annotation
+    DMS_fitness =
+      dplyr::first(DMS_fitness),
+
+    DMS_effect_size =
+      dplyr::first(DMS_effect_size),
+
+    DMS_effect_category =
+      dplyr::first(DMS_effect_category),
+
+    genomic_context =
+      dplyr::first(genomic_context),
+
+    affected_genes =
+      dplyr::first(affected_genes),
+
+    aa_mutation_IDs =
+      dplyr::first(aa_mutation_IDs),
+
+    aa_mutation_class =
+      dplyr::first(aa_mutation_class),
+
+    genome_annotation =
+      dplyr::first(genome_annotation),
+
+    # occurrence across designs
+    n_designs =
+      dplyr::n_distinct(original_design_id),
+
+    n_viable =
+      dplyr::n_distinct(
+        original_design_id[
+          rebooting_viable %in% TRUE
+        ]
+      ),
+
+    n_nonviable =
+      dplyr::n_distinct(
+        original_design_id[
+          rebooting_viable %in% FALSE
+        ]
+      ),
+
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+
+    freq_viable =
+      n_viable / n_viable_tested,
+
+    freq_nonviable =
+      n_nonviable / n_nonviable_tested,
+
+    # positive = enriched in nonviable genomes
+    freq_difference =
+      freq_nonviable - freq_viable
+  ) %>%
+  dplyr::arrange(
+    dplyr::desc(freq_difference)
+  )
+
+
+
+# ============================================================
+# Continuous DMS fitness summaries per design
+# ============================================================
+
+evo300_fitness_score_by_design <- evo300_nt_analysis %>%
+  dplyr::filter(
+    DMS_available,
+    !is.na(DMS_fitness)
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::group_by(
+    original_design_id
+  ) %>%
+  dplyr::summarise(
+
+    n_fitness_measured =
+      dplyr::n(),
+
+    # all substitutions
+    mean_DMS_fitness =
+      mean(
+        DMS_fitness,
+        na.rm = TRUE
+      ),
+
+    median_DMS_fitness =
+      median(
+        DMS_fitness,
+        na.rm = TRUE
+      ),
+
+    min_DMS_fitness =
+      min(
+        DMS_fitness,
+        na.rm = TRUE
+      ),
+
+    mean_DMS_effect_size =
+      mean(
+        DMS_effect_size,
+        na.rm = TRUE
+      ),
+
+    median_DMS_effect_size =
+      median(
+        DMS_effect_size,
+        na.rm = TRUE
+      ),
+
+    min_DMS_effect_size =
+      min(
+        DMS_effect_size,
+        na.rm = TRUE
+      ),
+
+    # detrimental + lethal only
+    mean_deleterious_fitness =
+      mean(
+        DMS_fitness[
+          DMS_effect_category_lethal %in%
+            #c("Reduced replication", "Strongly detrimental")
+            c("Detrimental", "Strongly detrimental")
+        ],
+        na.rm = TRUE
+      ),
+
+    median_deleterious_fitness =
+      median(
+        DMS_fitness[
+          DMS_effect_category_lethal %in%
+            #c("Reduced replication", "Strongly detrimental")
+            c("Detrimental", "Strongly detrimental")
+        ],
+        na.rm = TRUE
+      ),
+
+    min_deleterious_fitness =
+      min(
+        DMS_fitness[
+          DMS_effect_category_lethal %in%
+            #c("Reduced replication", "Strongly detrimental")
+            c("Detrimental", "Strongly detrimental")
+        ],
+        na.rm = TRUE
+      ),
+
+    mean_deleterious_effect_size =
+      mean(
+        DMS_effect_size[
+          DMS_effect_category_lethal %in%
+            #c("Reduced replication", "Strongly detrimental")
+            c("Detrimental", "Strongly detrimental")
+        ],
+        na.rm = TRUE
+      ),
+
+    median_deleterious_effect_size =
+      median(
+        DMS_effect_size[
+          DMS_effect_category %in%
+            #c("Reduced replication", "Strongly detrimental")
+            c("Detrimental", "Strongly detrimental")
+        ],
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    dplyr::across(
+      where(is.numeric),
+      ~ dplyr::if_else(
+        is.finite(.x),
+        .x,
+        NA_real_
+      )
+    )
+  )
+
+
+
+# ============================================================
+# Per-design list of the actual deleterious mutations
+# ============================================================
+
+table(evo300_deleterious_mutations$DMS_effect_category)
+#   Increased   No effect Detrimental 
+#           0           0       56050 
+
+table(evo300_deleterious_mutations$DMS_effect_category_lethal)
+#            Increased            No effect          Detrimental Strongly detrimental 
+#                    0                    0                24598                31452 
+
+evo300_deleterious_summary_by_design <- evo300_deleterious_mutations %>%
+  dplyr::group_by(
+    original_design_id
+  ) %>%
+  dplyr::summarise(
+
+    n_detrimental =
+      sum(
+        #DMS_effect_category_lethal == "Reduced replication"
+        DMS_effect_category == "Detrimental"
+      ),
+
+    n_strongly_detrimental =
+      sum(
+        DMS_effect_category_lethal == "Strongly detrimental"
+      ),
+
+    #n_deleterious =
+      #dplyr::n(),
+
+    detrimental_mutations =
+      paste(
+        mutation_id[
+          #DMS_effect_category_lethal == "Reduced replication"
+          DMS_effect_category == "Detrimental"
+        ],
+        collapse = "; "
+      ),
+
+    strongly_detrimental_mutations =
+      paste(
+        mutation_id[
+          DMS_effect_category_lethal == "Strongly detrimental"
+        ],
+        collapse = "; "
+      ),
+
+    affected_genes =
+      paste(
+        unique(
+          stats::na.omit(affected_genes)
+        ),
+        collapse = "; "
+      ),
+
+    aa_mutation_IDs =
+      paste(
+        unique(
+          stats::na.omit(aa_mutation_IDs)
+        ),
+        collapse = "; "
+      ),
+
+    .groups = "drop"
+  )
+
+
+
+# ============================================================
+# Per-design list of the actual deleterious mutations
+# ============================================================
+
+# Join fitness summary and mutation lists into the main mutation burden table
+
+head(as.data.frame(evo300_mutational_burden), 0)
+
+evo300_mutational_burden_final <- evo300_mutational_burden %>%
+  dplyr::left_join(
+    evo300_fitness_score_by_design,
+    by = "original_design_id"
+  ) %>%
+  dplyr::left_join(
+    evo300_deleterious_summary_by_design,
+    by = "original_design_id",
+    suffix = c("", "_list")
+  )
+
+names(evo300_mutational_burden_final)
+
+
+
+```
+
+
+
+### 5) Modelling DMS mutational effects with the viability of Evo300 genomes
+```{r}
+# Scale the DMS mutational fitness values
+summary(
+  evo300_nt_analysis$DMS_fitness
+)
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max.    NA's 
+# -0.8264  0.5301  0.9254  0.7224  0.9892  1.2368     566 
+
+evo300_nt_analysis %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    n_missing = sum(is.na(DMS_fitness)),
+    n_negative = sum(DMS_fitness < 0, na.rm = TRUE),
+    n_zero = sum(DMS_fitness == 0, na.rm = TRUE),
+    n_positive = sum(DMS_fitness > 0, na.rm = TRUE),
+    min = min(DMS_fitness, na.rm = TRUE),
+    median = median(DMS_fitness, na.rm = TRUE),
+    max = max(DMS_fitness, na.rm = TRUE)
+  )
+# # A tibble: 1 × 8
+#        n n_missing n_negative n_zero n_positive    min median   max
+#    <int>     <int>      <int>  <int>      <int>  <dbl>  <dbl> <dbl>
+# 1 134382       566       8181      0     125635 -0.826  0.925  1.24
+
+
+# Keep distribution summaries of continuous DMS fitness
+evo300_continuous_fitness_summary <- evo300_nt_analysis %>%
+  dplyr::filter(
+    DMS_available,
+    !is.na(DMS_fitness)
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::group_by(original_design_id) %>%
+  dplyr::summarise(
+
+    #mean_DMS_fitness =
+      #mean(DMS_fitness),
+
+    #median_DMS_fitness =
+      #median(DMS_fitness),
+
+    #q10_DMS_fitness =
+      #stats::quantile(
+        #DMS_fitness,
+        #probs = 0.10
+      #),
+
+    #q25_DMS_fitness =
+      #stats::quantile(
+        #DMS_fitness,
+        #probs = 0.25
+      #),
+
+    min_DMS_fitness =
+      min(DMS_fitness),
+
+    .groups = "drop"
+  )
+
+
+# For accumulation, use the effect relative to the reference rather than raw fitness
+evo300_cumulative_DMS_scores <- evo300_nt_analysis %>%
+  dplyr::filter(
+    DMS_available,
+    !is.na(DMS_effect_size)
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::group_by(
+    original_design_id
+  ) %>%
+  dplyr::summarise(
+
+    n_DMS_effects = dplyr::n(),
+
+    # Sum of all single-mutant effects
+    # beneficial effects can offset detrimental effects
+    sum_DMS_effect_size =
+      sum(
+        DMS_effect_size,
+        na.rm = TRUE
+      ),
+
+    # Sum of fitness-reducing effects only
+    sum_negative_DMS_effect_size =
+      sum(
+        DMS_effect_size[
+          DMS_effect_size < 0
+        ],
+        na.rm = TRUE
+      ),
+    
+    # Mean effect
+    #mean_DMS_effect_size =
+      #mean(
+        #DMS_effect_size,
+        #na.rm = TRUE
+      #),
+
+    # Median effect
+    #median_DMS_effect_size =
+      #median(
+        #DMS_effect_size,
+        #na.rm = TRUE
+      #),
+
+    # Worst individual mutation
+    #min_DMS_effect_size =
+      #min(
+        #DMS_effect_size,
+        #na.rm = TRUE
+      #),
+
+    # Positive-valued "burden":
+    # larger number = larger accumulated fitness cost
+    cumulative_fitness_cost =
+      sum(
+        pmax(
+          -DMS_effect_size,
+          0
+        ),
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  )
+
+
+
+# ============================================================
+# Build one integrated predictor table
+# ============================================================
+
+evo300_viability_predictors <- evo300_mutational_burden_final %>%
+
+  dplyr::left_join(
+    evo300_continuous_fitness_summary,
+    by = "original_design_id"
+  ) %>%
+
+  dplyr::left_join(
+    evo300_cumulative_DMS_scores,
+    by = "original_design_id"
+  ) %>%
+
+  dplyr::mutate(
+
+    n_indel_events =
+      n_insertions +
+      n_deletions,
+
+    indel_nt_burden =
+      inserted_nt +
+      deleted_nt
+  )
+
+head(as.data.frame(evo300_viability_predictors), 0)
+
+
+# Predictor performance analysis 
+evo300_predictor_analysis <- evo300_viability_predictors %>%
+  dplyr::filter(
+    !failed_DNA_synthesis, # remove those failed in DNA synthesis
+    !is.na(rebooting_viable)
+  )
+
+evo300_predictor_analysis %>%
+  dplyr::count(
+    viability_group,
+    rebooting_viable
+  )
+# # A tibble: 3 × 3
+#   viability_group                   rebooting_viable     n
+#   <chr>                             <lgl>            <int>
+# 1 Nonviable                         FALSE              269
+# 2 Viable                            TRUE                 9
+# 3 Viable after acquired mutation(s) TRUE                 7
+
+
+
+
+```
+
+
+
+### 6) Rescuing mutations in the genomes viable after acquired mutations 
+```{r}
+# Check data
+names(evo300_metadata_final)
+
+
+# Rescue mapping table
+rescued_design_mapping <- evo300_metadata_final %>%
+  dplyr::filter(
+    acquired_mutations_during_rebooting
+  ) %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    sequence,
+    nearest_natural_sequence_similarity,
+    viability_group,
+    rebooting_viable,
+    acquired_mutations_during_rebooting
+  ) %>%
+  dplyr::distinct()
+
+rescued_design_mapping %>%
+  dplyr::summarise(
+    n_rows = dplyr::n(),
+    n_designs = dplyr::n_distinct(original_design_id),
+    n_isolates = dplyr::n_distinct(isolate)
+  )
+# # A tibble: 1 × 3
+#   n_rows n_designs n_isolates
+#    <int>     <int>      <int>
+# 1      7         7          7
+
+
+
+# ============================================================
+# Mutations in designed genomes 
+# ============================================================
+
+rescued_designed_mutations <- evo300_nt_mutations %>%
+  dplyr::semi_join(
+    rescued_design_mapping %>%
+      dplyr::select(original_design_id),
+    by = "original_design_id"
+  ) %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    mutation_type,
+    ref_start,
+    ref_end,
+    query_start,
+    query_end,
+    ref_allele,
+    alt_allele,
+    mutation_id,
+    mutation_id_full
+  ) %>%
+  dplyr::distinct()
+
+
+
+# ============================================================
+# Recovered viable-genome mutations
+# Extract directly from evo_phage_analysis
+# ============================================================
+
+rescued_recovered_mutations <- purrr::map_dfr(
+  rescued_design_mapping$isolate,
+
+  function(x) {
+
+    evo_phage_analysis[[x]]$genome$mutations %>%
+      dplyr::mutate(
+        isolate = x
+      ) %>%
+      dplyr::select(
+        isolate,
+        mutation_type,
+        ref_start,
+        ref_end,
+        query_start,
+        query_end,
+        ref_allele,
+        alt_allele,
+        mutation_id,
+        mutation_id_full
+      )
+  }
+)
+
+rescued_recovered_mutations <- rescued_recovered_mutations %>%
+  dplyr::left_join(
+    rescued_design_mapping %>%
+      dplyr::select(
+        original_design_id,
+        isolate
+      ),
+    by = "isolate",
+    relationship = "many-to-one"
+  ) %>%
+  dplyr::relocate(
+    original_design_id,
+    isolate
+  ) %>%
+  dplyr::distinct()
+
+rescued_recovered_mutations %>%
+  dplyr::summarise(
+    n_rows = dplyr::n(),
+    n_missing_design_id =
+      sum(is.na(original_design_id)),
+    n_isolates =
+      dplyr::n_distinct(isolate),
+    n_designs =
+      dplyr::n_distinct(original_design_id)
+  )
+# # A tibble: 1 × 4
+#   n_rows n_missing_design_id n_isolates n_designs
+#    <int>               <int>      <int>     <int>
+# 1    824                   0          7         7
+
+rescued_recovered_mutations %>%
+  dplyr::distinct(
+    isolate,
+    original_design_id
+  ) %>%
+  dplyr::arrange(isolate)
+# # A tibble: 7 × 2
+#   isolate     original_design_id                                                       
+#   <chr>       <chr>                                                                    
+# 1 Evo-Phi111  batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_111_umi229
+# 2 Evo-Phi114  batch_3_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_114_umi182 
+# 3 Evo-Phi2483 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_2483_umi109
+# 4 Evo-Phi3392 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_3392_umi151
+# 5 Evo-Phi4    batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294  
+# 6 Evo-Phi5    batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_5_umi300  
+# 7 Evo-Phi69   batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_69_umi249 
+
+
+
+# ============================================================
+# First summarize designed vs recovered mutation counts
+# Show whether rebooting mainly involved substitutions or also altered indels.
+# ============================================================
+
+rescued_mutation_count_QC <- dplyr::full_join(
+
+  rescued_designed_mutations %>%
+    dplyr::count(
+      original_design_id,
+      isolate,
+      mutation_type,
+      name = "n_designed"
+    ),
+
+  rescued_recovered_mutations %>%
+    dplyr::count(
+      original_design_id,
+      isolate,
+      mutation_type,
+      name = "n_recovered"
+    ),
+
+  by = c(
+    "original_design_id",
+    "isolate",
+    "mutation_type"
+  )
+) %>%
+  dplyr::mutate(
+    dplyr::across(
+      c(n_designed, n_recovered),
+      ~ tidyr::replace_na(.x, 0L)
+    )
+  ) %>%
+  dplyr::arrange(
+    isolate,
+    mutation_type
+  )
+
+rescued_mutation_count_QC
+# # A tibble: 12 × 5
+#    original_design_id                                                        isolate     mutation_type n_designed n_recovered
+#    <chr>                                                                     <chr>       <chr>              <int>       <int>
+#  1 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_111_umi229 Evo-Phi111  substitution         108         108
+#  2 batch_3_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_114_umi182  Evo-Phi114  substitution          77          78
+#  3 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_2483_umi109 Evo-Phi2483 insertion              1           1
+#  4 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_2483_umi109 Evo-Phi2483 substitution          59          59
+#  5 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_3392_umi151 Evo-Phi3392 insertion              2           0
+#  6 batch_2_evo1_microviridae_ft_5k_temp07_topk4_prompt4bp_genome_3392_umi151 Evo-Phi3392 substitution         109         114
+#  7 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_4_umi294   Evo-Phi4    substitution         178         180
+#  8 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_5_umi300   Evo-Phi5    deletion               8           0
+#  9 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_5_umi300   Evo-Phi5    insertion             10           0
+# 10 batch_3_evo2_microviridae_ft_12k_temp09_topk4_prompt9bp_genome_5_umi300   Evo-Phi5    substitution         309         214
+# 11 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_69_umi249  Evo-Phi69   insertion              1           0
+# 12 batch_3_evo1_microviridae_ft_5k_temp09_topk4_prompt11bp_genome_69_umi249  Evo-Phi69   substitution          69          70
+
+
+
+# ============================================================
+# Then classify identified mutations
+# ============================================================
+
+designed_subs <- rescued_designed_mutations %>%
+  dplyr::filter(
+    mutation_type == "substitution"
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    ref_start,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+recovered_subs <- rescued_recovered_mutations %>%
+  dplyr::filter(
+    mutation_type == "substitution"
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    ref_start,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+# 1) Retained substitutions
+retained_subs <- designed_subs %>%
+  dplyr::inner_join(
+    recovered_subs %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id
+      ),
+    by = c(
+      "original_design_id",
+      "mutation_id"
+    ),
+    relationship = "many-to-one"
+  ) %>%
+  dplyr::transmute(
+    original_design_id,
+    isolate,
+    genome_position = as.integer(ref_start),
+
+    WT_allele = ref_allele,
+    designed_allele = alt_allele,
+    recovered_allele = alt_allele,
+
+    designed_mutation_id = mutation_id,
+    recovered_mutation_id = mutation_id,
+
+    rebooting_change = "Retained"
+  )
+
+# 2) Designed mutations that disappeared
+designed_not_retained <- designed_subs %>%
+  dplyr::anti_join(
+    recovered_subs %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id
+      ),
+    by = c(
+      "original_design_id",
+      "mutation_id"
+    )
+  )
+
+# 3) Recovered mutations absent from the design
+recovered_not_designed <- recovered_subs %>%
+  dplyr::anti_join(
+    designed_subs %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id
+      ),
+    by = c(
+      "original_design_id",
+      "mutation_id"
+    )
+  )
+
+# 4) Detect secondary mutation changes (for example, wt = G, design = A, but recovered = T)
+# At the same WT coordinate but with a different mutant allele.
+changed_allele_subs <- designed_not_retained %>%
+  dplyr::inner_join(
+    recovered_not_designed %>%
+      dplyr::select(
+        original_design_id,
+        ref_start,
+        recovered_alt_allele = alt_allele,
+        recovered_mutation_id = mutation_id
+      ),
+    by = c(
+      "original_design_id",
+      "ref_start"
+    ),
+    relationship = "one-to-one"
+  ) %>%
+  dplyr::transmute(
+    original_design_id,
+    isolate,
+    genome_position = as.integer(ref_start),
+
+    WT_allele = ref_allele,
+    designed_allele = alt_allele,
+    recovered_allele = recovered_alt_allele,
+
+    designed_mutation_id = mutation_id,
+    recovered_mutation_id,
+
+    rebooting_change =
+      "Changed allele"
+  )
+
+# 5) Identify true reversions to WT
+reversion_subs <- designed_not_retained %>%
+  dplyr::anti_join(
+    recovered_not_designed %>%
+      dplyr::distinct(
+        original_design_id,
+        ref_start
+      ),
+    by = c(
+      "original_design_id",
+      "ref_start"
+    )
+  ) %>%
+  dplyr::transmute(
+    original_design_id,
+    isolate,
+    genome_position = as.integer(ref_start),
+
+    WT_allele = ref_allele,
+    designed_allele = alt_allele,
+    recovered_allele = ref_allele,
+
+    designed_mutation_id = mutation_id,
+    recovered_mutation_id = NA_character_,
+
+    rebooting_change =
+      "Reversion to WT"
+  )
+
+# 6) Identify genuinely new substitutions
+new_subs <- recovered_not_designed %>%
+  dplyr::anti_join(
+    designed_not_retained %>%
+      dplyr::distinct(
+        original_design_id,
+        ref_start
+      ),
+    by = c(
+      "original_design_id",
+      "ref_start"
+    )
+  ) %>%
+  dplyr::transmute(
+    original_design_id,
+    isolate,
+    genome_position = as.integer(ref_start),
+
+    WT_allele = ref_allele,
+    designed_allele = ref_allele,
+    recovered_allele = alt_allele,
+
+    designed_mutation_id = NA_character_,
+    recovered_mutation_id = mutation_id,
+
+    rebooting_change =
+      "New mutation"
+  )
+
+# 7) Combine all substitution states
+rescued_substitution_changes <- dplyr::bind_rows(
+  retained_subs,
+  new_subs,
+  reversion_subs,
+  changed_allele_subs
+) %>%
+  dplyr::left_join(
+    rescued_design_mapping %>%
+      dplyr::select(
+        original_design_id,
+        nearest_natural_sequence_similarity
+      ),
+    by = "original_design_id",
+    relationship = "many-to-one"
+  ) %>%
+  dplyr::arrange(
+    isolate,
+    genome_position
+  )
+
+names(rescued_substitution_changes)
+
+rescued_substitution_changes %>%
+  dplyr::count(
+    isolate,
+    rebooting_change
+  )
+
+# # A tibble: 17 × 3
+#    isolate     rebooting_change     n
+#    <chr>       <chr>            <int>
+#  1 Evo-Phi111  Changed allele       1
+#  2 Evo-Phi111  New mutation         9
+#  3 Evo-Phi111  Retained            98
+#  4 Evo-Phi111  Reversion to WT      9
+#  5 Evo-Phi114  New mutation         1
+#  6 Evo-Phi114  Retained            77
+#  7 Evo-Phi2483 Retained            59
+#  8 Evo-Phi3392 New mutation         5
+#  9 Evo-Phi3392 Retained           109
+# 10 Evo-Phi4    New mutation         2
+# 11 Evo-Phi4    Retained           178
+# 12 Evo-Phi5    New mutation         4
+# 13 Evo-Phi5    Retained           210
+# 14 Evo-Phi5    Reversion to WT     99
+# 15 Evo-Phi69   New mutation         3
+# 16 Evo-Phi69   Retained            67
+# 17 Evo-Phi69   Reversion to WT      2
+
+
+# 8) Handle indels separately
+designed_indels <- rescued_designed_mutations %>%
+  dplyr::filter(
+    mutation_type %in%
+      c(
+        "insertion",
+        "deletion"
+      )
+  )
+
+recovered_indels <- rescued_recovered_mutations %>%
+  dplyr::filter(
+    mutation_type %in%
+      c(
+        "insertion",
+        "deletion"
+      )
+  )
+
+retained_indels <- designed_indels %>%
+  dplyr::inner_join(
+    recovered_indels %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id_full
+      ),
+    by = c(
+      "original_design_id",
+      "mutation_id_full"
+    ),
+    relationship = "many-to-one"
+  ) %>%
+  dplyr::mutate(
+    rebooting_change =
+      "Retained indel"
+  )
+# Retained-indel table is empty
+
+lost_indels <- designed_indels %>%
+  dplyr::anti_join(
+    recovered_indels %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id_full
+      ),
+    by = c(
+      "original_design_id",
+      "mutation_id_full"
+    )
+  ) %>%
+  dplyr::mutate(
+    rebooting_change =
+      "Lost designed indel"
+  )
+
+acquired_indels <- recovered_indels %>%
+  dplyr::anti_join(
+    designed_indels %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id_full
+      ),
+    by = c(
+      "original_design_id",
+      "mutation_id_full"
+    )
+  ) %>%
+  dplyr::mutate(
+    rebooting_change =
+      "Acquired indel"
+  )
+
+# combine indels analysis
+rescued_indel_changes <- dplyr::bind_rows(
+  retained_indels,
+  lost_indels,
+  acquired_indels
+) %>%
+  dplyr::arrange(
+    isolate,
+    ref_start
+  )
+
+rescued_indel_changes %>%
+  dplyr::count(
+    isolate,
+    rebooting_change
+  )
+
+# # A tibble: 5 × 3
+#   isolate     rebooting_change        n
+#   <chr>       <chr>               <int>
+# 1 Evo-Phi2483 Acquired indel          1
+# 2 Evo-Phi2483 Lost designed indel     1
+# 3 Evo-Phi3392 Lost designed indel     2
+# 4 Evo-Phi5    Lost designed indel    18
+# 5 Evo-Phi69   Lost designed indel     1
+
+
+
+# ============================================================
+# Add DMS data to rescuing mutations
+# We focus on substitutions: rescued_substitution_changes
+# ============================================================
+
+# 1) Prepare compact DMS lookup
+nt_DMS_lookup <- phix_nt_DMS_merge %>%
+  dplyr::select(
+    mutation_id,
+    DMS_fitness,
+    DMS_FDR,
+    DMS_effect_size,
+    DMS_effect_category,
+    DMS_effect_category_lethal,
+    dplyr::any_of(
+      c(
+        "nt_noncoding",
+        "nt_coding",
+        "nt_overlap_orf",
+        "affected_genes",
+        "aa_mutation_IDs",
+        "aa_mutation_class"
+      )
+    )
+  ) %>%
+  dplyr::distinct(
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+names(rescued_substitution_changes)
+table(rescued_substitution_changes$isolate)
+#  Evo-Phi111  Evo-Phi114 Evo-Phi2483 Evo-Phi3392    Evo-Phi4    Evo-Phi5   Evo-Phi69 
+#         117          78          59         114         180         313          72 
+
+
+# 2) Annotate the designed mutation
+rescued_substitution_changes_annotated <-
+  rescued_substitution_changes %>%
+
+  dplyr::left_join(
+
+    nt_DMS_lookup %>%
+      dplyr::rename_with(
+        ~ paste0(
+          "designed_",
+          .x
+        ),
+        -mutation_id
+      ),
+
+    by = c(
+      "designed_mutation_id" =
+        "mutation_id"
+    ),
+
+    relationship = "many-to-one"
+  )
+
+rescued_substitution_changes_annotated <-
+  rescued_substitution_changes_annotated %>%
+
+  dplyr::left_join(
+
+    nt_DMS_lookup %>%
+      dplyr::rename_with(
+        ~ paste0(
+          "recovered_",
+          .x
+        ),
+        -mutation_id
+      ),
+
+    by = c(
+      "recovered_mutation_id" =
+        "mutation_id"
+    ),
+
+    relationship = "many-to-one"
+  )
+
+names(rescued_substitution_changes_annotated)
+#  [1] "original_design_id"                   "isolate"                              "genome_position"                      "WT_allele"                            "designed_allele"                     
+#  [6] "recovered_allele"                     "designed_mutation_id"                 "recovered_mutation_id"                "rebooting_change"                     "nearest_natural_sequence_similarity" 
+# [11] "designed_DMS_fitness"                 "designed_DMS_FDR"                     "designed_DMS_effect_size"             "designed_DMS_effect_category"         "designed_DMS_effect_category_lethal" 
+# [16] "designed_nt_noncoding"                "designed_nt_coding"                   "designed_nt_overlap_orf"              "designed_affected_genes"              "designed_aa_mutation_IDs"            
+# [21] "designed_aa_mutation_class"           "recovered_DMS_fitness"                "recovered_DMS_FDR"                    "recovered_DMS_effect_size"            "recovered_DMS_effect_category"       
+# [26] "recovered_DMS_effect_category_lethal" "recovered_nt_noncoding"               "recovered_nt_coding"                  "recovered_nt_overlap_orf"             "recovered_affected_genes"            
+# [31] "recovered_aa_mutation_IDs"            "recovered_aa_mutation_class"         
+
+ rescued_substitution_changes_annotated %>%
+   dplyr::count(
+     isolate,
+     #rebooting_change
+   )
+# # A tibble: 7 × 2
+#   isolate         n
+#   <chr>       <int>
+# 1 Evo-Phi111    117
+# 2 Evo-Phi114     78
+# 3 Evo-Phi2483    59
+# 4 Evo-Phi3392   114
+# 5 Evo-Phi4      180
+# 6 Evo-Phi5      313
+# 7 Evo-Phi69      72
+
+
+# 3) Inspect only actual rebooting changes
+# Main rescue-mutation table.
+rescued_rebooting_changes <-
+  rescued_substitution_changes_annotated %>%
+  dplyr::filter(
+    rebooting_change != "Retained"
+  ) %>%
+  dplyr::arrange(
+    isolate,
+    genome_position
+  )
+
+names(rescued_rebooting_changes)
+#  [1] "original_design_id"                   "isolate"                              "genome_position"                      "WT_allele"                            "designed_allele"                     
+#  [6] "recovered_allele"                     "designed_mutation_id"                 "recovered_mutation_id"                "rebooting_change"                     "nearest_natural_sequence_similarity" 
+# [11] "designed_DMS_fitness"                 "designed_DMS_FDR"                     "designed_DMS_effect_size"             "designed_DMS_effect_category"         "designed_DMS_effect_category_lethal" 
+# [16] "designed_nt_noncoding"                "designed_nt_coding"                   "designed_nt_overlap_orf"              "designed_affected_genes"              "designed_aa_mutation_IDs"            
+# [21] "designed_aa_mutation_class"           "recovered_DMS_fitness"                "recovered_DMS_FDR"                    "recovered_DMS_effect_size"            "recovered_DMS_effect_category"       
+# [26] "recovered_DMS_effect_category_lethal" "recovered_nt_noncoding"               "recovered_nt_coding"                  "recovered_nt_overlap_orf"             "recovered_affected_genes"            
+# [31] "recovered_aa_mutation_IDs"            "recovered_aa_mutation_class"          "designed_genome_length"               "recovered_genome_length"              "designed_has_indel"                  
+# [36] "recovered_has_indel"                  "pure_SNV_rescue"                      "rescue_interpretation"                "rescue_candidate_class"               "rebooting_change_plot"               
+
+
+
+
+```
+
+
+
+
+
+
+
+
+## Summary and Visualize mutational effects in evo 300 genomes
+
+### 1) Mutation Categories (Fig. S8, B and C; Bar Plots; Dot Plots;)
+```{r}
+# check data
+head(as.data.frame(evo300_nt_analysis), 0)
+table(evo300_nt_analysis$DMS_effect_category)
+# Increased replication  No measurable effect   Reduced replication 
+#                  1339                 76427                 56050 
+
+head(as.data.frame(evo300_viability_predictors), 0)
+names(evo300_viability_predictors)
+
+
+# Panel A — fraction of deleterious SNVs per genome
+# 1) detrimental mutations
+evo300_panelA_data <-
+  evo300_viability_predictors %>%
+  dplyr::filter(
+    !failed_DNA_synthesis,
+    !is.na(rebooting_viable),
+    !is.na(prop_nt_deleterious),
+    !is.na(nearest_natural_similarity_bin)
+  ) %>%
+  dplyr::mutate(
+
+    viability_state =
+      dplyr::case_when(
+        rebooting_viable &
+          acquired_mutations_during_rebooting ~
+          "Viable after acquired mutation(s)",
+
+        rebooting_viable ~
+          "Viable",
+
+        TRUE ~
+          "Nonviable"
+      ),
+
+    nearest_natural_similarity_bin =
+      factor(
+        nearest_natural_similarity_bin,
+        levels = c(
+          "<90",
+          "90–92",
+          "92–94",
+          "94–96",
+          "96–98",
+          "98–100"
+        )
+      )
+  )
+
+evo300_panelA_bin_summary <-
+  evo300_panelA_data %>%
+  dplyr::group_by(
+    nearest_natural_similarity_bin
+  ) %>%
+  dplyr::summarise(
+    n_genomes = dplyr::n(),
+    median_prop_deleterious =
+      median(
+        prop_nt_deleterious,
+        na.rm = TRUE
+      ),
+    .groups = "drop"
+  )
+
+
+# 2) only strongly detrimental mutations
+evo300_panelA_data <-
+  evo300_viability_predictors %>%
+  dplyr::filter(
+    !failed_DNA_synthesis,
+    !is.na(rebooting_viable),
+    !is.na(prop_nt_lethal),
+    !is.na(nearest_natural_similarity_bin)
+  ) %>%
+  dplyr::mutate(
+
+    viability_state =
+      dplyr::case_when(
+
+        rebooting_viable &
+          acquired_mutations_during_rebooting ~
+          "Viable after acquired mutation(s)",
+
+        rebooting_viable ~
+          "Viable",
+
+        TRUE ~
+          "Nonviable"
+      ),
+
+    nearest_natural_similarity_bin =
+      factor(
+        nearest_natural_similarity_bin,
+        levels = c(
+          "<90",
+          "90–92",
+          "92–94",
+          "94–96",
+          "96–98",
+          "98–100"
+        )
+      )
+  )
+
+evo300_panelA_bin_summary <-
+  evo300_panelA_data %>%
+  dplyr::group_by(
+    nearest_natural_similarity_bin
+  ) %>%
+  dplyr::summarise(
+
+    n_genomes =
+      dplyr::n(),
+
+    median_prop_lethal =
+      median(
+        prop_nt_lethal,
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  )
+
+
+# Plotting panel A
+p_panelA <-
+  ggplot2::ggplot(
+    evo300_panelA_data,
+    ggplot2::aes(
+      x = nearest_natural_similarity_bin,
+      y = prop_nt_lethal
+    )
+  ) +
+
+  # --------------------------------------------------------
+  # Nonviable genomes
+  # --------------------------------------------------------
+
+  ggplot2::geom_jitter(
+    data =
+      evo300_panelA_data %>%
+      dplyr::filter(
+        viability_state == "Nonviable"
+      ),
+
+    width = 0.18,
+    height = 0,
+
+    size = 2,
+    alpha = 0.5,
+
+    color = "black"
+  ) +
+
+  # --------------------------------------------------------
+  # Viable genomes
+  # --------------------------------------------------------
+
+  ggplot2::geom_jitter(
+    data =
+      evo300_panelA_data %>%
+      dplyr::filter(
+        viability_state != "Nonviable"
+      ),
+
+    ggplot2::aes(
+      fill = viability_state
+    ),
+
+    width = 0.18,
+    height = 0,
+
+    shape = 21,
+    size = 3.2,
+    stroke = 0.6,
+    color = "black"
+  ) +
+
+  ggplot2::scale_fill_manual(
+    values = c(
+      "Viable" =
+        "#A8D5A2",
+
+      "Viable after acquired mutation(s)" =
+        "#F2C879"
+    ),
+    name = NULL
+  ) +
+
+  # --------------------------------------------------------
+  # Median within each similarity bin
+  # --------------------------------------------------------
+
+  ggplot2::geom_crossbar(
+    data =
+      evo300_panelA_bin_summary,
+
+    ggplot2::aes(
+      x =
+        nearest_natural_similarity_bin,
+
+      y =
+        median_prop_lethal,
+
+      ymin =
+        median_prop_lethal,
+
+      ymax =
+        median_prop_lethal
+    ),
+
+    inherit.aes = FALSE,
+
+    width = 0.45,
+    linewidth = 0.5,
+    color = "red"
+  ) +
+
+  ggplot2::scale_y_continuous(
+    labels =
+      scales::percent_format(
+        accuracy = 1
+      )
+  ) +
+
+  ggplot2::labs(
+    x =
+      "Nearest-natural sequence similarity (%)",
+
+    y =
+      "Fraction of strongly detrimental substitutions"
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    legend.position = "top"
+  )
+
+p_panelA
+
+
+# Add n= labels above the bins
+panelA_label_y <-
+  max(
+    evo300_panelA_data$prop_nt_deleterious,
+    na.rm = TRUE
+  ) * 1.07
+
+p_panelA <-
+  p_panelA +
+
+  ggplot2::geom_text(
+    data =
+      evo300_panelA_bin_summary,
+
+    ggplot2::aes(
+      x =
+        nearest_natural_similarity_bin,
+      y =
+        panelA_label_y,
+      label =
+        paste0(
+          "n=",
+          n_genomes
+        )
+    ),
+
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+
+  ggplot2::coord_cartesian(
+    ylim = c(
+      0,
+      panelA_label_y * 1.05
+    ),
+    clip = "off"
+  )
+
+p_panelA
+
+# Saving
+#ggsave(p_panelA, filename = "./plots/p_evo_analyses_panelA.pdf", width = 5, height = 3)
+
+
+
+# Panel B — fraction of genomes containing ≥1 strongly detrimental SNV
+evo300_strongly_detrimental_by_genome <-
+  evo300_nt_analysis %>%
+  dplyr::filter(
+    !failed_DNA_synthesis,
+    !is.na(rebooting_viable),
+    mutation_type == "substitution"
+  ) %>%
+
+  dplyr::group_by(
+    original_design_id,
+    isolate,
+    rebooting_viable
+  ) %>%
+
+  dplyr::summarise(
+
+    has_strongly_detrimental_SNV =
+      any(
+        DMS_effect_category_lethal ==
+          "Strongly detrimental",
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  ) %>%
+
+  dplyr::mutate(
+
+    viability =
+      dplyr::if_else(
+        rebooting_viable,
+        "Viable",
+        "Nonviable"
+      ),
+
+    strongly_detrimental_status =
+      dplyr::if_else(
+        has_strongly_detrimental_SNV,
+        "≥1 strongly detrimental SNV",
+        "No strongly detrimental SNV"
+      ),
+
+    viability =
+      factor(
+        viability,
+        levels = c(
+          "Nonviable",
+          "Viable"
+        )
+      )
+  )
+
+
+evo300_panelB_data <-
+  evo300_strongly_detrimental_by_genome %>%
+
+  dplyr::count(
+    viability,
+    strongly_detrimental_status,
+    name = "n_genomes"
+  ) %>%
+
+  dplyr::group_by(
+    viability
+  ) %>%
+
+  dplyr::mutate(
+
+    n_total =
+      sum(
+        n_genomes
+      ),
+
+    fraction =
+      n_genomes /
+      n_total,
+
+    percent =
+      100 *
+      fraction
+  ) %>%
+
+  dplyr::ungroup()
+
+
+p_panelB <-
+  ggplot2::ggplot(
+    evo300_panelB_data,
+    ggplot2::aes(
+      x = fraction,
+      y = viability,
+      fill = strongly_detrimental_status
+    )
+  ) +
+
+  ggplot2::geom_col(
+    width = 0.65,
+    color = "black"
+  ) +
+
+  ggplot2::scale_fill_manual(
+    values = c(
+      "≥1 strongly detrimental SNV" =
+        #"#544948",
+        "#85A6B7",
+
+      "No strongly detrimental SNV" =
+        "gray85"
+    ),
+    name = NULL
+  ) +
+
+  ggplot2::scale_x_continuous(
+    labels =
+      scales::percent_format(
+        accuracy = 1
+      ),
+    breaks =
+      seq(
+        0,
+        1,
+        0.25
+      ),
+    expand = c(
+      0,
+      0
+    )
+  ) +
+
+  ggplot2::labs(
+    x =
+      "Fraction of genomes",
+
+    y =
+      NULL
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    legend.position = "top"
+  )
+
+p_panelB
+
+p_panelB <-
+  p_panelB +
+
+  ggplot2::geom_text(
+    ggplot2::aes(
+      label =
+        paste0(
+          n_genomes,
+          "/",
+          n_total,
+          "\n",
+          sprintf(
+            "%.1f%%",
+            percent
+          )
+        )
+    ),
+
+    position =
+      ggplot2::position_stack(
+        vjust = 0.5
+      ),
+
+    size = 3.8
+  )
+
+p_panelB
+
+# Saving
+ggsave(p_panelB, filename = "./plots/p_evo_analyses_panelB.pdf", width = 3.5, height = 2.5)
+
+
+
+```
+
+
+### 2) Correlations with lytic performance (Fig. S8D; Scatter Plots;)
+Here we compare growth rates to the viable genotypes. (after acquiring rebooting mutations)
+```{r}
+# ============================================================
+# Scatter plots - DMS predictors VS. Growth Rank
+# Updated those viable genomes after rescuing mutations, use their final genotypes to correlate the growth
+# ============================================================
+
+# 1) Define the 16 viable isolates
+evo16_isolates <-
+  evo_lytic_ranking$isolate
+
+length(evo16_isolates)
+# [1] 16
+
+sort(evo16_isolates)
+#  [1] "Evo-Phi100"  "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi2147" "Evo-Phi2483" "Evo-Phi2498" "Evo-Phi316"  "Evo-Phi3392" "Evo-Phi36"   "Evo-Phi4"    "Evo-Phi46"   "Evo-Phi5"    "Evo-Phi63"   "Evo-Phi69"  
+# [16] "Evo-Phi75"  
+
+
+# 2) Identify which viable phages were rescued
+evo16_genotype_source <-
+  evo300_metadata_final %>%
+  dplyr::filter(
+    isolate %in% evo16_isolates,
+    rebooting_viable
+    #rebooting_viable != "FALSE"
+  ) %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    rebooting_viable,
+    acquired_mutations_during_rebooting,
+    nearest_natural_sequence_similarity
+  ) %>%
+  dplyr::distinct()
+
+evo16_genotype_source %>%
+  dplyr::count(
+    acquired_mutations_during_rebooting
+  )
+# # A tibble: 2 × 2
+#   acquired_mutations_during_rebooting     n
+#   <lgl>                               <int>
+# 1 FALSE                                   9
+# 2 TRUE                                    7
+
+
+# 3) Designed-genotype mutation calls for viable-as-designed phages
+evo16_designed_as_viable_mutations <-
+  evo300_nt_analysis %>%
+  dplyr::semi_join(
+    evo16_genotype_source %>%
+      dplyr::filter(
+        !acquired_mutations_during_rebooting
+      ) %>%
+      dplyr::select(
+        original_design_id
+      ),
+    by = "original_design_id"
+  ) %>%
+  dplyr::filter(
+    mutation_type == "substitution"
+  ) %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    mutation_id,
+    mutation_type,
+    ref_start,
+    ref_end,
+    ref_allele,
+    alt_allele,
+    dplyr::everything()
+  )
+
+
+# 4) Recovered-genotype mutation calls for rescued phages
+rescued_viable_isolates <-
+  evo16_genotype_source %>%
+  dplyr::filter(
+    acquired_mutations_during_rebooting
+  ) %>%
+  dplyr::pull(
+    isolate
+  )
+# [1] "Evo-Phi2483" "Evo-Phi3392" "Evo-Phi114"  "Evo-Phi111"  "Evo-Phi69"   "Evo-Phi4"    "Evo-Phi5"   
+
+# Build mutation table
+evo16_recovered_rescued_mutations <-
+  purrr::map_dfr(
+    rescued_viable_isolates,
+
+    function(x) {
+
+      evo_phage_analysis[[x]]$genome$mutations %>%
+        dplyr::filter(
+          mutation_type == "substitution"
+        ) %>%
+        dplyr::mutate(
+          isolate = x
+        )
+    }
+  )
+
+# Attach the unique design ID and metadata
+evo16_recovered_rescued_mutations <-
+  evo16_recovered_rescued_mutations %>%
+  dplyr::left_join(
+    evo16_genotype_source %>%
+      dplyr::filter(
+        acquired_mutations_during_rebooting
+      ) %>%
+      dplyr::select(
+        original_design_id,
+        isolate,
+        nearest_natural_sequence_similarity
+      ),
+    by = "isolate",
+    relationship = "many-to-one"
+  )
+
+
+# 5) Annotate recovered mutations with the nucleotide DMS
+nt_DMS_lookup_recovered <-
+  phix_nt_DMS_merge %>%
+  dplyr::select(
+    #genome_mut_ID_nt,
+    mutation_id,
+    WT_nt_DMS,
+    mutant_nt_DMS,
+    DMS_fitness,
+    DMS_FDR,
+    DMS_effect_size,
+    DMS_effect_category,
+    DMS_effect_category_lethal,
+    dplyr::any_of(
+      c(
+        "nt_noncoding",
+        "nt_coding",
+        "nt_overlap_orf",
+        "affected_genes",
+        "aa_mutation_IDs",
+        "aa_mutation_class"
+      )
+    )
+  ) %>%
+  dplyr::distinct(
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+evo16_recovered_rescued_mutations_DMS <-
+  evo16_recovered_rescued_mutations %>%
+  dplyr::left_join(
+    nt_DMS_lookup_recovered,
+    by = "mutation_id",
+    relationship = "many-to-one"
+  ) %>%
+  dplyr::mutate(
+    DMS_available =
+      !is.na(DMS_fitness)
+  )
+
+
+# 6) Harmonize the viable-as-designed mutations
+evo16_designed_as_viable_mutations_DMS <-
+  evo16_designed_as_viable_mutations %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    mutation_id,
+    mutation_type,
+    ref_start,
+    ref_end,
+    ref_allele,
+    alt_allele,
+    DMS_fitness,
+    DMS_FDR,
+    DMS_effect_size,
+    DMS_effect_category,
+    DMS_effect_category_lethal,
+    DMS_available,
+    dplyr::any_of(
+      c(
+        "nt_noncoding",
+        "nt_coding",
+        "nt_overlap_orf",
+        "affected_genes",
+        "aa_mutation_IDs",
+        "aa_mutation_class"
+      )
+    )
+  )
+
+evo16_recovered_rescued_mutations_DMS <-
+  evo16_recovered_rescued_mutations_DMS %>%
+  dplyr::select(
+    original_design_id,
+    isolate,
+    mutation_id,
+    mutation_type,
+    ref_start,
+    ref_end,
+    ref_allele,
+    alt_allele,
+    DMS_fitness,
+    DMS_FDR,
+    DMS_effect_size,
+    DMS_effect_category,
+    DMS_effect_category_lethal,
+    DMS_available,
+    dplyr::any_of(
+      c(
+        "nt_noncoding",
+        "nt_coding",
+        "nt_overlap_orf",
+        "affected_genes",
+        "aa_mutation_IDs",
+        "aa_mutation_class"
+      )
+    )
+  )
+
+
+# 7) Combine into one actual-viable-genotype mutation table
+evo16_actual_viable_mutations <-
+  dplyr::bind_rows(
+    evo16_designed_as_viable_mutations_DMS,
+    evo16_recovered_rescued_mutations_DMS
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+names(evo16_actual_viable_mutations)
+
+evo16_actual_viable_mutations %>%
+  dplyr::count(
+    isolate,
+    name = "n_substitutions"
+  ) %>%
+  dplyr::arrange(
+    isolate
+  )
+
+dplyr::n_distinct(
+  evo16_actual_viable_mutations$isolate
+)
+# [1] 16
+
+
+# 8) Add genotype-source labels
+evo16_actual_viable_mutations <-
+  evo16_actual_viable_mutations %>%
+  dplyr::left_join(
+    evo16_genotype_source %>%
+      dplyr::select(
+        original_design_id,
+        acquired_mutations_during_rebooting,
+        nearest_natural_sequence_similarity
+      ),
+    by = "original_design_id",
+    relationship = "many-to-one"
+  ) %>%
+  dplyr::mutate(
+    genotype_source =
+      dplyr::if_else(
+        acquired_mutations_during_rebooting,
+        "Recovered viable genotype",
+        "Designed viable genotype"
+      )
+  )
+
+
+# 9) Recalculate the extended DMS predictors
+evo16_DMS_predictors_actual <-
+  evo16_actual_viable_mutations %>%
+  dplyr::filter(
+    DMS_available
+  ) %>%
+  dplyr::group_by(
+    original_design_id,
+    isolate,
+    acquired_mutations_during_rebooting,
+    nearest_natural_sequence_similarity,
+    genotype_source
+  ) %>%
+  dplyr::summarise(
+
+    n_DMS_SNV =
+      dplyr::n(),
+
+    # all detrimental
+    n_detrimental =
+      sum(
+        DMS_effect_category_lethal %in%
+          c(
+            #"Reduced replication",
+            "Detrimental",
+            "Strongly detrimental"
+          ),
+        na.rm = TRUE
+      ),
+
+    prop_detrimental =
+      n_detrimental /
+      n_DMS_SNV,
+
+    median_fitness_detrimental = {
+
+      x <- DMS_fitness[
+        DMS_effect_category_lethal %in%
+          c(
+            #"Reduced replication",
+            "Detrimental",
+            "Strongly detrimental"
+          )
+      ]
+
+      if (length(x) == 0) {
+        NA_real_
+      } else {
+        stats::median(
+          x,
+          na.rm = TRUE
+        )
+      }
+    },
+
+    mean_fitness_detrimental = {
+
+      x <- DMS_fitness[
+        DMS_effect_category_lethal %in%
+          c(
+            #"Reduced replication",
+            "Detrimental",
+            "Strongly detrimental"
+          )
+      ]
+
+      if (length(x) == 0) {
+        NA_real_
+      } else {
+        mean(
+          x,
+          na.rm = TRUE
+        )
+      }
+    },
+
+    # strongly detrimental only
+    n_strongly_detrimental =
+      sum(
+        DMS_effect_category_lethal ==
+          "Strongly detrimental",
+        na.rm = TRUE
+      ),
+
+    prop_strongly_detrimental =
+      n_strongly_detrimental /
+      n_DMS_SNV,
+
+    median_fitness_strongly_detrimental = {
+
+      x <- DMS_fitness[
+        DMS_effect_category_lethal ==
+          "Strongly detrimental"
+      ]
+
+      if (length(x) == 0) {
+        NA_real_
+      } else {
+        stats::median(
+          x,
+          na.rm = TRUE
+        )
+      }
+    },
+
+    # global severity summaries
+    min_DMS_fitness =
+      min(
+        DMS_fitness,
+        na.rm = TRUE
+      ),
+
+    median_DMS_fitness =
+      stats::median(
+        DMS_fitness,
+        na.rm = TRUE
+      ),
+
+    mean_DMS_fitness =
+      mean(
+        DMS_fitness,
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  )
+
+names(evo16_DMS_predictors_actual)
+#  [1] "original_design_id"                  "isolate"                             "acquired_mutations_during_rebooting" "nearest_natural_sequence_similarity" "genotype_source"                    
+#  [6] "n_DMS_SNV"                           "n_detrimental"                       "prop_detrimental"                    "median_fitness_detrimental"          "mean_fitness_detrimental"           
+# [11] "n_strongly_detrimental"              "prop_strongly_detrimental"           "median_fitness_strongly_detrimental" "min_DMS_fitness"                     "median_DMS_fitness"                 
+# [16] "mean_DMS_fitness"                   
+
+
+# 10) Join the experimental lytic ranking
+evo16_correlation_data_actual <-
+  evo16_DMS_predictors_actual %>%
+  dplyr::left_join(
+    evo_lytic_ranking %>%
+      dplyr::select(
+        isolate,
+        lytic_rank_Evo,
+        lytic_rank_all_phages,
+        GrowthRateMin_mean,
+        MinOD_mean,
+        TimeToMin_mean
+      ),
+    by = "isolate",
+    relationship = "one-to-one"
+  )
+
+names(evo16_correlation_data_actual)
+#  [1] "original_design_id"                  "isolate"                             "acquired_mutations_during_rebooting" "nearest_natural_sequence_similarity" "genotype_source"                    
+#  [6] "n_DMS_SNV"                           "n_detrimental"                       "prop_detrimental"                    "median_fitness_detrimental"          "mean_fitness_detrimental"           
+# [11] "n_strongly_detrimental"              "prop_strongly_detrimental"           "median_fitness_strongly_detrimental" "min_DMS_fitness"                     "median_DMS_fitness"                 
+# [16] "mean_DMS_fitness"                    "lytic_rank_Evo"                      "lytic_rank_all_phages"               "GrowthRateMin_mean"                  "MinOD_mean"                         
+# [21] "TimeToMin_mean"                     
+
+evo16_correlation_data_actual %>%
+  dplyr::select(
+    isolate,
+    genotype_source,
+    lytic_rank_Evo,
+    n_detrimental,
+    prop_detrimental,
+    median_fitness_detrimental,
+    n_strongly_detrimental,
+    prop_strongly_detrimental,
+    min_DMS_fitness,
+    #q10_DMS_fitness,
+    nearest_natural_sequence_similarity
+  ) %>%
+  dplyr::arrange(
+    lytic_rank_Evo
+  ) %>%
+  print(
+    n = Inf,
+    width = Inf
+  )
+
+
+# 11) Rerun the extended Spearman analysis
+candidate_predictors <- c(
+
+  n_detrimental =
+    "Number of detrimental SNVs",
+
+  prop_detrimental =
+    "Fraction of detrimental SNVs",
+
+  median_fitness_detrimental =
+    "Median fitness of detrimental SNVs",
+
+  #mean_fitness_detrimental =
+    #"Mean fitness of detrimental SNVs",
+
+  n_strongly_detrimental =
+    "Number of strongly detrimental SNVs",
+
+  prop_strongly_detrimental =
+    "Fraction of strongly detrimental SNVs",
+
+  median_fitness_strongly_detrimental =
+    "Median fitness of strongly detrimental SNVs",
+
+  min_DMS_fitness =
+    "Minimum SNV fitness",
+
+  #median_DMS_fitness =
+    #"Median fitness of all SNVs",
+
+  #mean_DMS_fitness =
+    #"Mean fitness of all SNVs",
+
+  nearest_natural_sequence_similarity =
+    "Nearest-natural sequence similarity (%)"
+)
+
+names(evo16_correlation_data_actual)
+#  [1] "original_design_id"                  "isolate"                             "acquired_mutations_during_rebooting" "nearest_natural_sequence_similarity" "genotype_source"                    
+#  [6] "n_DMS_SNV"                           "n_detrimental"                       "prop_detrimental"                    "median_fitness_detrimental"          "mean_fitness_detrimental"           
+# [11] "n_strongly_detrimental"              "prop_strongly_detrimental"           "median_fitness_strongly_detrimental" "min_DMS_fitness"                     "median_DMS_fitness"                 
+# [16] "mean_DMS_fitness"                    "lytic_rank_Evo"                      "lytic_rank_all_phages"               "GrowthRateMin_mean"                  "MinOD_mean"                         
+# [21] "TimeToMin_mean"                     
+
+evo16_spearman_actual <-
+  purrr::map_dfr(
+    names(candidate_predictors),
+
+    ~ run_spearman_one(
+      data =
+        evo16_correlation_data_actual,
+
+      predictor =
+        .x,
+
+      outcome =
+        #"lytic_rank_Evo"
+        "GrowthRateMin_mean"
+    )
+  ) %>%
+
+  dplyr::mutate(
+
+    predictor_label =
+      unname(
+        candidate_predictors[
+          predictor
+        ]
+      ),
+
+    abs_rho =
+      abs(rho),
+
+    p_FDR =
+      stats::p.adjust(
+        p_value,
+        method = "BH"
+      )
+  ) %>%
+
+  dplyr::arrange(
+    dplyr::desc(abs_rho)
+  )
+
+evo16_spearman_actual
+
+# evo16_spearman_actual, by "GrowthRateMin_mean"
+# # A tibble: 8 × 7
+#   predictor                               n    rho p_value predictor_label                             abs_rho p_FDR
+#   <chr>                               <int>  <dbl>   <dbl> <chr>                                         <dbl> <dbl>
+# 1 min_DMS_fitness                        16 -0.587  0.0168 Minimum SNV fitness                           0.587 0.134
+# 2 median_fitness_strongly_detrimental     9 -0.55   0.125  Median fitness of strongly detrimental SNVs   0.55  0.200
+# 3 prop_detrimental                       16  0.429  0.0969 Fraction of detrimental SNVs                  0.429 0.200
+# 4 prop_strongly_detrimental              16  0.409  0.116  Fraction of strongly detrimental SNVs         0.409 0.200
+# 5 n_detrimental                          16  0.407  0.118  Number of detrimental SNVs                    0.407 0.200
+# 6 n_strongly_detrimental                 16  0.331  0.211  Number of strongly detrimental SNVs           0.331 0.281
+# 7 nearest_natural_sequence_similarity    16 -0.168  0.535  Nearest-natural sequence similarity (%)       0.168 0.611
+# 8 median_fitness_detrimental             16  0.136  0.616  Median fitness of detrimental SNVs            0.136 0.616
+
+
+# 12) scatter plots and optimize the layout
+# Define the 8 predictors and the panel labels
+plot_spec_8 <- tibble::tibble(
+
+  predictor = c(
+    "n_detrimental",
+    "prop_detrimental",
+    "median_fitness_detrimental",
+    "n_strongly_detrimental",
+    "prop_strongly_detrimental",
+    "median_fitness_strongly_detrimental",
+    "min_DMS_fitness",
+    "nearest_natural_sequence_similarity"
+  ),
+
+  panel_group = c(
+    "Detrimental",
+    "Detrimental",
+    "Detrimental",
+    "Strongly detrimental",
+    "Strongly detrimental",
+    "Strongly detrimental",
+    "Whole-DMS data",
+    "Baseline"
+  ),
+
+  panel_metric = c(
+    "Number",
+    "Fraction",
+    "Median fitness",
+    "Number",
+    "Fraction",
+    "Median fitness",
+    "Minimum fitness",
+    "Similarity (%)"
+  )
+
+) %>%
+
+  dplyr::mutate(
+    panel_label =
+      paste0(
+        panel_group,
+        "\n",
+        panel_metric
+      ),
+    panel_order =
+      dplyr::row_number()
+  )
+
+# Build one long-format plotting data frame
+evo16_scatter_long <-
+  purrr::map_dfr(
+    seq_len(nrow(plot_spec_8)),
+    function(i) {
+
+      this_predictor <-
+        plot_spec_8$predictor[i]
+
+      this_group <-
+        plot_spec_8$panel_group[i]
+
+      this_metric <-
+        plot_spec_8$panel_metric[i]
+
+      this_label <-
+        plot_spec_8$panel_label[i]
+
+      this_order <-
+        plot_spec_8$panel_order[i]
+
+      evo16_correlation_data_actual %>%
+        dplyr::transmute(
+          isolate,
+          genotype_source,
+          acquired_mutations_during_rebooting,
+          lytic_rank_Evo,
+          GrowthRateMin_mean,
+          predictor = this_predictor,
+          panel_group = this_group,
+          panel_metric = this_metric,
+          panel_label = this_label,
+          panel_order = this_order,
+          x = .data[[this_predictor]]
+        )
+    }
+  ) %>%
+
+  dplyr::mutate(
+
+    viability_display =
+      dplyr::case_when(
+        acquired_mutations_during_rebooting ~
+          "Viable after acquired mutation(s)",
+        TRUE ~
+          "Viable"
+      ),
+
+    panel_label =
+      factor(
+        panel_label,
+        levels =
+          plot_spec_8$panel_label
+      )
+  )
+
+names(evo16_scatter_long)
+#  [1] "isolate"                             "genotype_source"                     "acquired_mutations_during_rebooting" "lytic_rank_Evo"                      "GrowthRateMin_mean"                 
+#  [6] "predictor"                           "panel_group"                         "panel_metric"                        "panel_label"                         "panel_order"                        
+# [11] "x"                                   "viability_display"                  
+
+# check plotting data
+evo16_scatter_long %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    n_finite_growth = sum(is.finite(GrowthRateMin_mean)),
+    min_growth = min(GrowthRateMin_mean, na.rm = TRUE),
+    median_growth = stats::median(GrowthRateMin_mean, na.rm = TRUE),
+    max_growth = max(GrowthRateMin_mean, na.rm = TRUE)
+  )
+# # A tibble: 1 × 5
+#       n n_finite_growth min_growth median_growth max_growth
+#   <int>           <int>      <dbl>         <dbl>      <dbl>
+# 1   128             128    -0.0129       -0.0102   -0.00550
+
+evo16_scatter_long %>%
+  dplyr::group_by(panel_label) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    n_complete = sum(
+      is.finite(x) &
+      is.finite(GrowthRateMin_mean)
+    ),
+    min_x = min(x, na.rm = TRUE),
+    max_x = max(x, na.rm = TRUE),
+    min_growth = min(GrowthRateMin_mean, na.rm = TRUE),
+    max_growth = max(GrowthRateMin_mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+# # A tibble: 8 × 7
+#   panel_label                                n n_complete   min_x   max_x min_growth max_growth
+#   <fct>                                  <int>      <int>   <dbl>   <dbl>      <dbl>      <dbl>
+# 1 "Detrimental\nNumber"                     16         16  3      24         -0.0129   -0.00550
+# 2 "Detrimental\nFraction"                   16         16  0.0417  0.149     -0.0129   -0.00550
+# 3 "Detrimental\nMedian fitness"             16         16  0.700   0.861     -0.0129   -0.00550
+# 4 "Strongly detrimental\nNumber"            16         16  0       6         -0.0129   -0.00550
+# 5 "Strongly detrimental\nFraction"          16         16  0       0.0335    -0.0129   -0.00550
+# 6 "Strongly detrimental\nMedian fitness"    16          9 -0.108   0.435     -0.0129   -0.00550
+# 7 "Whole-DMS data\nMinimum fitness"         16         16 -0.108   0.633     -0.0129   -0.00550
+# 8 "Baseline\nSimilarity (%)"                16         16 93.2    98.8       -0.0129   -0.00550
+
+
+
+# ============================================================
+# Recalculate Spearman correlations against GrowthRateMin_mean
+# Spearman correlations with observed lytic performance
+# ============================================================
+
+# ============================================================
+# 1) Fix the panel order
+# ============================================================
+
+desired_panel_order <- c(
+  "Detrimental\nNumber",
+  "Detrimental\nFraction",
+  "Detrimental\nMedian fitness",
+  "Whole-DMS data\nMinimum fitness",
+  "Strongly detrimental\nNumber",
+  "Strongly detrimental\nFraction",
+  "Strongly detrimental\nMedian fitness",
+  "Baseline\nSimilarity (%)"
+)
+
+evo16_scatter_long <- evo16_scatter_long %>%
+  dplyr::mutate(
+    panel_label = factor(
+      panel_label,
+      levels = desired_panel_order
+    )
+  )
+
+evo16_scatter_plot_data <-
+  evo16_scatter_long %>%
+  dplyr::mutate(
+    panel_label = factor(
+      panel_label,
+      levels = desired_panel_order
+    )
+  ) %>%
+  dplyr::filter(
+    is.finite(x),
+    is.finite(GrowthRateMin_mean)
+  )
+
+names(evo16_scatter_plot_data)
+#  [1] "isolate"                             "genotype_source"                     "acquired_mutations_during_rebooting" "lytic_rank_Evo"                      "GrowthRateMin_mean"                 
+#  [6] "predictor"                           "panel_group"                         "panel_metric"                        "panel_label"                         "panel_order"                        
+# [11] "x"                                   "viability_display"                  
+
+# Then calculate a common y-position above the points
+
+
+# ============================================================
+# 2. Define common y-range and annotation position
+# ============================================================
+
+growth_min <-
+  min(
+    evo16_scatter_plot_data$GrowthRateMin_mean,
+    na.rm = TRUE
+  )
+
+growth_max <-
+  max(
+    evo16_scatter_plot_data$GrowthRateMin_mean,
+    na.rm = TRUE
+  )
+
+growth_range <- growth_max - growth_min
+
+# Put statistics above all observed points
+stats_y_pos <-
+  growth_max + 0.12 * growth_range
+
+
+# Now rebuild the Spearman statistics
+
+# ============================================================
+# 3. Calculate Spearman correlations
+# ============================================================
+
+evo16_scatter_stats <-
+  evo16_scatter_plot_data %>%
+  dplyr::group_by(
+    predictor,
+    panel_group,
+    panel_metric,
+    panel_label
+  ) %>%
+  dplyr::summarise(
+
+    n = dplyr::n(),
+
+    rho = {
+      if (
+        dplyr::n_distinct(x) > 1 &&
+        dplyr::n_distinct(GrowthRateMin_mean) > 1
+      ) {
+        suppressWarnings(
+          stats::cor(
+            x,
+            GrowthRateMin_mean,
+            method = "spearman"
+          )
+        )
+      } else {
+        NA_real_
+      }
+    },
+
+    p_value = {
+      if (
+        dplyr::n_distinct(x) > 1 &&
+        dplyr::n_distinct(GrowthRateMin_mean) > 1
+      ) {
+        suppressWarnings(
+          stats::cor.test(
+            x,
+            GrowthRateMin_mean,
+            method = "spearman",
+            exact = FALSE
+          )$p.value
+        )
+      } else {
+        NA_real_
+      }
+    },
+
+    x_min = min(x),
+    x_max = max(x),
+
+    .groups = "drop"
+  ) %>%
+
+  dplyr::mutate(
+
+    x_range = x_max - x_min,
+
+    # Right side of each panel
+    x_pos =
+      dplyr::if_else(
+        is.finite(x_range) & x_range > 0,
+        x_max - 0.03 * x_range,
+        x_max
+      ),
+
+    # Same reserved position above all points
+    y_pos = stats_y_pos,
+
+    stat_label =
+      paste0(
+        "Spearman \u03C1 = ",
+        sprintf("%.2f", rho),
+        "\nP = ",
+        format.pval(
+          p_value,
+          digits = 2,
+          eps = 0.001
+        ),
+        ", n = ",
+        n
+      )
+  )
+
+# This produces labels such as 
+# Spearman ρ = -0.59
+# P = 0.017, n = 16
+
+names(evo16_scatter_stats)
+# [1] "predictor"    "panel_group"  "panel_metric" "panel_label"  "n"            "rho"          "p_value"      "x_min"        "x_max"        "x_range"      "x_pos"        "y_pos"        "stat_label"  
+
+evo16_scatter_stats %>%
+  dplyr::select(
+    panel_label,
+    n,
+    rho,
+    p_value
+  )
+# # A tibble: 8 × 4
+#   panel_label                                n    rho p_value
+#   <fct>                                  <int>  <dbl>   <dbl>
+# 1 "Detrimental\nMedian fitness"             16  0.136  0.616 
+# 2 "Strongly detrimental\nMedian fitness"     9 -0.55   0.125 
+# 3 "Whole-DMS data\nMinimum fitness"         16 -0.587  0.0168
+# 4 "Detrimental\nNumber"                     16  0.407  0.118 
+# 5 "Strongly detrimental\nNumber"            16  0.331  0.211 
+# 6 "Baseline\nSimilarity (%)"                16 -0.168  0.535 
+# 7 "Detrimental\nFraction"                   16  0.429  0.0969
+# 8 "Strongly detrimental\nFraction"          16  0.409  0.116 
+
+
+
+# ============================================================
+# 4. Final 4 × 2 correlation plot
+# ============================================================
+
+p_evo16_correlation_panel <-
+  ggplot2::ggplot(
+    evo16_scatter_plot_data,
+    ggplot2::aes(
+      x = x,
+      y = GrowthRateMin_mean
+    )
+  ) +
+
+  ggplot2::geom_point(
+    ggplot2::aes(
+      fill = viability_display
+    ),
+    shape = 21,
+    size = 3,
+    stroke = 0.6,
+    color = "black"
+  ) +
+
+  # Correlation statistics in reserved space above the points
+  ggplot2::geom_text(
+    data = evo16_scatter_stats,
+    ggplot2::aes(
+      x = x_pos,
+      y = y_pos,
+      label = stat_label
+    ),
+    inherit.aes = FALSE,
+    hjust = 1,
+    vjust = 1,
+    size = 3.1,
+    lineheight = 1.05
+  ) +
+
+  ggplot2::scale_fill_manual(
+    values = c(
+      "Viable" = "#A8D5A2",
+      "Viable after acquired mutation(s)" = "#F2C879"
+    ),
+    name = NULL
+  ) +
+
+  # Add enough upper space for the statistical annotation
+  ggplot2::scale_y_continuous(
+    limits = c(
+      growth_min - 0.03 * growth_range,
+      growth_max + 0.20 * growth_range
+    ),
+    expand = ggplot2::expansion(
+      mult = c(0, 0)
+    )
+  ) +
+
+  ggplot2::facet_wrap(
+    ~ panel_label,
+    ncol = 4,
+    scales = "free_x"
+  ) +
+
+  ggplot2::labs(
+    x = NULL,
+    y = paste0(
+      "Steepest host growth decline\n",
+      "(more negative = stronger lytic performance)"
+    ),
+    title =
+      "Associations between mutational metrics and lytic performance"
+  ) +
+
+  ggplot2::theme_classic(
+    base_size = 11
+  ) +
+
+  ggplot2::theme(
+
+    legend.position = "bottom",
+
+    strip.background =
+      ggplot2::element_rect(
+        fill = "gray90",
+        color = "black",
+        linewidth = 0.4
+      ),
+
+    strip.text =
+      ggplot2::element_text(
+        face = "bold",
+        size = 9.5,
+        lineheight = 1.0
+      ),
+
+    axis.title.x =
+      ggplot2::element_blank(),
+
+    axis.text.x =
+      ggplot2::element_text(
+        size = 8.5
+      ),
+
+    axis.text.y =
+      ggplot2::element_text(
+        size = 8.5
+      ),
+
+    axis.title.y =
+      ggplot2::element_text(
+        size = 10.5
+      ),
+
+    plot.title =
+      ggplot2::element_text(
+        face = "bold",
+        size = 12
+      ),
+
+    plot.title.position = "plot",
+
+    panel.spacing =
+      grid::unit(
+        0.35,
+        "lines"
+      )
+  )
+
+p_evo16_correlation_panel
+
+# Saving
+#ggsave(p_evo16_correlation_panel, filename = "./plots/p_evo16_correlation_panel.pdf", width = 8, height = 5)
+#ggsave(p_evo16_correlation_panel, filename = "./plots/p_evo16_correlation_panel_20261101.pdf", width = 8, height = 5)
+
+
+## Here noticed one issue that 10 genomes in design have strongly detrimental mutations, but only 9 viable isolates have strongly detrimental mutations, suggesting one reversion happens during rebooting, make a heatmap to show which mutational effects and reversions from strongly detrimental mutations back to the WT.
+
+
+
+```
+
+
+### 3) Mutational effect lanscape, rescuing mutations during rebooting (Fig. S8E; Heatmap;)
+```{r}
+# ============================================================
+# Heatmaps - SNVs in Evo genomes (both designed and rescuing)
+# Based on the analysis: rescued_rebooting_changes
+# ============================================================
+
+# First combining "Changed allele" with "New mutation"
+rescued_rebooting_changes <-
+  rescued_rebooting_changes %>%
+  dplyr::mutate(
+
+    rebooting_change_plot =
+      dplyr::case_when(
+
+        rebooting_change %in%
+          c(
+            "New mutation",
+            "Changed allele"
+          ) ~
+          "New mutation",
+
+        rebooting_change ==
+          "Reversion to WT" ~
+          "Reversion to WT",
+
+        TRUE ~
+          rebooting_change
+      )
+  )
+
+# 1) Define the genomes included, to combine viable + nonviable (98-100)
+heatmap_viable_metadata <-
+  evo300_viability_predictors %>%
+  dplyr::filter(
+    !failed_DNA_synthesis,
+    !is.na(rebooting_viable),
+    rebooting_viable,
+    isolate %in% evo_lytic_ranking$isolate
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    .keep_all = TRUE
+  )
+
+heatmap_nonviable_metadata <-
+  evo300_viability_predictors %>%
+  dplyr::filter(
+    !failed_DNA_synthesis,
+    !is.na(rebooting_viable),
+    !rebooting_viable,
+    nearest_natural_sequence_similarity >= 98,
+    nearest_natural_sequence_similarity <= 100
+  ) %>%
+  dplyr::distinct(
+    original_design_id,
+    .keep_all = TRUE
+  )
+
+heatmap_metadata <-
+  dplyr::bind_rows(
+    heatmap_viable_metadata,
+    heatmap_nonviable_metadata
+  ) %>%
+
+  dplyr::left_join(
+    evo_lytic_ranking %>%
+      dplyr::select(
+        isolate,
+        lytic_rank_Evo
+      ),
+    by = "isolate"
+  ) %>%
+
+  dplyr::mutate(
+    heatmap_group =
+      dplyr::if_else(
+        rebooting_viable,
+        "Viable",
+        "Nonviable (98–100% similarity)"
+      ),
+
+    heatmap_group =
+      factor(
+        heatmap_group,
+        levels = c(
+          "Viable",
+          "Nonviable (98–100% similarity)"
+        )
+      )
+  )
+
+names(heatmap_metadata)
+#   [1] "design_id"                                   "design_number"                               "original_design_id"                          "isolate"                                    
+#   [5] "isolate_number"                              "sequence"                                    "genome_length"                               "gc_content"                                 
+#   [9] "max_nt_homopolymer_length"                   "prodigal_orf_count"                          "prodigal_orf_lengths"                        "total_prodigal_orfs_length"                 
+#  [13] "prodigal_coding_density"                     "max_prodigal_aa_homopolymer_len"             "protein_database_hit_count"                  "checkv_quality"                             
+#  [17] "mmseqs_percent_identity_to_phix174"          "architecture_similarity_score"               "tropism_protein_mmseqs_target"               "tropism_protein_mmseqs_e_value"             
+#  [21] "tropism_protein_mmseqs_percent_identity"     "average_protein_percent_identity"            "num_syntenic_genes"                          "non_syntenic_genes"                         
+#  [25] "non_syntenic_annotations"                    "total_num_genes"                             "viability_original"                          "viability_group"                            
+#  [29] "rebooting_viable"                            "acquired_mutations_during_rebooting"         "failed_DNA_synthesis"                        "generated_status"                           
+#  [33] "original_design_id_no_umi"                   "category_original"                           "query_original"                              "isolate_sheet5"                             
+#  [37] "nearest_natural_accession"                   "nearest_natural_description"                 "nearest_natural_percent_identity"            "nearest_natural_sequence_similarity"        
+#  [41] "nearest_natural_query_coverage"              "nearest_natural_alignment_length"            "nearest_natural_subject_length"              "nearest_natural_gaps"                       
+#  [45] "nearest_natural_mismatches"                  "nearest_natural_synonymous_substitutions"    "nearest_natural_nonsynonymous_substitutions" "nearest_natural_intergenic_substitutions"   
+#  [49] "nearest_natural_indel_events"                "nearest_natural_indel_total_nt"              "nearest_natural_total_mutation_events"       "nearest_natural_estimated_snv"              
+#  [53] "sheet5_match_method"                         "nearest_natural_similarity_bin"              "reference_length"                            "query_length"                               
+#  [57] "aligned_length"                              "alignment_score"                             "n_substitutions"                             "n_insertions"                               
+#  [61] "n_deletions"                                 "inserted_nt"                                 "deleted_nt"                                  "n_nt_substitutions"                         
+#  [65] "n_nt_DMS"                                    "n_nt_DMS_not_covered"                        "prop_nt_DMS_covered"                         "n_nt_beneficial"                            
+#  [69] "n_nt_neutral"                                "n_nt_detrimental"                            "n_nt_lethal"                                 "n_nt_deleterious"                           
+#  [73] "n_nt_non_detrimental"                        "prop_nt_detrimental"                         "prop_nt_lethal"                              "prop_nt_deleterious"                        
+#  [77] "n_noncoding_DMS"                             "n_noncoding_beneficial"                      "n_noncoding_neutral"                         "n_noncoding_detrimental"                    
+#  [81] "n_noncoding_lethal"                          "n_noncoding_deleterious"                     "n_noncoding_non_detrimental"                 "prop_noncoding_deleterious"                 
+#  [85] "has_insertion"                               "has_deletion"                                "has_indel"                                   "substitution_only"                          
+#  [89] "n_fitness_measured"                          "mean_DMS_fitness"                            "median_DMS_fitness"                          "min_DMS_fitness.x"                          
+#  [93] "mean_DMS_effect_size"                        "median_DMS_effect_size"                      "min_DMS_effect_size"                         "mean_deleterious_fitness"                   
+#  [97] "median_deleterious_fitness"                  "min_deleterious_fitness"                     "mean_deleterious_effect_size"                "median_deleterious_effect_size"             
+# [101] "n_detrimental"                               "n_strongly_detrimental"                      "detrimental_mutations"                       "strongly_detrimental_mutations"             
+# [105] "affected_genes"                              "aa_mutation_IDs"                             "min_DMS_fitness.y"                           "n_DMS_effects"                              
+# [109] "sum_DMS_effect_size"                         "sum_negative_DMS_effect_size"                "cumulative_fitness_cost"                     "n_indel_events"                             
+# [113] "indel_nt_burden"                             "lytic_rank_Evo"                              "heatmap_group"                              
+
+
+heatmap_metadata %>%
+  dplyr::count(
+    heatmap_group
+  )
+# # A tibble: 2 × 2
+#   heatmap_group                      n
+#   <fct>                          <int>
+# 1 Viable                            16
+# 2 Nonviable (98–100% similarity)     7
+
+dplyr::n_distinct(
+  heatmap_viable_metadata$original_design_id
+)
+# [1] 16
+
+
+# 2) Make unique row labels
+heatmap_metadata <-
+  heatmap_metadata %>%
+  dplyr::group_by(
+    isolate
+  ) %>%
+  dplyr::mutate(
+
+    heatmap_label =
+      dplyr::if_else(
+        dplyr::n() == 1,
+        isolate,
+        paste0(
+          isolate,
+          " | ",
+          original_design_id
+        )
+      )
+  ) %>%
+  dplyr::ungroup()
+
+heatmap_metadata <-
+  heatmap_metadata %>%
+  dplyr::mutate(
+    heatmap_label = isolate
+  )
+
+
+# 3) Order rows
+viable_row_order <-
+  heatmap_metadata %>%
+  dplyr::filter(
+    rebooting_viable
+  ) %>%
+  dplyr::arrange(
+    lytic_rank_Evo
+  ) %>%
+  dplyr::pull(
+    heatmap_label
+  )
+#  [1] "Evo-Phi2483" "Evo-Phi69"   "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi46"   "Evo-Phi2498" "Evo-Phi5"    "Evo-Phi100"  "Evo-Phi2147" "Evo-Phi75"   "Evo-Phi36"   "Evo-Phi4"    "Evo-Phi3392" "Evo-Phi316"  "Evo-Phi63
+
+nonviable_row_order <-
+  heatmap_metadata %>%
+  dplyr::filter(
+    !rebooting_viable
+  ) %>%
+  dplyr::arrange(
+    dplyr::desc(
+      nearest_natural_sequence_similarity
+    )
+  ) %>%
+  dplyr::pull(
+    heatmap_label
+  )
+# [1] "Evo-Phi33"   "Evo-Phi31"   "Evo-Phi119"  "Evo-Phi3802" "Evo-Phi113"  "Evo-Phi3479" "Evo-Phi19"  
+
+heatmap_row_order <-
+  c(
+    viable_row_order,
+    nonviable_row_order
+  )
+
+
+# 4) Nucleotide-DMS lookup
+heatmap_DMS_lookup <-
+  phix_nt_DMS_merge %>%
+
+  dplyr::select(
+    #genome_mut_ID_nt,
+    mutation_id,
+    DMS_fitness,
+    DMS_effect_category_lethal
+  ) %>%
+
+  dplyr::distinct(
+    #genome_mut_ID_nt,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+
+# 5) Prepare rebooting events
+# Only rescued viable phages should have these events.
+# We keep the original classification in the data, but simplify 'changed allele' to 'New mutation'.
+heatmap_rescue_events <-
+  rescued_rebooting_changes %>%
+
+  dplyr::semi_join(
+    heatmap_metadata %>%
+      dplyr::filter(
+        rebooting_viable
+      ) %>%
+      dplyr::select(
+        original_design_id
+      ),
+    by = "original_design_id"
+  ) %>%
+
+  dplyr::mutate(
+
+    rebooting_change_plot =
+      dplyr::case_when(
+
+        rebooting_change %in%
+          c(
+            "New mutation",
+            "Changed allele"
+          ) ~
+          "New mutation",
+
+        rebooting_change ==
+          "Reversion to WT" ~
+          "Reversion to WT",
+
+        TRUE ~
+          NA_character_
+      )
+  ) %>%
+
+  dplyr::filter(
+    !is.na(
+      rebooting_change_plot
+    )
+  )
+
+names(heatmap_rescue_events)
+
+
+# 6) Keep both the designed and recovered mutation identities
+heatmap_rescue_events <-
+  heatmap_rescue_events %>%
+  dplyr::mutate(
+
+    # Location used for plotting the rebooting symbol
+    plot_mutation_id =
+      dplyr::case_when(
+
+        rebooting_change ==
+          "Reversion to WT" ~
+          designed_mutation_id,
+
+        rebooting_change %in%
+          c(
+            "New mutation",
+            "Changed allele"
+          ) ~
+          recovered_mutation_id,
+
+        TRUE ~
+          NA_character_
+      )
+  ) %>%
+  dplyr::filter(
+    !is.na(
+      plot_mutation_id
+    )
+  )
+
+
+# 7) prepare the rescue-event information directly
+# Confirm the naming convention to be standardized
+standardize_DMS_category <- function(x) {
+
+  dplyr::case_when(
+
+    x %in% c(
+      "Increased replication",
+      "Increased",
+      "Beneficial"
+    ) ~
+      "Increased",
+
+    x %in% c(
+      "No measurable effect",
+      "No effect",
+      "Neutral"
+    ) ~
+      "No effect",
+
+    x %in% c(
+      "Reduced replication",
+      "Detrimental"
+    ) ~
+      "Detrimental",
+
+    x %in% c(
+      "Strongly detrimental",
+      "Lethal"
+    ) ~
+      "Strongly detrimental",
+
+    TRUE ~
+      "DMS not covered"
+  )
+}
+
+heatmap_rescue_events <-
+  heatmap_rescue_events %>%
+  dplyr::mutate(
+
+    # ------------------------------------------------------
+    # Standardized DMS categories
+    # ------------------------------------------------------
+
+    designed_DMS_category_plot =
+      standardize_DMS_category(
+        designed_DMS_effect_category
+      ),
+
+    recovered_DMS_category_plot =
+      standardize_DMS_category(
+        recovered_DMS_effect_category
+      ),
+
+
+    # ------------------------------------------------------
+    # Mutation ID used for the rebooting symbol
+    # ------------------------------------------------------
+
+    plot_mutation_id =
+      dplyr::case_when(
+
+        rebooting_change_plot ==
+          "Reversion to WT" ~
+          designed_mutation_id,
+
+        rebooting_change_plot ==
+          "New mutation" ~
+          recovered_mutation_id,
+
+        TRUE ~
+          NA_character_
+      ),
+
+
+    # ------------------------------------------------------
+    # Position
+    # ------------------------------------------------------
+
+    genome_position_numeric =
+      suppressWarnings(
+        as.integer(
+          genome_position
+        )
+      )
+  ) %>%
+
+  dplyr::filter(
+    !is.na(
+      plot_mutation_id
+    )
+  )
+
+# Make sure genome_position is numeric 
+heatmap_rescue_events <-
+  heatmap_rescue_events %>%
+  dplyr::mutate(
+
+    genome_position_numeric =
+      dplyr::coalesce(
+
+        suppressWarnings(
+          as.integer(
+            genome_position
+          )
+        ),
+
+        as.integer(
+          stringr::str_extract(
+            plot_mutation_id,
+            "[0-9]+"
+          )
+        )
+      )
+  )
+
+
+# 8) inspect the rescue annotations
+names(heatmap_rescue_events)
+
+heatmap_rescue_events %>%
+  dplyr::select(
+    isolate,
+    genome_position,
+    genome_position_numeric,
+    WT_allele,
+    designed_allele,
+    recovered_allele,
+    designed_mutation_id,
+    recovered_mutation_id,
+    rebooting_change,
+    rebooting_change_plot,
+    designed_DMS_fitness,
+    designed_DMS_category_plot,
+    recovered_DMS_fitness,
+    recovered_DMS_category_plot
+  ) %>%
+  dplyr::arrange(
+    isolate,
+    genome_position_numeric
+  ) %>%
+  print(
+    n = Inf,
+    width = Inf
+  )
+
+# Check Evo-Phi5, a special case with dozens of reversions
+heatmap_rescue_events %>%
+  dplyr::filter(
+    isolate == "Evo-Phi5"
+  ) %>%
+  dplyr::select(
+    genome_position,
+    designed_mutation_id,
+    recovered_mutation_id,
+    rebooting_change_plot,
+    designed_DMS_fitness,
+    designed_DMS_category_plot,
+    recovered_DMS_fitness,
+    recovered_DMS_category_plot
+  ) %>%
+  print(
+    n = Inf,
+    width = Inf
+  )
+
+
+# 9) ordinary designed damaging mutations
+heatmap_designed_damaging <-
+  evo300_nt_analysis %>%
+
+  dplyr::semi_join(
+    heatmap_metadata %>%
+      dplyr::select(
+        original_design_id
+      ),
+    by =
+      "original_design_id"
+  ) %>%
+
+  dplyr::filter(
+    mutation_type ==
+      "substitution",
+    DMS_available
+  ) %>%
+
+  dplyr::mutate(
+
+    designed_DMS_category_plot =
+      standardize_DMS_category(
+        DMS_effect_category_lethal
+      )
+  ) %>%
+
+  dplyr::filter(
+    designed_DMS_category_plot %in%
+      c(
+        #"Reduced replication",
+        "Detrimental",
+        "Strongly detrimental"
+      )
+  ) %>%
+
+  dplyr::transmute(
+    original_design_id,
+    isolate,
+    mutation_id,
+
+    genome_position_numeric =
+      as.integer(
+        genome_position
+      ),
+
+    designed_DMS_fitness =
+      DMS_fitness,
+
+    designed_DMS_category_plot
+  ) %>%
+
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+
+# 10) add ALL designed mutations that changed during rebooting
+heatmap_designed_rebooting_context <-
+  heatmap_rescue_events %>%
+
+  dplyr::filter(
+    !is.na(
+      designed_mutation_id
+    )
+  ) %>%
+
+  dplyr::transmute(
+    original_design_id,
+    isolate,
+
+    mutation_id =
+      designed_mutation_id,
+
+    genome_position_numeric =
+      dplyr::coalesce(
+
+        suppressWarnings(
+          as.integer(
+            genome_position
+          )
+        ),
+
+        as.integer(
+          stringr::str_extract(
+            designed_mutation_id,
+            "[0-9]+"
+          )
+        )
+      ),
+
+    designed_DMS_fitness =
+      designed_DMS_fitness,
+
+    designed_DMS_category_plot =
+      designed_DMS_category_plot
+  ) %>%
+
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+# Combine step 9 and 10 
+heatmap_designed_display <-
+  dplyr::bind_rows(
+    heatmap_designed_damaging,
+    heatmap_designed_rebooting_context
+  ) %>%
+
+  dplyr::distinct(
+    original_design_id,
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+heatmap_designed_display %>%
+  dplyr::filter(
+    isolate == "Evo-Phi5"
+  ) %>%
+  dplyr::arrange(
+    genome_position_numeric
+  ) %>%
+  print(
+    n = Inf,
+    width = Inf
+  )
+
+
+# 11) construct the x-axis
+heatmap_mutation_axis <-
+  dplyr::bind_rows(
+
+    heatmap_designed_display %>%
+      dplyr::transmute(
+        mutation_id,
+        genome_position_numeric
+      ),
+
+    heatmap_rescue_events %>%
+      dplyr::filter(
+        rebooting_change_plot ==
+          "New mutation"
+      ) %>%
+      dplyr::transmute(
+
+        mutation_id =
+          recovered_mutation_id,
+
+        genome_position_numeric =
+          dplyr::coalesce(
+
+            suppressWarnings(
+              as.integer(
+                genome_position
+              )
+            ),
+
+            as.integer(
+              stringr::str_extract(
+                recovered_mutation_id,
+                "[0-9]+"
+              )
+            )
+          )
+      )
+  ) %>%
+
+  dplyr::filter(
+    !is.na(
+      mutation_id
+    ),
+    !is.na(
+      genome_position_numeric
+    )
+  ) %>%
+
+  dplyr::distinct(
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+
+  dplyr::arrange(
+    genome_position_numeric,
+    mutation_id
+  )
+
+heatmap_mutation_order <-
+  heatmap_mutation_axis$
+    mutation_id
+
+
+# 12) make the complete background matrix
+combined_heatmap_data <-
+  tidyr::crossing(
+
+    original_design_id =
+      heatmap_metadata$
+        original_design_id,
+
+    mutation_id =
+      heatmap_mutation_order
+  ) %>%
+
+  dplyr::left_join(
+
+    heatmap_metadata %>%
+      dplyr::select(
+        original_design_id,
+        isolate,
+        heatmap_label,
+        heatmap_group,
+        rebooting_viable,
+        lytic_rank_Evo,
+        nearest_natural_sequence_similarity
+      ),
+
+    by =
+      "original_design_id",
+
+    relationship =
+      "many-to-one"
+  ) %>%
+
+  dplyr::left_join(
+
+    heatmap_designed_display %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id,
+        designed_DMS_category_plot
+      ),
+
+    by = c(
+      "original_design_id",
+      "mutation_id"
+    ),
+
+    relationship =
+      "many-to-one"
+  ) %>%
+
+  dplyr::mutate(
+
+    designed_DMS_category_plot =
+      dplyr::if_else(
+        is.na(
+          designed_DMS_category_plot
+        ),
+        "No displayed designed mutation",
+        designed_DMS_category_plot
+      ),
+
+    mutation_id =
+      factor(
+        mutation_id,
+        levels =
+          heatmap_mutation_order
+      ),
+
+    heatmap_label =
+      factor(
+        heatmap_label,
+        levels =
+          rev(
+            heatmap_row_order
+          )
+      )
+  )
+
+
+# 13) New mutations (solid circles)
+heatmap_new_mutations <-
+  heatmap_rescue_events %>%
+
+  dplyr::filter(
+    rebooting_change_plot ==
+      "New mutation"
+  ) %>%
+
+  dplyr::left_join(
+
+    heatmap_metadata %>%
+      dplyr::select(
+        original_design_id,
+        heatmap_label,
+        heatmap_group
+      ),
+
+    by =
+      "original_design_id",
+
+    relationship =
+      "many-to-one"
+  ) %>%
+
+  dplyr::mutate(
+
+    plot_mutation_id =
+      factor(
+        recovered_mutation_id,
+        levels =
+          heatmap_mutation_order
+      ),
+
+    heatmap_label =
+      factor(
+        heatmap_label,
+        levels =
+          rev(
+            heatmap_row_order
+          )
+      )
+  )
+
+
+# 14) Reversions to WT 
+heatmap_reversions <-
+  heatmap_rescue_events %>%
+
+  dplyr::filter(
+    rebooting_change_plot ==
+      "Reversion to WT"
+  ) %>%
+
+  dplyr::left_join(
+
+    heatmap_metadata %>%
+      dplyr::select(
+        original_design_id,
+        heatmap_label,
+        heatmap_group
+      ),
+
+    by =
+      "original_design_id",
+
+    relationship =
+      "many-to-one"
+  ) %>%
+
+  dplyr::mutate(
+
+    plot_mutation_id =
+      factor(
+        designed_mutation_id,
+        levels =
+          heatmap_mutation_order
+      ),
+
+    heatmap_label =
+      factor(
+        heatmap_label,
+        levels =
+          rev(
+            heatmap_row_order
+          )
+      )
+  )
+
+# 15) Final colors
+dms_colors <- c(
+  #"Increased replication" =
+    #"#A1A9D0",
+
+  #"No measurable effect" =
+    #"#D9D9D9",
+
+  #"Reduced replication" =
+    #"#F4A6A6",
+
+  #"Strongly detrimental" =
+    #"#F0988C"
+  
+  
+  "Increased" =
+    "#A1A9D0",
+
+  "No effect" =
+    "#D9D9D9",
+
+  "Detrimental" =
+    "#F4A6A6",
+
+  "Strongly detrimental" =
+    "#F0988C"
+)
+
+absent_color <-
+  "#F5F5F5"
+
+names(combined_heatmap_data)
+# [1] "original_design_id"                  "mutation_id"                         "isolate"                             "heatmap_label"                       "heatmap_group"                      
+# [6] "rebooting_viable"                    "lytic_rank_Evo"                      "nearest_natural_sequence_similarity" "designed_DMS_category_plot"         
+
+
+# 16) Updated heatmap
+p_combined_heatmap <-
+  ggplot2::ggplot(
+    combined_heatmap_data,
+    ggplot2::aes(
+      x = mutation_id,
+      y = heatmap_label,
+      fill =
+        designed_DMS_category_plot
+    )
+  ) +
+
+  # ========================================================
+  # Designed/pre-rebooting genotype
+  # ========================================================
+
+  ggplot2::geom_tile(
+    color = "white",
+    linewidth = 0.12
+  ) +
+
+  ggplot2::scale_fill_manual(
+    values = c(
+
+      "No displayed designed mutation" =
+        absent_color,
+
+      #"Increased replication" =
+        #"#A1A9D0",
+
+      #"No measurable effect" =
+        #"#D9D9D9",
+
+      #"Reduced replication" =
+        #"#F4A6A6",
+
+      #"Strongly detrimental" =
+        #"#F0988C",
+
+      "DMS not covered" =
+        "white",
+      
+      "Increased" =
+        "#A1A9D0",
+    
+      "No effect" =
+        "#D9D9D9",
+    
+      "Detrimental" =
+        "#F4A6A6",
+    
+      "Strongly detrimental" =
+        "#F0988C"
+    ),
+
+    breaks = c(
+      "No displayed designed mutation",
+      #"Increased replication",
+      #"No measurable effect",
+      #"Reduced replication",
+      #"Strongly detrimental"
+      
+      "Increased",
+      "No effect",
+      "Detrimental",
+      "Strongly detrimental"
+    ),
+
+    name =
+      "Designed mutation",
+
+    drop = FALSE
+  ) +
+
+
+  # ========================================================
+  # New / replacement mutation
+  # ========================================================
+
+  ggplot2::geom_point(
+    data =
+      heatmap_new_mutations,
+
+    ggplot2::aes(
+      x =
+        plot_mutation_id,
+
+      y =
+        heatmap_label,
+
+      color =
+        recovered_DMS_category_plot
+    ),
+
+    inherit.aes = FALSE,
+
+    shape = 16,
+    size = 2.5
+  ) +
+
+  ggplot2::scale_color_manual(
+    values = c(
+
+      #"Increased replication" =
+        #"#A1A9D0",
+
+      #"No measurable effect" =
+        #"#D9D9D9",
+
+      #"Reduced replication" =
+        #"#F4A6A6",
+
+      #"Strongly detrimental" =
+        #"#F0988C",
+
+      "Increased" =
+        "#A1A9D0",
+    
+      "No effect" =
+        "#D9D9D9",
+    
+      "Detrimental" =
+        "#F4A6A6",
+    
+      "Strongly detrimental" =
+        "#F0988C",
+      
+      "DMS not covered" =
+        "black"
+    ),
+
+    name =
+      "New mutation",
+
+    drop = FALSE
+  ) +
+
+
+  # ========================================================
+  # Reversion of designed allele to WT
+  # ========================================================
+
+  ggplot2::geom_point(
+    data =
+      heatmap_reversions,
+
+    ggplot2::aes(
+      x =
+        plot_mutation_id,
+
+      y =
+        heatmap_label
+    ),
+
+    inherit.aes = FALSE,
+
+    shape = 4,
+    #size = 2.8,
+    #stroke = 0.9,
+    
+    size = 0.4,
+    stroke = 0.3,
+    
+    color = "black"
+  ) +
+
+
+  # ========================================================
+  # Groups
+  # ========================================================
+
+  ggplot2::facet_grid(
+    heatmap_group ~ .,
+    scales = "free_y",
+    space = "free_y"
+  ) +
+
+  ggplot2::scale_x_discrete(
+    position = "top"
+  ) +
+
+  ggplot2::labs(
+    x =
+      "Nucleotide substitution",
+    y =
+      NULL
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+
+    axis.text.x =
+      ggplot2::element_text(
+        angle = 90,
+        hjust = 0,
+        vjust = 0.5,
+        size = 5
+      ),
+
+    axis.text.y =
+      ggplot2::element_text(
+        size = 8
+      ),
+
+    axis.ticks =
+      ggplot2::element_blank(),
+
+    strip.background =
+      ggplot2::element_rect(
+        fill = "gray90",
+        color = "black"
+      ),
+
+    strip.text.y =
+      ggplot2::element_text(
+        face = "bold",
+        size = 9
+      ),
+
+    panel.spacing.y =
+      grid::unit(
+        0.4,
+        "lines"
+      ),
+
+    legend.position =
+      "bottom",
+
+    legend.box =
+      "vertical",
+
+    legend.title =
+      ggplot2::element_text(
+        face = "bold",
+        size = 9
+      ),
+
+    legend.text =
+      ggplot2::element_text(
+        size = 8
+      )
+  )
+
+p_combined_heatmap
+
+# Saving
+#ggsave(p_combined_heatmap, filename = "./plots/p_combined_heatmap.pdf", width = 10, height = 5)
+ggsave(p_combined_heatmap, filename = "./plots/p_combined_heatmap_20261031.pdf", width = 10, height = 5)
+
+
+
+
+
+
+
+
+# ============================================================
+# Heatmap, directly plotting continous fitness values
+# ============================================================
+
+# 1) check data
+names(combined_heatmap_data)
+
+# Combine DMS fitness data 
+combined_heatmap_data <-
+  tidyr::crossing(
+    original_design_id =
+      heatmap_metadata$original_design_id,
+    mutation_id =
+      heatmap_mutation_order
+  ) %>%
+
+  dplyr::left_join(
+    heatmap_metadata %>%
+      dplyr::select(
+        original_design_id,
+        isolate,
+        heatmap_label,
+        heatmap_group,
+        rebooting_viable,
+        lytic_rank_Evo,
+        nearest_natural_sequence_similarity
+      ),
+    by = "original_design_id",
+    relationship = "many-to-one"
+  ) %>%
+
+  dplyr::left_join(
+    heatmap_designed_display %>%
+      dplyr::select(
+        original_design_id,
+        mutation_id,
+        designed_DMS_fitness
+      ),
+    by = c(
+      "original_design_id",
+      "mutation_id"
+    ),
+    relationship = "many-to-one"
+  ) %>%
+
+  dplyr::mutate(
+    mutation_id =
+      factor(
+        mutation_id,
+        levels = heatmap_mutation_order
+      ),
+
+    heatmap_label =
+      factor(
+        heatmap_label,
+        levels = rev(
+          heatmap_row_order
+        )
+      )
+  )
+
+# 2) Final heatmap with raw replication scores
+# Shared replication-score palette
+replication_colors <- c(
+  "darkred",
+  "red",
+  "gray88",
+  "blue"
+)
+
+replication_breaks <- c(
+  -1,
+  0,
+  1,
+  1.5
+)
+
+
+# ----------------------------------------------------------
+# Add explicit symbol labels
+# ----------------------------------------------------------
+
+heatmap_new_mutations <-
+  heatmap_new_mutations %>%
+  dplyr::mutate(
+    rebooting_symbol =
+      "New mutation"
+  )
+
+heatmap_reversions <-
+  heatmap_reversions %>%
+  dplyr::mutate(
+    rebooting_symbol =
+      "Reversion to WT"
+  )
+
+
+# ----------------------------------------------------------
+# Plot
+# ----------------------------------------------------------
+
+p_combined_heatmap_fitness <-
+  ggplot2::ggplot(
+    combined_heatmap_data,
+    ggplot2::aes(
+      x = mutation_id,
+      y = heatmap_label
+    )
+  ) +
+
+  # ========================================================
+  # Base cells:
+  # no displayed designed mutation
+  # ========================================================
+
+  ggplot2::geom_tile(
+    fill = "#F5F5F5",
+    color = "white",
+    linewidth = 0.12
+  ) +
+
+  # ========================================================
+  # Designed mutation replication score
+  # ========================================================
+
+  ggplot2::geom_tile(
+    data =
+      combined_heatmap_data %>%
+      dplyr::filter(
+        !is.na(
+          designed_DMS_fitness
+        )
+      ),
+
+    ggplot2::aes(
+      fill =
+        designed_DMS_fitness
+    ),
+
+    color = "white",
+    linewidth = 0.12
+  ) +
+
+  ggplot2::scale_fill_gradientn(
+    colors =
+      replication_colors,
+
+    values =
+      scales::rescale(
+        replication_breaks
+      ),
+
+    limits =
+      c(
+        -1,
+        1.5
+      ),
+
+    oob =
+      scales::squish,
+
+    name =
+      "Replication score",
+
+    guide =
+      ggplot2::guide_colorbar(
+        barwidth = 10,
+        barheight = 1,
+        direction = "horizontal",
+        ticks.colour = "black",
+        title.position = "top",
+        title.hjust = 0.5
+      )
+  ) +
+
+  # ========================================================
+  # New / replacement mutations
+  # Solid circles, colored by recovered mutation score
+  # ========================================================
+
+  ggplot2::geom_point(
+    data =
+      heatmap_new_mutations %>%
+      dplyr::filter(
+        !is.na(
+          recovered_DMS_fitness
+        )
+      ),
+
+    ggplot2::aes(
+      x =
+        plot_mutation_id,
+
+      y =
+        heatmap_label,
+
+      color =
+        recovered_DMS_fitness,
+
+      shape =
+        rebooting_symbol
+    ),
+
+    inherit.aes = FALSE,
+
+    size = 2.5
+  ) +
+
+  # Use same score scale as tile fill,
+  # but suppress duplicate colorbar
+  ggplot2::scale_color_gradientn(
+    colors =
+      replication_colors,
+
+    values =
+      scales::rescale(
+        replication_breaks
+      ),
+
+    limits =
+      c(
+        -1,
+        1.5
+      ),
+
+    oob =
+      scales::squish,
+
+    guide =
+      "none"
+  ) +
+
+  # ========================================================
+  # Reversions to WT
+  # X plotted on top of original designed mutation cell
+  # ========================================================
+
+  ggplot2::geom_point(
+    data =
+      heatmap_reversions,
+
+    ggplot2::aes(
+      x =
+        plot_mutation_id,
+
+      y =
+        heatmap_label,
+
+      shape =
+        rebooting_symbol
+    ),
+
+    inherit.aes = FALSE,
+
+    #size = 2.8,
+    #stroke = 0.9,
+    
+    size = 0.8,
+    stroke = 0.4,
+    
+    color = "black"
+  ) +
+
+  # ========================================================
+  # Symbol legend
+  # ========================================================
+
+  ggplot2::scale_shape_manual(
+    values = c(
+      "New mutation" =
+        16,
+
+      "Reversion to WT" =
+        4
+    ),
+
+    name =
+      "Change during rebooting"
+  ) +
+
+  # ========================================================
+  # Viable / nonviable groups
+  # ========================================================
+
+  ggplot2::facet_grid(
+    heatmap_group ~ .,
+    scales = "free_y",
+    space = "free_y"
+  ) +
+
+  # Mutation labels on top
+  ggplot2::scale_x_discrete(
+    position = "top"
+  ) +
+
+  ggplot2::labs(
+    title =
+      "Replication effects of designed mutations and changes during phage rebooting",
+
+    x =
+      "Selected nucleotide substitutions",
+
+    y =
+      NULL
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+
+    # ------------------------------------------------------
+    # x axis
+    # ------------------------------------------------------
+
+    axis.text.x =
+      ggplot2::element_text(
+        angle = 90,
+        hjust = 0,
+        vjust = 0.5,
+        size = 5
+      ),
+
+    axis.title.x =
+      ggplot2::element_text(
+        size = 10
+      ),
+
+    # ------------------------------------------------------
+    # y axis
+    # ------------------------------------------------------
+
+    axis.text.y =
+      ggplot2::element_text(
+        size = 8
+      ),
+
+    axis.title.y =
+      ggplot2::element_blank(),
+
+    axis.ticks =
+      ggplot2::element_blank(),
+
+    # ------------------------------------------------------
+    # facet strips
+    # ------------------------------------------------------
+
+    strip.background =
+      ggplot2::element_rect(
+        fill = "gray90",
+        color = "black"
+      ),
+
+    strip.text.y =
+      ggplot2::element_text(
+        face = "bold",
+        size = 9
+      ),
+
+    panel.spacing.y =
+      grid::unit(
+        0.4,
+        "lines"
+      ),
+
+    # ------------------------------------------------------
+    # legends
+    # ------------------------------------------------------
+
+    legend.position =
+      "bottom",
+
+    legend.box =
+      "vertical",
+
+    legend.title =
+      ggplot2::element_text(
+        face = "bold",
+        size = 9
+      ),
+
+    legend.text =
+      ggplot2::element_text(
+        size = 8
+      )
+  ) +
+
+  # ========================================================
+  # Legend order
+  # ========================================================
+
+  ggplot2::guides(
+
+    fill =
+      ggplot2::guide_colorbar(
+        order = 1,
+        barwidth = 10,
+        barheight = 1,
+        direction = "horizontal",
+        ticks.colour = "black",
+        title.position = "top",
+        title.hjust = 0.5
+      ),
+
+    shape =
+      ggplot2::guide_legend(
+        order = 2,
+        title.position = "top",
+        title.hjust = 0.5,
+        nrow = 1
+      )
+  )
+
+p_combined_heatmap_fitness
+
+# Saving
+#ggsave(p_combined_heatmap_fitness, filename = "./plots/p_combined_heatmap_fitness.pdf", width = 10, height = 6)
+
+
+
+```
+
+
+
+
+
+## Save script checkpoint
+save a snapshot of all objects produced by the script
+
+```{r}
+# checkpoint - 07b. evo designed genome analysis - all 300 designed genomes, focus on those tested viability and lytic performance 
+# save.image(file = "data/checkpoints/07b_evo300_phage_genomes_analysis.RData")
+
+
+```
+
+
+save a working environment for running all analysis script
+```{r}
+# save the working environment image
+#save.image(file = "data/phix_WGM_analysis.RData")
+save.image(file = "./codes_Github_final/data/phix_WGM_analysis.RData")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

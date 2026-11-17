@@ -1,0 +1,6799 @@
+---
+title: "phix_interpreting_Evo_designed_phages"
+output: html_document
+date: "2026-11-12"
+editor_options: 
+  chunk_output_type: console
+---
+
+## Set working working directory
+```{r}
+here::here()
+
+citation("pwalign")
+# To cite package ‘pwalign’ in publications use:
+
+  #Aboyoun P, Gentleman R (2025). _pwalign: Perform pairwise sequence alignments_. doi:10.18129/B9.bioc.pwalign <https://doi.org/10.18129/B9.bioc.pwalign>, R package version 1.4.0,
+  #<https://bioconductor.org/packages/pwalign>.
+
+#A BibTeX entry for LaTeX users is
+
+  #@Manual{,
+    #title = {pwalign: Perform pairwise sequence alignments},
+    #author = {Patrick Aboyoun and Robert Gentleman},
+    #year = {2025},
+    #note = {R package version 1.4.0},
+    #url = {https://bioconductor.org/packages/pwalign},
+    #doi = {10.18129/B9.bioc.pwalign},
+  #}
+
+
+```
+
+
+
+
+
+## Load Functions
+### 1) Parse Genbank files
+```{r}
+# ============================================================
+# Helper: extract a top-level GenBank field
+# ============================================================
+
+extract_gb_field <- function(lines, field) {
+  
+  x <- lines[grepl(paste0("^", field), lines)]
+  
+  if (length(x) == 0) {
+    return(NA_character_)
+  }
+  
+  trimws(sub(paste0("^", field, "\\s*"), "", x[1]))
+}
+
+
+# ============================================================
+# Helper: extract full nucleotide sequence from ORIGIN
+# ============================================================
+
+extract_gb_sequence <- function(lines) {
+  
+  origin_start <- which(grepl("^ORIGIN", lines))
+  record_end   <- which(grepl("^//", lines))
+  
+  if (length(origin_start) == 0) {
+    return(NA_character_)
+  }
+  
+  end_pos <- record_end[record_end > origin_start[1]][1]
+  
+  seq_lines <- lines[
+    (origin_start[1] + 1):(end_pos - 1)
+  ]
+  
+  sequence <- paste0(seq_lines, collapse = "")
+  
+  # Remove position numbers, spaces, etc.
+  sequence <- gsub("[^A-Za-z]", "", sequence)
+  sequence <- toupper(sequence)
+  
+  sequence
+}
+
+
+# ============================================================
+# Parse qualifiers belonging to one GenBank feature
+# ============================================================
+
+parse_gb_qualifiers <- function(lines) {
+  
+  if (length(lines) == 0) {
+    return(list())
+  }
+  
+  x <- trimws(lines)
+  
+  result <- list()
+  current_key <- NULL
+  current_value <- NULL
+  
+  flush_value <- function(key, value, result) {
+    
+    if (is.null(key)) {
+      return(result)
+    }
+    
+    value <- paste(value, collapse = " ")
+    value <- trimws(value)
+    
+    # Remove surrounding quotation marks
+    value <- sub('^"', "", value)
+    value <- sub('"$', "", value)
+    
+    # Translation should not contain whitespace
+    if (key == "translation") {
+      value <- gsub("\\s+", "", value)
+    }
+    
+    # Handle repeated qualifiers
+    if (!is.null(result[[key]])) {
+      result[[key]] <- paste(result[[key]], value, sep = "; ")
+    } else {
+      result[[key]] <- value
+    }
+    
+    result
+  }
+  
+  
+  for (line in x) {
+    
+    if (grepl("^/", line)) {
+      
+      # Save previous qualifier
+      result <- flush_value(
+        current_key,
+        current_value,
+        result
+      )
+      
+      item <- substring(line, 2)
+      
+      if (grepl("=", item, fixed = TRUE)) {
+        
+        eq_pos <- regexpr("=", item, fixed = TRUE)[1]
+        
+        current_key <- substring(item, 1, eq_pos - 1)
+        current_value <- substring(item, eq_pos + 1)
+        
+      } else {
+        
+        current_key <- item
+        current_value <- "TRUE"
+      }
+      
+    } else if (!is.null(current_key)) {
+      
+      # Continuation of a multi-line qualifier
+      current_value <- c(current_value, line)
+    }
+  }
+  
+  # Save final qualifier
+  result <- flush_value(
+    current_key,
+    current_value,
+    result
+  )
+  
+  result
+}
+
+
+# ============================================================
+# Extract all GenBank features
+# ============================================================
+
+extract_gb_features <- function(lines) {
+  
+  features_start <- which(grepl("^FEATURES", lines))
+  origin_start   <- which(grepl("^ORIGIN", lines))
+  
+  if (length(features_start) == 0 ||
+      length(origin_start) == 0) {
+    return(tibble())
+  }
+  
+  feature_lines <- lines[
+    (features_start[1] + 1):(origin_start[1] - 1)
+  ]
+  
+  
+  # New features start with exactly five spaces followed
+  # by a non-space feature name
+  feature_starts <- which(
+    grepl("^     \\S", feature_lines)
+  )
+  
+  if (length(feature_starts) == 0) {
+    return(tibble())
+  }
+  
+  feature_ends <- c(
+    feature_starts[-1] - 1,
+    length(feature_lines)
+  )
+  
+  
+  feature_list <- map2(
+    feature_starts,
+    feature_ends,
+    function(start_i, end_i) {
+      
+      block <- feature_lines[start_i:end_i]
+      
+      header <- block[1]
+      
+      feature_type <- trimws(
+        substr(header, 6, 20)
+      )
+      
+      location <- trimws(
+        substr(header, 21, nchar(header))
+      )
+      
+      
+      # Find first qualifier
+      if (length(block) > 1) {
+        
+        rest <- block[-1]
+        
+        qualifier_start <- which(
+          grepl("^\\s+/", rest)
+        )
+        
+      } else {
+        
+        rest <- character(0)
+        qualifier_start <- integer(0)
+      }
+      
+      
+      # Some complex locations may continue over several lines
+      if (length(rest) > 0) {
+        
+        if (length(qualifier_start) > 0 &&
+            qualifier_start[1] > 1) {
+          
+          location_continuation <-
+            rest[1:(qualifier_start[1] - 1)]
+          
+          location <- paste0(
+            location,
+            paste0(trimws(location_continuation),
+                   collapse = "")
+          )
+          
+        } else if (length(qualifier_start) == 0) {
+          
+          location <- paste0(
+            location,
+            paste0(trimws(rest), collapse = "")
+          )
+        }
+      }
+      
+      
+      # Qualifiers
+      if (length(qualifier_start) > 0) {
+        
+        qualifier_lines <-
+          rest[qualifier_start[1]:length(rest)]
+        
+        qualifiers <- parse_gb_qualifiers(
+          qualifier_lines
+        )
+        
+      } else {
+        
+        qualifiers <- list()
+      }
+      
+      
+      tibble(
+        feature_type = feature_type,
+        location = location
+      ) %>%
+        bind_cols(
+          as_tibble(qualifiers)
+        )
+    }
+  )
+  
+  bind_rows(feature_list) %>%
+    mutate(
+      feature_index = row_number(),
+      .before = 1
+    )
+}
+
+
+# ============================================================
+# Parse one GenBank file
+# ============================================================
+
+read_evo_genbank <- function(file) {
+  
+  lines <- readLines(
+    file,
+    warn = FALSE
+  )
+  
+  
+  # ----------------------------
+  # Basic fields
+  # ----------------------------
+  
+  locus <- extract_gb_field(lines, "LOCUS")
+  definition <- extract_gb_field(lines, "DEFINITION")
+  accession <- extract_gb_field(lines, "ACCESSION")
+  version <- extract_gb_field(lines, "VERSION")
+  source <- extract_gb_field(lines, "SOURCE")
+  
+  
+  organism_line <- lines[
+    grepl("^  ORGANISM", lines)
+  ]
+  
+  organism <- if (length(organism_line) > 0) {
+    trimws(sub("^  ORGANISM\\s*", "", organism_line[1]))
+  } else {
+    NA_character_
+  }
+  
+  
+  # ----------------------------
+  # Sequence
+  # ----------------------------
+  
+  genome_sequence <- extract_gb_sequence(lines)
+  
+  genome_length <- nchar(genome_sequence)
+  
+  
+  # ----------------------------
+  # LOCUS properties
+  # ----------------------------
+  
+  topology <- case_when(
+    grepl("\\bcircular\\b", locus, ignore.case = TRUE) ~ "circular",
+    grepl("\\blinear\\b", locus, ignore.case = TRUE) ~ "linear",
+    TRUE ~ NA_character_
+  )
+  
+  
+  molecule_type <- case_when(
+    grepl("\\bDNA\\b", locus) ~ "DNA",
+    grepl("\\bRNA\\b", locus) ~ "RNA",
+    TRUE ~ NA_character_
+  )
+  
+  
+  # ----------------------------
+  # Features
+  # ----------------------------
+  
+  features <- extract_gb_features(lines)
+  
+  
+  # Get source feature qualifiers
+  source_feature <- features %>%
+    filter(feature_type == "source") %>%
+    dplyr::slice(1)
+  
+  
+  get_source_value <- function(column) {
+    
+    if (nrow(source_feature) == 0 ||
+        !column %in% names(source_feature)) {
+      
+      return(NA_character_)
+    }
+    
+    as.character(source_feature[[column]][1])
+  }
+  
+  
+  isolate <- get_source_value("isolate")
+  record_isolate <- get_source_value("isolate")
+  
+  host <- get_source_value("host")
+  country <- get_source_value("country")
+  collection_date <- get_source_value("collection_date")
+  mol_type <- get_source_value("mol_type")
+  
+  
+  # ----------------------------
+  # QC quantities
+  # ----------------------------
+  
+  n_CDS <- sum(
+    features$feature_type == "CDS",
+    na.rm = TRUE
+  )
+  
+  n_features <- nrow(features)
+  
+  
+  gc_content <- (
+    stringr::str_count(genome_sequence, "G") +
+    stringr::str_count(genome_sequence, "C")
+  ) / genome_length
+  
+  
+  # ----------------------------
+  # Metadata table
+  # ----------------------------
+  
+  metadata <- tibble(
+    
+    file_name = basename(file),
+    
+    locus = locus,
+    
+    accession = accession,
+    accession_version = version,
+    
+    definition = definition,
+    
+    source = source,
+    organism = organism,
+    isolate = record_isolate,
+    host = host,
+    country = country,
+    collection_date = collection_date,
+    
+    molecule_type = molecule_type,
+    mol_type_annotation = mol_type,
+    topology = topology,
+    
+    genome_length = genome_length,
+    GC_content = gc_content,
+    
+    n_features = n_features,
+    n_CDS = n_CDS,
+    
+    file_md5 = as.character(
+      tools::md5sum(file)
+    )
+  )
+  
+  
+  # Add accession to feature table
+  features <- features %>%
+    mutate(
+      accession = accession,
+      accession_version = version,
+      #isolate = isolate,
+      isolate_record = record_isolate,
+      .before = 1
+    )
+  
+  
+  genome <- tibble(
+    accession = accession,
+    accession_version = version,
+    isolate = isolate,
+    genome_length = genome_length,
+    genome_sequence = genome_sequence
+  )
+  
+  
+  list(
+    metadata = metadata,
+    features = features,
+    genome = genome
+  )
+}
+
+
+
+# Infer WT phix174 CDS from the WT protein sequences
+# ============================================================
+# Helper: clean sequence
+# ============================================================
+
+clean_sequence <- function(x) {
+  toupper(gsub("\\s+", "", x))
+}
+
+
+# ============================================================
+# Helper: extract nucleotide positions from circular genome
+# ============================================================
+
+extract_nt_positions <- function(genome, positions) {
+
+  genome <- clean_sequence(genome)
+
+  paste0(
+    substr(
+      rep(genome, length(positions)),
+      positions,
+      positions
+    ),
+    collapse = ""
+  )
+}
+
+# ============================================================
+# Infer one CDS from exact WT genome + WT protein sequence
+# ============================================================
+
+# Protein-sequence-guided reconstruction of known CDS coordinates on the circular reference genome.
+infer_reference_CDS_one <- function(
+    genome,
+    protein,
+    protein_sequence
+) {
+
+  genome <- clean_sequence(genome)
+  protein_sequence <- clean_sequence(protein_sequence)
+
+  genome_length <- nchar(genome)
+
+  # Double genome so genes crossing the circular origin
+  # can be found as one continuous sequence
+  genome_double <- paste0(
+    genome,
+    genome
+  )
+
+  candidate_list <- list()
+
+
+  for (frame in 0:2) {
+
+    available_length <-
+      nchar(genome_double) - frame
+
+    usable_length <-
+      available_length -
+      (available_length %% 3)
+
+    frame_nt <- substr(
+      genome_double,
+      frame + 1,
+      frame + usable_length
+    )
+
+    frame_aa <- as.character(
+      Biostrings::translate(
+        Biostrings::DNAString(frame_nt),
+        if.fuzzy.codon = "X"
+      )
+    )
+
+
+    hits <- gregexpr(
+      protein_sequence,
+      frame_aa,
+      fixed = TRUE
+    )[[1]]
+
+    hits <- hits[hits > 0]
+
+
+    if (length(hits) > 0) {
+
+      for (aa_start in hits) {
+
+        # CDSstart​=f+3(k−1)
+        nt_start_linear <-
+          frame + 1 +
+          (aa_start - 1) * 3 
+
+        # Ignore duplicate occurrence in second copy
+        if (nt_start_linear > genome_length) {
+          next
+        }
+
+        protein_length <-
+          nchar(protein_sequence)
+
+        coding_length <-
+          protein_length * 3
+
+        coding_end_linear <-
+          nt_start_linear +
+          coding_length - 1
+
+        stop_start_linear <-
+          coding_end_linear + 1
+
+        stop_end_linear <-
+          stop_start_linear + 2
+
+
+        stop_codon <- substr(
+          genome_double,
+          stop_start_linear,
+          stop_end_linear
+        )
+
+        stop_translation <- as.character(
+          Biostrings::translate(
+            Biostrings::DNAString(stop_codon)
+          )
+        )
+
+        has_stop <-
+          stop_translation == "*"
+
+
+        # Coordinates of amino-acid coding region
+        coding_positions <-
+          ((seq(
+            nt_start_linear,
+            coding_end_linear
+          ) - 1) %% genome_length) + 1
+
+
+        # Stop codon positions
+        if (has_stop) {
+
+          stop_positions <-
+            ((seq(
+              stop_start_linear,
+              stop_end_linear
+            ) - 1) %% genome_length) + 1
+
+        } else {
+
+          stop_positions <- integer(0)
+        }
+
+
+        coding_sequence <-
+          extract_nt_positions(
+            genome,
+            coding_positions
+          )
+
+
+        reconstructed_protein <-
+          as.character(
+            Biostrings::translate(
+              Biostrings::DNAString(
+                coding_sequence
+              )
+            )
+          )
+
+
+        translation_match <-
+          identical(
+            reconstructed_protein,
+            protein_sequence
+          )
+
+
+        # GenBank-like location text
+        cds_end_linear <-
+          if (has_stop) {
+            stop_end_linear
+          } else {
+            coding_end_linear
+          }
+
+        cds_end_ref <-
+          ((cds_end_linear - 1) %%
+             genome_length) + 1
+
+
+        if (cds_end_linear <= genome_length) {
+
+          location <- paste0(
+            nt_start_linear,
+            "..",
+            cds_end_ref
+          )
+
+          crosses_origin <- FALSE
+
+        } else {
+
+          location <- paste0(
+            "join(",
+            nt_start_linear,
+            "..",
+            genome_length,
+            ",1..",
+            cds_end_ref,
+            ")"
+          )
+
+          crosses_origin <- TRUE
+        }
+
+
+        candidate_list[[length(candidate_list) + 1]] <-
+          tibble::tibble(
+
+            protein = protein,
+
+            start = nt_start_linear,
+
+            coding_end =
+              ((coding_end_linear - 1) %%
+                 genome_length) + 1,
+
+            CDS_end = cds_end_ref,
+
+            location = location,
+
+            strand = "+",
+
+            crosses_origin =
+              crosses_origin,
+
+            protein_length =
+              protein_length,
+
+            coding_nt_length =
+              coding_length,
+
+            stop_codon =
+              ifelse(
+                has_stop,
+                stop_codon,
+                NA_character_
+              ),
+
+            has_terminal_stop =
+              has_stop,
+
+            translation_matches_reference =
+              translation_match,
+
+            coding_positions =
+              list(coding_positions),
+
+            stop_positions =
+              list(stop_positions)
+          )
+      }
+    }
+  }
+
+
+  candidates <- dplyr::bind_rows(
+    candidate_list
+  )
+
+
+  if (nrow(candidates) == 0) {
+
+    stop(
+      paste0(
+        "Could not locate protein ",
+        protein,
+        " in WT genome."
+      )
+    )
+  }
+
+
+  # Exact protein should normally give one candidate
+  candidates %>%
+    dplyr::filter(
+      translation_matches_reference
+    ) %>%
+    dplyr::slice(1)
+}
+
+
+# ============================================================
+# Extract sequence from GenBank location
+#
+# Supports:
+#   100..300
+#   join(5000..5386,1..100)
+#   complement(...)
+# ============================================================
+
+extract_from_genbank_location <- function(
+    genome,
+    location
+) {
+
+  genome <- clean_sequence(genome)
+
+  location <- gsub(
+    "\\s+",
+    "",
+    location
+  )
+
+  # Remove uncertainty symbols
+  location <- gsub(
+    "[<>]",
+    "",
+    location
+  )
+
+
+  is_complement <-
+    grepl(
+      "^complement\\(",
+      location
+    )
+
+
+  if (is_complement) {
+
+    location <- sub(
+      "^complement\\(",
+      "",
+      location
+    )
+
+    location <- sub(
+      "\\)$",
+      "",
+      location
+    )
+  }
+
+
+  location <- sub(
+    "^join\\(",
+    "",
+    location
+  )
+
+  location <- sub(
+    "^order\\(",
+    "",
+    location
+  )
+
+  location <- sub(
+    "\\)$",
+    "",
+    location
+  )
+
+
+  segments <- strsplit(
+    location,
+    ","
+  )[[1]]
+
+
+  segment_sequences <- purrr::map_chr(
+    segments,
+    function(segment) {
+
+      if (grepl("\\.\\.", segment)) {
+
+        coords <- strsplit(
+          segment,
+          "\\.\\."
+        )[[1]]
+
+        start <- as.integer(
+          coords[1]
+        )
+
+        end <- as.integer(
+          coords[2]
+        )
+
+        substr(
+          genome,
+          start,
+          end
+        )
+
+      } else {
+
+        pos <- as.integer(
+          segment
+        )
+
+        substr(
+          genome,
+          pos,
+          pos
+        )
+      }
+    }
+  )
+
+
+  seq <- paste0(
+    segment_sequences,
+    collapse = ""
+  )
+
+
+  if (is_complement) {
+
+    seq <- as.character(
+      Biostrings::reverseComplement(
+        Biostrings::DNAString(seq)
+      )
+    )
+  }
+
+
+  seq
+}
+
+
+# ============================================================
+# Translation helper
+# ============================================================
+
+translate_CDS_for_QC <- function(
+    cds_sequence,
+    codon_start = 1
+) {
+
+  cds_sequence <-
+    clean_sequence(
+      cds_sequence
+    )
+
+  codon_start <-
+    suppressWarnings(
+      as.integer(codon_start)
+    )
+
+  if (
+    is.na(codon_start) ||
+    codon_start < 1
+  ) {
+    codon_start <- 1L
+  }
+
+
+  cds_sequence <- substr(
+    cds_sequence,
+    codon_start,
+    nchar(cds_sequence)
+  )
+
+
+  # Keep complete codons only
+  usable_length <-
+    nchar(cds_sequence) -
+    (nchar(cds_sequence) %% 3)
+
+
+  if (usable_length == 0) {
+    return(NA_character_)
+  }
+
+
+  cds_sequence <- substr(
+    cds_sequence,
+    1,
+    usable_length
+  )
+
+
+  protein <- as.character(
+    Biostrings::translate(
+      Biostrings::DNAString(
+        cds_sequence
+      ),
+      if.fuzzy.codon = "X"
+    )
+  )
+
+
+  # GenBank /translation does not include terminal *
+  protein <- sub(
+    "\\*$",
+    "",
+    protein
+  )
+
+
+  protein
+}
+
+
+
+
+
+
+```
+
+
+### 2) Plotting
+```{r}
+# Function to make heatmaps 
+build_mutation_heatmap_data <- function(
+    genome_metadata,
+    mutation_data,
+    rescue_changes = NULL,
+    rescue_annotation = NULL
+) {
+
+  # --------------------------------------------------------
+  # Genome metadata
+  # --------------------------------------------------------
+
+  genomes <- genome_metadata %>%
+    dplyr::mutate(
+
+      viability_state =
+        dplyr::case_when(
+
+          viability_group == "Nonviable" ~
+            "Nonviable",
+
+          acquired_mutations_during_rebooting ~
+            "Viable after rescue",
+
+          rebooting_viable ~
+            "Viable",
+
+          TRUE ~
+            "Other"
+        )
+    )
+
+
+  # --------------------------------------------------------
+  # Add rescue annotations when available
+  # --------------------------------------------------------
+
+  if (!is.null(rescue_annotation)) {
+
+    genomes <- genomes %>%
+      dplyr::left_join(
+        rescue_annotation %>%
+          dplyr::select(
+            original_design_id,
+            pure_SNV_rescue,
+            single_SNV_rescue,
+            n_rebooting_SNV_changes,
+            n_rebooting_indel_changes
+          ),
+        by = "original_design_id",
+        relationship = "one-to-one"
+      )
+
+  } else {
+
+    genomes <- genomes %>%
+      dplyr::mutate(
+        pure_SNV_rescue = FALSE,
+        single_SNV_rescue = FALSE,
+        n_rebooting_SNV_changes = 0L,
+        n_rebooting_indel_changes = 0L
+      )
+  }
+
+
+  genomes <- genomes %>%
+    dplyr::mutate(
+
+      pure_SNV_rescue =
+        tidyr::replace_na(
+          pure_SNV_rescue,
+          FALSE
+        ),
+
+      single_SNV_rescue =
+        tidyr::replace_na(
+          single_SNV_rescue,
+          FALSE
+        ),
+
+      # concise row labels
+      heatmap_label =
+        dplyr::case_when(
+
+          single_SNV_rescue ~
+            paste0(
+              isolate,
+              " | Viable after rescue | 1 SNV"
+            ),
+
+          viability_state ==
+            "Viable after rescue" ~
+            paste0(
+              isolate,
+              " | Viable after rescue"
+            ),
+
+          viability_state ==
+            "Viable" ~
+            paste0(
+              isolate,
+              " | Viable"
+            ),
+
+          TRUE ~
+            paste0(
+              isolate,
+              " | Nonviable"
+            )
+        ),
+
+      viability_state =
+        factor(
+          viability_state,
+          levels = c(
+            "Nonviable",
+            "Viable after rescue",
+            "Viable"
+          )
+        )
+    ) %>%
+    dplyr::arrange(
+      viability_state,
+      isolate
+    )
+
+
+  # --------------------------------------------------------
+  # Designed detrimental/lethal substitutions
+  # --------------------------------------------------------
+
+  designed_focus <- mutation_data %>%
+    dplyr::filter(
+      mutation_type == "substitution",
+      DMS_effect_category %in%
+        c(
+          "Detrimental",
+          "Lethal"
+        )
+    ) %>%
+    dplyr::mutate(
+      genome_position_numeric =
+        as.integer(genome_position)
+    ) %>%
+    dplyr::distinct(
+      original_design_id,
+      mutation_id,
+      .keep_all = TRUE
+    )
+
+
+  # --------------------------------------------------------
+  # Rescue events belonging to genomes in this subset
+  # --------------------------------------------------------
+
+  if (!is.null(rescue_changes)) {
+
+    rescue_subset <- rescue_changes %>%
+      dplyr::semi_join(
+        genomes %>%
+          dplyr::select(
+            original_design_id
+          ),
+        by = "original_design_id"
+      ) %>%
+      dplyr::mutate(
+
+        plot_mutation_id =
+          dplyr::case_when(
+
+            rebooting_change ==
+              "Reversion to WT" ~
+              designed_mutation_id,
+
+            rebooting_change %in%
+              c(
+                "New mutation",
+                "Changed allele"
+              ) ~
+              recovered_mutation_id,
+
+            TRUE ~
+              NA_character_
+          )
+      ) %>%
+      dplyr::filter(
+        !is.na(plot_mutation_id)
+      )
+
+  } else {
+
+    rescue_subset <- tibble::tibble(
+      original_design_id = character(),
+      isolate = character(),
+      genome_position = integer(),
+      rebooting_change = character(),
+      plot_mutation_id = character()
+    )
+  }
+
+
+  # --------------------------------------------------------
+  # Mutation universe:
+  # designed damaging mutations + rescue mutations
+  # --------------------------------------------------------
+
+  mutation_axis <- dplyr::bind_rows(
+
+    designed_focus %>%
+      dplyr::transmute(
+        mutation_id,
+        genome_position_numeric
+      ),
+
+    rescue_subset %>%
+      dplyr::transmute(
+        mutation_id =
+          plot_mutation_id,
+
+        genome_position_numeric =
+          as.integer(
+            genome_position
+          )
+      )
+  ) %>%
+
+    dplyr::filter(
+      !is.na(mutation_id),
+      !is.na(genome_position_numeric)
+    ) %>%
+
+    dplyr::distinct(
+      mutation_id,
+      .keep_all = TRUE
+    ) %>%
+
+    dplyr::arrange(
+      genome_position_numeric,
+      mutation_id
+    )
+
+
+  mutation_order <-
+    mutation_axis$mutation_id
+
+  genome_order <-
+    genomes$heatmap_label
+
+
+  # --------------------------------------------------------
+  # Build complete genome × mutation matrix
+  # --------------------------------------------------------
+
+  heatmap <- tidyr::crossing(
+
+    original_design_id =
+      genomes$original_design_id,
+
+    mutation_id =
+      mutation_order
+  ) %>%
+
+    dplyr::left_join(
+      genomes %>%
+        dplyr::select(
+          original_design_id,
+          isolate,
+          heatmap_label,
+          viability_state,
+          dplyr::any_of(
+            c(
+              "has_indel",
+              "n_indel_events",
+              "single_SNV_rescue"
+            )
+          )
+        ),
+      by = "original_design_id",
+      relationship = "many-to-one"
+    ) %>%
+
+    dplyr::left_join(
+      designed_focus %>%
+        dplyr::select(
+          original_design_id,
+          mutation_id,
+          DMS_effect_category
+        ) %>%
+        dplyr::distinct(),
+      by = c(
+        "original_design_id",
+        "mutation_id"
+      ),
+      relationship = "many-to-one"
+    ) %>%
+
+    dplyr::mutate(
+
+      heatmap_category =
+        dplyr::case_when(
+
+          DMS_effect_category ==
+            "Lethal" ~
+            "Lethal",
+
+          DMS_effect_category ==
+            "Detrimental" ~
+            "Detrimental",
+
+          TRUE ~
+            "Absent"
+        ),
+
+      mutation_id =
+        factor(
+          mutation_id,
+          levels =
+            mutation_order
+        ),
+
+      heatmap_label =
+        factor(
+          heatmap_label,
+          levels =
+            genome_order
+        )
+    )
+
+
+  # --------------------------------------------------------
+  # Prepare rescue overlay
+  # --------------------------------------------------------
+
+  rescue_overlay <- rescue_subset %>%
+    dplyr::left_join(
+      genomes %>%
+        dplyr::select(
+          original_design_id,
+          heatmap_label,
+          single_SNV_rescue
+        ),
+      by = "original_design_id",
+      relationship = "many-to-one"
+    ) %>%
+
+    dplyr::mutate(
+
+      plot_mutation_id =
+        factor(
+          plot_mutation_id,
+          levels =
+            mutation_order
+        ),
+
+      heatmap_label =
+        factor(
+          heatmap_label,
+          levels =
+            genome_order
+        )
+    )
+
+
+  list(
+    genomes = genomes,
+    mutation_axis = mutation_axis,
+    heatmap = heatmap,
+    rescue_overlay = rescue_overlay
+  )
+}
+
+
+
+
+
+
+
+```
+
+
+
+
+
+## Viable Evo-designed Phages
+GenBank information for 18 Evo designed viable phages. 
+
+### 1) Metadata and files QC
+Load the Evo designed viable phage genomes and proteins.
+```{r}
+# Load .gb files to R
+#library(tidyverse)
+
+gb_dir <- "./codes_Github_final/data/Generative design of bacteriophages with genome language models/evo_design_NCBI/"
+
+gb_files <- list.files(
+  gb_dir,
+  pattern = "\\.(gb|gbk|genbank)$",
+  full.names = TRUE
+)
+
+length(gb_files)
+# [1] 18
+basename(gb_files)
+
+
+# Parse complete GenBank records
+evo_gb <- map(
+  gb_files,
+  read_evo_genbank
+)
+
+evo_metadata <- map_dfr(
+  evo_gb,
+  "metadata"
+)
+
+evo_features <- map_dfr(
+  evo_gb,
+  "features"
+)
+
+evo_genomes <- map_dfr(
+  evo_gb,
+  "genome"
+)
+
+
+# Extract CDS
+evo_CDS <- evo_features %>%
+  filter(feature_type == "CDS")
+
+evo_CDS %>%
+  select(
+    accession_version,
+    isolate_record,
+    location,
+    any_of(c(
+      "gene",
+      "product",
+      "protein_id"
+    ))
+  )
+
+
+# QC checks before continuing
+# Number of genomes
+nrow(evo_metadata)
+
+# Unique accessions
+n_distinct(evo_metadata$accession_version)
+
+# Genome lengths
+evo_metadata %>%
+  dplyr::count(genome_length)
+
+# # A tibble: 7 × 2
+#   genome_length     n
+#           <int> <int>
+# 1          5349     1
+# 2          5386    12
+# 3          5387     1
+# 4          5575     1
+# 5          5609     1
+# 6          5632     1
+# 7          5654     1
+
+# Number of CDSs
+evo_metadata %>%
+  dplyr::count(n_CDS)
+
+# Evo-Phi63   → 11 CDS
+# Evo-Phi114  → 9 CDS
+# Evo-PhiR1   → 9 CDS
+# Evo-PhiR2   → 9 CDS
+
+# Circularity
+evo_metadata %>%
+  dplyr::count(topology)
+# # A tibble: 1 × 2
+#   topology     n
+#   <chr>    <int>
+# 1 circular    18
+
+
+# Duplicate accessions?
+evo_metadata %>%
+  dplyr::count(accession_version) %>%
+  dplyr::filter(n > 1)
+# A tibble: 0 × 2
+# ℹ 2 variables: accession_version <chr>, n <int>
+
+
+# Overview all genomes
+evo_metadata %>%
+  select(
+    accession_version,
+    isolate,
+    genome_length,
+    topology,
+    n_CDS,
+    n_features,
+    GC_content
+  )
+
+# 1) Feature types
+evo_features %>%
+  dplyr::count(feature_type, sort = TRUE)
+
+# 2) CDS products in every genome
+head(as.data.frame(evo_CDS), 0)
+evo_CDS %>%
+  dplyr::select(
+    accession_version,
+    isolate_record,
+    location,
+    product,
+    protein_id
+  ) %>%
+  print(n = Inf)
+
+# 3) Number and identity of CDS products per genome
+evo_CDS %>%
+  dplyr::group_by(
+    accession_version,
+    isolate_record
+  ) %>%
+  dplyr::summarise(
+    n_CDS = dplyr::n(),
+    products = paste(product, collapse = " | "),
+    .groups = "drop"
+  )
+
+# 4) inspect the four unusual genomes
+evo_CDS %>%
+  dplyr::filter(
+    accession_version %in%
+      c(
+        "PZ509155.1",
+        "PZ509161.1",
+        "PZ509167.1",
+        "PZ509168.1"
+      )
+  ) %>%
+  dplyr::select(
+    accession_version,
+    isolate_record,
+    location,
+    product,
+    protein_id,
+    translation
+  ) %>%
+  dplyr::arrange(
+    accession_version,
+    location
+  ) %>%
+  print(n = Inf)
+
+
+
+# Proteins naming convention
+protein_name_map <- c(
+  
+  "replication initiation protein" =
+    "A",
+  
+  "internal scaffolding protein" =
+    "B",
+  
+  "DNA maturation protein" =
+    "C",
+  
+  "external scaffolding protein" =
+    "D",
+  
+  "lysis protein" =
+    "E",
+  
+  "major capsid protein" =
+    "F",
+  
+  "major spike protein" =
+    "G",
+  
+  "minor spike protein" =
+    "H",
+  
+  "DNA-binding protein" =
+    "J",
+  
+  "protein K" =
+    "K"
+)
+
+
+# Evo phage proteins
+evo_proteins <- evo_CDS %>%
+  
+  dplyr::mutate(
+    
+    protein = unname(
+      protein_name_map[product]
+    ),
+    
+    protein_sequence = translation,
+    
+    protein_length = nchar(
+      protein_sequence
+    )
+  ) %>%
+  
+  dplyr::select(
+    accession_version,
+    isolate_record,
+    protein,
+    product,
+    protein_id,
+    location,
+    protein_length,
+    protein_sequence
+  )
+
+# Additional proteins
+evo_proteins %>%
+  dplyr::filter(
+    is.na(protein)
+  ) %>%
+  dplyr::select(
+    accession_version,
+    isolate_record,
+    product,
+    location,
+    protein_length
+  )
+
+# # A tibble: 1 × 5
+#   accession_version isolate_record product                      location protein_length
+#   <chr>             <chr>          <chr>                        <chr>             <int>
+# 1 PZ509155.1        Evo-Phi63      putative DNA-binding protein 848..970             40
+
+
+
+```
+
+
+### 2) Mutation calling test
+Genome and protein sequences alignment to annotate mutations ref to our WT phix.
+- Indel-aware global alignment is required, so we call substitutions/insertions/deleteions first, then validate the alignment using CDS translation;
+
+Wild-Type PhiX174 Reference
+```{r}
+# Load WT genome sequences
+wt_phix174_sequence <- read.table(
+  "./codes_Github_final/data/phix_wt_genome_seq_promega.txt",
+  stringsAsFactors = FALSE
+)
+
+wt_phix174_sequence <- paste0(
+  unlist(wt_phix174_sequence),
+  collapse = ""
+)
+
+wt_phix174_sequence <- toupper(
+  gsub("\\s+", "", wt_phix174_sequence)
+)
+
+class(wt_phix174_sequence)
+# [1] "character"
+
+nchar(wt_phix174_sequence)
+# [1] 5386
+
+
+
+# Load WT proteins sequences
+phix174_reference_proteins <- tibble(
+  protein = c(
+    "A", "B", "C", "D", "E", "F", "G", "H", "J", "K"
+  ),
+  sequence = c(
+    "MVRSYYPSECHADYFDFERIEALKPAIEACGISTLSQSPMLGFHKQMDNRIKLLEEILSFRMQGVEFDNGDMYVDGHKAASDVRDEFVSVTEKLMDELAQCYNVLPQLDINNTIDHRPEGDEKWFLENEKTVTQFCRKLAAERPLKDIRDEYNYPKKKGIKDECSRLLEASTMKSRRGFAIQRLMNAMRQAHADGWFIVFDTLTLADDRLEAFYDNPNALRDYFRDIGRMVLAAEGRKANDSHADCYQYFCVPEYGTANGRLHFHAVHFMRTLPTGSVDPNFGRRVRNRRQLNSLQNTWPYGYSMPIAVRYTQDAFSRSGWLWPVDAKGEPLKATSYMAVGFYVAKYVNKKSDMDLAAKGLGAKEWNNSLKTKLSLLPKKLFRIRMSRNFGMKMLTMTNLSTECLIQLTKLGYDATPFNQILKQNAKREMRLRLGKVTVADVLAAQPVTTNLLKFMRASIKMIGVSNLQSFIASMTQKLTLSDISDESKNYLDKAGITTACLRIKSKWTAGGK", # A
+    "MEQLTKNQAVATSQEAVQNQNEPQLRDENAHNDKSVHGVLNPTYQAGLRRDAVQPDIEAERKKRDEIEAGKSYCSRRFGGATCDDKSAQIYARFDKNDWRIQPAEFYRFHDAEVNTFGYF", # B
+    "MRKFDLSLRSSRSSYFATFRHQLTILSKTDALDEEKWLNMLGTFVKDWFRYESHFVHGRDSLVDILKERGLLSESDAVQPLIGKKS", # C
+    "MSQVTEQSVRFQTALASIKLIQASAVLDLTEDDFDFLTSNKVWIATDRSRARRCVEACVYGTLDFVGYPRFPAPVEFIAAVIAYYVHPVNIQTACLIMEGAEFTENIINGVERPVKAAELFAFTLRVRAGNTDVLTDAEENVRQKLRAEGVM", # D
+    "MVRWTLWDTLAFLLLLSLLLPSLLIMFIPSTFKRPVSSWKALNLRKTLLMASSVRLKPLNCSRLPCVYAQETLTFLLTQKKTCVKNYVQKE", # E
+    "MSNIQTGAERMPHDLSHLGFLAGQIGRLITISTTPVIAGDSFEMDAVGALRLSPLRRGLAIDSTVDIFTFYVPHRHVYGEQWIKFMKDGVNATPLPTVNTTGYIDHAAFLGTINPDTNKIPKHLFQGYLNIYNNYFKAPWMPDRTEANPNELNQDDARYGFRCCHLKNIWTAPLPPETELSRQMTTSTTSIDIMGLQAAYANLHTDQERDYFMQRYHDVISSFGGKTSYDADNRPLLVMRSNLWASGYDVDGTDQTSLGQFSGRVQQTYKHSVPRFFVPEHGTMFTLALVRFPPTATKEIQYLNAKGALTYTDIAGDPVLYGNLPPREISMKDVFRSGDSSKKFKIAEGQWYRYAPSYVSPAYHLLEGFPFIQEPPSGDLQERVLIRHHDYDQCFQSVQLLQWNSQVKFNVTVYRNLPTTRDSIMTS", # F
+    "MFQTFISRHNSNFFSDKLVLTSVTPASSAPVLQTPKATSSTLYFDSLTVNAGNGGFLHCIQMDTSVNAANQVVSVGADIAFDADPKFFACLVRFESSSVPTTLPTAYDVYPLDGRHDGGYYTVKDCVTIDVLPRTPGNNVYVGFMVWSNFTATKCRGLVSLNQVIKEIICLQPLK", # G
+    "MFGAIAGGIASALAGGAMSKLFGGGQKAASGGIQGDVLATDNNTVGMGDAGIKSAIQGSNIPNPDEAAPSFVSGAMAKAGKGLLEGTLQAGTSAVSDKLLDLVGLGGKSAADKGKDTRDYLAAAFPELNAWERAGADASSAGMVDAGFENQKELTKMQLDNQKEIAEMQNETQKEIAGIQSATSRQNTKDQVYAQNEMLAYQQKESTARVASIMENTNLSKQQQVSEIMRQMLTQAQTAGQYFTNDQIKEMTRKVSAEVDLVHQQTQNQRYGSSHIGATAKDISNVVTDAASGVVDIFHGIDKAVADTWNNFWKDGKADGIGSNLSRK", # H
+    "MSKGKKRSGARPGRPQPLRGTKGKRKGARLWYVGGQQF", # J
+    "MSRKIILIKQELLLLVYELNRSGLLAENEKIRPILAQLEKLLLCDLSPSTNDSVKN" # K
+  )
+)
+
+phix174_reference_proteins <- phix174_reference_proteins %>%
+  dplyr::mutate(
+    protein_length = nchar(sequence)
+  )
+
+phix174_reference_proteins %>%
+  dplyr::select(
+    protein,
+    protein_length
+  )
+
+# # A tibble: 10 × 2
+#    protein protein_length
+#    <chr>            <int>
+#  1 A                  513
+#  2 B                  120
+#  3 C                   86
+#  4 D                  152
+#  5 E                   91
+#  6 F                  427
+#  7 G                  175
+#  8 H                  328
+#  9 J                   38
+# 10 K                   56
+
+
+# List reference data
+phix174_reference <- list(
+
+  metadata = list(
+    strain = "WT_phiX174",
+    genome_length = 5386,
+    reference_for_DMS = TRUE
+  ),
+
+  genome = wt_phix174_sequence,
+
+  proteins = phix174_reference_proteins
+)
+
+
+# References QC
+# WT genome
+nchar(phix174_reference$genome)
+
+# WT proteins
+phix174_reference$proteins %>%
+  dplyr::select(
+    protein,
+    protein_length
+  )
+
+
+# Infer all 10 CDS from the WT protein sequences and phix174 genome
+# FUNCTION - infer_reference_CDS_one 
+
+phix174_reference_CDS <-
+  purrr::map_dfr(
+    seq_len(
+      nrow(phix174_reference_proteins)
+    ),
+    function(i) {
+
+      infer_reference_CDS_one(
+
+        genome =
+          wt_phix174_sequence,
+
+        protein =
+          phix174_reference_proteins$protein[i],
+
+        protein_sequence =
+          phix174_reference_proteins$sequence[i]
+      )
+    }
+  )
+
+
+# Check the inferred CDS
+all(
+  phix174_reference_CDS$
+    translation_matches_reference
+)
+# [1] TRUE
+
+
+# Supplement it to the existing reference list
+phix174_reference$CDS <-
+  phix174_reference_CDS
+
+names(phix174_reference)
+# [1] "metadata" "genome"   "proteins" "CDS"     
+
+
+
+```
+
+
+Tests our extracted genomes and GenBank annotations independently
+- Retranslate every Evo GenBank CDS. (Confirmed, all correct)
+```{r}
+# Evo translation QC table
+evo_translation_QC <-
+  evo_CDS %>%
+
+  dplyr::left_join(
+    evo_genomes %>%
+      dplyr::select(
+        accession_version,
+        genome_sequence
+      ),
+    by = "accession_version"
+  ) %>%
+
+  dplyr::mutate(
+
+    CDS_nt_sequence =
+      purrr::map2_chr(
+        genome_sequence,
+        location,
+        extract_from_genbank_location
+      ),
+
+    reconstructed_translation =
+      purrr::map2_chr(
+        CDS_nt_sequence,
+        codon_start,
+        translate_CDS_for_QC
+      ),
+
+    GenBank_translation =
+      gsub(
+        "\\s+",
+        "",
+        translation
+      ),
+
+    translation_match =
+      reconstructed_translation ==
+      GenBank_translation,
+
+    CDS_nt_length =
+      nchar(CDS_nt_sequence),
+
+    reconstructed_AA_length =
+      nchar(
+        reconstructed_translation
+      ),
+
+    GenBank_AA_length =
+      nchar(
+        GenBank_translation
+      )
+  )
+
+
+# Check the Evo translation
+evo_translation_QC %>%
+  dplyr::select(
+    accession_version,
+    isolate_record,
+    product,
+    location,
+    CDS_nt_length,
+    reconstructed_AA_length,
+    GenBank_AA_length,
+    translation_match
+  ) %>%
+  print(n = Inf)
+
+evo_translation_QC %>%
+  dplyr::count(
+    translation_match
+  )
+
+# # A tibble: 1 × 2
+#   translation_match     n
+#   <lgl>             <int>
+# 1 TRUE                178
+
+
+
+
+
+```
+
+
+Aligning phage genomes 
+- Build functions and validata on single genomes. (Confirmed, working for genomic single-nucleotide variants calling)
+```{r}
+# load packages
+#library(tidyverse)
+#library(Biostrings)
+#library(pwalign)
+
+
+# ============================================================
+# Convert aligned reference/query strings into mutation blocks
+# ============================================================
+
+call_mutations_from_alignment <- function(
+    aligned_ref,
+    aligned_query,
+    level = c("nt", "aa"),
+    protein = NULL
+) {
+  
+  level <- match.arg(level)
+  
+  ref_chars <- strsplit(aligned_ref, "")[[1]]
+  query_chars <- strsplit(aligned_query, "")[[1]]
+  
+  if (length(ref_chars) != length(query_chars)) {
+    stop("Aligned reference and query must have the same length.")
+  }
+  
+  
+  # ----------------------------------------------------------
+  # Track reference and query coordinates across alignment
+  # ----------------------------------------------------------
+  
+  ref_pos <- integer(length(ref_chars))
+  query_pos <- integer(length(query_chars))
+  
+  r <- 0L
+  q <- 0L
+  
+  for (i in seq_along(ref_chars)) {
+    
+    if (ref_chars[i] != "-") {
+      r <- r + 1L
+      ref_pos[i] <- r
+    } else {
+      ref_pos[i] <- r
+    }
+    
+    if (query_chars[i] != "-") {
+      q <- q + 1L
+      query_pos[i] <- q
+    } else {
+      query_pos[i] <- q
+    }
+  }
+  
+  
+  alignment_tbl <- tibble(
+    alignment_position = seq_along(ref_chars),
+    ref_char = ref_chars,
+    query_char = query_chars,
+    ref_position = ref_pos,
+    query_position = query_pos
+  ) %>%
+    dplyr::mutate(
+      event = dplyr::case_when(
+        
+        ref_char == query_char ~ "match",
+        
+        ref_char != "-" &
+          query_char != "-" ~ "substitution",
+        
+        ref_char != "-" &
+          query_char == "-" ~ "deletion",
+        
+        ref_char == "-" &
+          query_char != "-" ~ "insertion",
+        
+        TRUE ~ "unknown"
+      )
+    )
+  
+  
+  # ----------------------------------------------------------
+  # Substitutions
+  # ----------------------------------------------------------
+  
+  substitutions <- alignment_tbl %>%
+    dplyr::filter(event == "substitution") %>%
+    dplyr::transmute(
+      mutation_type = "substitution",
+      
+      ref_start = ref_position,
+      ref_end = ref_position,
+      
+      query_start = query_position,
+      query_end = query_position,
+      
+      ref_allele = ref_char,
+      alt_allele = query_char
+    )
+  
+  
+  # ----------------------------------------------------------
+  # Group contiguous indels
+  # ----------------------------------------------------------
+  
+  indel_tbl <- alignment_tbl %>%
+    dplyr::filter(event %in% c("insertion", "deletion"))
+  
+  if (nrow(indel_tbl) > 0) {
+    
+    #indel_tbl <- indel_tbl %>%
+      #dplyr::mutate(
+        #new_block =
+          #event != dplyr::lag(event, default = first(event)) |
+          #alignment_position !=
+            #dplyr::lag(
+              #alignment_position,
+              #default = first(alignment_position)
+            #) + 1,
+        
+        #block_id = cumsum(new_block)
+      #)
+    
+    indel_tbl <- indel_tbl %>%
+        dplyr::mutate(
+          
+          new_block =
+            dplyr::row_number() == 1L |
+            event != dplyr::lag(event) |
+            alignment_position !=
+              dplyr::lag(alignment_position) + 1L,
+          
+          block_id = cumsum(new_block)
+        )
+    
+    indels <- indel_tbl %>%
+      dplyr::group_by(event, block_id) %>%
+      dplyr::summarise(
+        
+        ref_start = min(ref_position),
+        ref_end = max(ref_position),
+        
+        query_start = min(query_position),
+        query_end = max(query_position),
+        
+        ref_allele = paste0(
+          ref_char[ref_char != "-"],
+          collapse = ""
+        ),
+        
+        alt_allele = paste0(
+          query_char[query_char != "-"],
+          collapse = ""
+        ),
+        
+        .groups = "drop"
+      ) %>%
+      dplyr::rename(
+        mutation_type = event
+      ) %>%
+      dplyr::select(
+        mutation_type,
+        ref_start,
+        ref_end,
+        query_start,
+        query_end,
+        ref_allele,
+        alt_allele
+      )
+    
+  } else {
+    
+    indels <- tibble(
+      mutation_type = character(),
+      ref_start = integer(),
+      ref_end = integer(),
+      query_start = integer(),
+      query_end = integer(),
+      ref_allele = character(),
+      alt_allele = character()
+    )
+  }
+  
+  
+  mutations <- dplyr::bind_rows(
+    substitutions,
+    indels
+  ) %>%
+    dplyr::arrange(
+      ref_start,
+      query_start
+    )
+  
+  
+  # ----------------------------------------------------------
+  # Add mutation IDs
+  # ----------------------------------------------------------
+  
+  if (level == "nt") {
+    
+    mutations <- mutations %>%
+      dplyr::mutate(
+        
+        mutation_id = dplyr::case_when(
+          
+          mutation_type == "substitution" ~
+            paste0(
+              ref_allele,
+              ref_start,
+              alt_allele
+            ),
+          
+          mutation_type == "deletion" &
+            ref_start == ref_end ~
+            paste0(
+              ref_start,
+              "del",
+              ref_allele
+            ),
+          
+          mutation_type == "deletion" ~
+            paste0(
+              ref_start,
+              "_",
+              ref_end,
+              "del",
+              ref_allele
+            ),
+          
+          mutation_type == "insertion" ~
+            paste0(
+              ref_start,
+              "_",
+              ref_start + 1L,
+              "ins",
+              alt_allele
+            )
+        ),
+        
+        mutation_id_full = paste0(
+          "nt_",
+          mutation_id
+        )
+      )
+    
+  } else {
+    
+    if (is.null(protein)) {
+      stop("protein must be supplied for amino-acid mutations.")
+    }
+    
+    mutations <- mutations %>%
+      dplyr::mutate(
+        
+        mutation_id = dplyr::case_when(
+          
+          mutation_type == "substitution" ~
+            paste0(
+              "gp",
+              protein,
+              "_",
+              ref_allele,
+              ref_start,
+              alt_allele
+            ),
+          
+          mutation_type == "deletion" &
+            ref_start == ref_end ~
+            paste0(
+              "gp",
+              protein,
+              "_",
+              ref_start,
+              "del",
+              ref_allele
+            ),
+          
+          mutation_type == "deletion" ~
+            paste0(
+              "gp",
+              protein,
+              "_",
+              ref_start,
+              "_",
+              ref_end,
+              "del",
+              ref_allele
+            ),
+          
+          mutation_type == "insertion" ~
+            paste0(
+              "gp",
+              protein,
+              "_",
+              ref_start,
+              "_",
+              ref_start + 1L,
+              "ins",
+              alt_allele
+            )
+        )
+      )
+  }
+  
+  
+  list(
+    mutations = mutations,
+    coordinate_map = alignment_tbl
+  )
+}
+
+
+# ============================================================
+# Align one Evo genome against WT and call nucleotide mutations
+# ============================================================
+
+align_and_call_nt_mutations <- function(
+    reference_sequence,
+    query_sequence,
+    isolate,
+    accession_version = NA_character_
+) {
+  
+  reference_sequence <- toupper(
+    gsub("\\s+", "", reference_sequence)
+  )
+  
+  query_sequence <- toupper(
+    gsub("\\s+", "", query_sequence)
+  )
+  
+  
+  ref <- Biostrings::DNAString(reference_sequence)
+  query <- Biostrings::DNAString(query_sequence)
+  
+  
+  nt_matrix <- pwalign::nucleotideSubstitutionMatrix(
+    match = 2,
+    mismatch = -3,
+    baseOnly = TRUE
+  )
+  
+  
+  aln <- pwalign::pairwiseAlignment(
+    pattern = query,
+    subject = ref,
+    type = "global",
+    substitutionMatrix = nt_matrix,
+    gapOpening = 5,
+    gapExtension = 2
+  )
+  
+  
+  # subject = WT
+  # pattern = Evo
+  
+  aligned_ref <- as.character(
+    pwalign::alignedSubject(aln)
+  )
+  
+  aligned_query <- as.character(
+    pwalign::alignedPattern(aln)
+  )
+  
+  
+  calls <- call_mutations_from_alignment(
+    aligned_ref = aligned_ref,
+    aligned_query = aligned_query,
+    level = "nt"
+  )
+  
+  
+  mutations <- calls$mutations %>%
+    dplyr::mutate(
+      isolate = isolate,
+      accession_version = accession_version,
+      .before = 1
+    )
+  
+  
+  coordinate_map <- calls$coordinate_map %>%
+    dplyr::mutate(
+      isolate = isolate,
+      accession_version = accession_version,
+      .before = 1
+    )
+  
+  
+  qc <- tibble(
+    isolate = isolate,
+    accession_version = accession_version,
+    
+    reference_length = nchar(reference_sequence),
+    query_length = nchar(query_sequence),
+    aligned_length = nchar(aligned_ref),
+    
+    alignment_score = as.numeric(
+      BiocGenerics::score(aln)
+    ),
+    
+    n_substitutions = sum(
+      mutations$mutation_type == "substitution"
+    ),
+    
+    n_insertions = sum(
+      mutations$mutation_type == "insertion"
+    ),
+    
+    n_deletions = sum(
+      mutations$mutation_type == "deletion"
+    ),
+    
+    inserted_nt = sum(
+      nchar(
+        mutations$alt_allele[
+          mutations$mutation_type == "insertion"
+        ]
+      )
+    ),
+    
+    deleted_nt = sum(
+      nchar(
+        mutations$ref_allele[
+          mutations$mutation_type == "deletion"
+        ]
+      )
+    )
+  )
+  
+  
+  list(
+    alignment = aln,
+    aligned_reference = aligned_ref,
+    aligned_query = aligned_query,
+    coordinate_map = coordinate_map,
+    mutations = mutations,
+    QC = qc
+  )
+}
+
+
+# Test on one genome [Confirmed working]
+#evo_genomes %>%
+  #dplyr::select(
+    #isolate,
+    #accession_version,
+    #genome_length
+  #)
+
+#test_genome <- evo_genomes %>%
+  #dplyr::filter(
+    #isolate == "Evo-Phi4"
+  #) %>%
+  #dplyr::slice(1)
+
+#test_nt <- align_and_call_nt_mutations(
+  
+  #reference_sequence =
+    #phix174_reference$genome,
+  
+  #query_sequence =
+    #test_genome$genome_sequence,
+  
+  #isolate =
+    #test_genome$isolate,
+  
+  #accession_version =
+    #test_genome$accession_version
+#)
+
+#test_nt$QC
+
+# # A tibble: 1 × 11
+#   isolate  accession_version reference_length query_length aligned_length alignment_score n_substitutions n_insertions n_deletions inserted_nt deleted_nt
+#   <chr>    <chr>                        <int>        <int>          <int>           <dbl>           <int>        <int>       <int>       <int>      <int>
+# 1 Evo-Phi4 PZ509151.1                    5386         5386           5386            9872             180            0           0           0          0
+
+
+#test_nt$mutations %>%
+  #dplyr::count(mutation_type)
+
+# # A tibble: 1 × 2
+#   mutation_type     n
+#   <chr>         <int>
+# 1 substitution    180
+
+
+#test_nt$QC %>%
+  #dplyr::mutate(
+    
+    #expected_query_length =
+      #reference_length -
+      #deleted_nt +
+      #inserted_nt,
+    
+    #length_check =
+      #expected_query_length ==
+      #query_length
+  #)
+
+# # A tibble: 1 × 13
+#   isolate  accession_version reference_length query_length aligned_length alignment_score n_substitutions n_insertions n_deletions inserted_nt deleted_nt expected_query_length length_check
+#   <chr>    <chr>                        <int>        <int>          <int>           <dbl>           <int>        <int>       <int>       <int>      <int>                 <int> <lgl>       
+# 1 Evo-Phi4 PZ509151.1                    5386         5386           5386            9872             180            0           0           0          0                  5386 TRUE        
+
+
+
+# Test on an indel-heavy genome - Evo-Phi63
+# WT          5386 nt
+# Evo-Phi63   5654 nt
+# difference  +268 nt
+
+#test_genome_indel <- evo_genomes %>%
+  #dplyr::filter(
+    #isolate == "Evo-Phi63"
+  #) %>%
+  #dplyr::slice(1)
+
+#test_nt_indel <- align_and_call_nt_mutations(
+  
+  #reference_sequence =
+    #phix174_reference$genome,
+  
+  #query_sequence =
+    #test_genome_indel$genome_sequence,
+  
+  #isolate =
+    #test_genome_indel$isolate,
+  
+  #accession_version =
+    #test_genome_indel$accession_version
+#)
+
+#test_nt_indel$QC
+
+# # A tibble: 1 × 11
+#   isolate   accession_version reference_length query_length aligned_length alignment_score n_substitutions n_insertions n_deletions inserted_nt deleted_nt
+#   <chr>     <chr>                        <int>        <int>          <int>           <dbl>           <int>        <int>       <int>       <int>      <int>
+# 1 Evo-Phi63 PZ509155.1                    5386         5654           5654            9621             122            1           0         268          0
+
+#test_nt_indel$mutations %>%
+  #dplyr::filter(
+    #mutation_type != "substitution"
+  #) %>%
+  #print(n = Inf)
+
+# # A tibble: 1 × 11
+#   isolate   accession_version mutation_type ref_start ref_end query_start query_end ref_allele alt_allele                                                                                      mutation_id mutation_id_full
+#   <chr>     <chr>             <chr>             <int>   <int>       <int>     <int> <chr>      <chr>                                                                                           <chr>       <chr>           
+# 1 Evo-Phi63 PZ509155.1        insertion           873     873         874      1141 ""         TGCTCGCCCCGGTCGTCCGCAGCCGTTGCGAGGTACTAAAGGCAAGCGTAAAGGCGCTTGTGGTTCTTTGAGTCTGCGAGGTGGCATCCGTCTC… 873_874ins… nt_873_874insTG…
+
+
+
+```
+
+
+Aligning phage proteins
+```{r}
+# ============================================================
+# Align one Evo protein against WT and call AA mutations
+# ============================================================
+align_and_call_aa_mutations <- function(
+    reference_sequence,
+    query_sequence,
+    protein,
+    isolate,
+    accession_version = NA_character_
+) {
+  
+  reference_sequence <- toupper(
+    gsub("\\s+", "", reference_sequence)
+  )
+  
+  query_sequence <- toupper(
+    gsub("\\s+", "", query_sequence)
+  )
+  
+  
+  ref <- Biostrings::AAString(
+    reference_sequence
+  )
+  
+  query <- Biostrings::AAString(
+    query_sequence
+  )
+  
+  
+  aln <- pwalign::pairwiseAlignment(
+    pattern = query,
+    subject = ref,
+    type = "global",
+    substitutionMatrix = "BLOSUM62",
+    gapOpening = 10,
+    gapExtension = 1
+  )
+  
+  
+  aligned_ref <- as.character(
+    pwalign::alignedSubject(aln)
+  )
+  
+  aligned_query <- as.character(
+    pwalign::alignedPattern(aln)
+  )
+  
+  
+  calls <- call_mutations_from_alignment(
+    aligned_ref = aligned_ref,
+    aligned_query = aligned_query,
+    level = "aa",
+    protein = protein
+  )
+  
+  
+  mutations <- calls$mutations %>%
+    dplyr::mutate(
+      isolate = isolate,
+      accession_version = accession_version,
+      protein = protein,
+      .before = 1
+    )
+  
+  
+  coordinate_map <- calls$coordinate_map %>%
+    dplyr::mutate(
+      isolate = isolate,
+      accession_version = accession_version,
+      protein = protein,
+      .before = 1
+    )
+  
+  
+  qc <- tibble(
+    
+    isolate = isolate,
+    accession_version = accession_version,
+    protein = protein,
+    
+    reference_length =
+      nchar(reference_sequence),
+    
+    query_length =
+      nchar(query_sequence),
+    
+    aligned_length =
+      nchar(aligned_ref),
+    
+    alignment_score =
+      as.numeric(
+        BiocGenerics::score(aln)
+      ),
+    
+    n_substitutions =
+      sum(
+        mutations$mutation_type ==
+          "substitution"
+      ),
+    
+    n_insertions =
+      sum(
+        mutations$mutation_type ==
+          "insertion"
+      ),
+    
+    n_deletions =
+      sum(
+        mutations$mutation_type ==
+          "deletion"
+      )
+  )
+  
+  
+  list(
+    alignment = aln,
+    aligned_reference = aligned_ref,
+    aligned_query = aligned_query,
+    coordinate_map = coordinate_map,
+    mutations = mutations,
+    QC = qc
+  )
+}
+
+
+# Test one protein manually [Confirmed working]
+#test_evo_F <- evo_proteins %>%
+  #dplyr::filter(
+    #isolate_record == "Evo-Phi4",
+    #protein == "F"
+  #) %>%
+  #dplyr::slice(1)
+
+#test_wt_F <- phix174_reference$proteins %>%
+  #dplyr::filter(
+    #protein == "F"
+  #) %>%
+  #dplyr::pull(sequence)
+
+#test_F <- align_and_call_aa_mutations(
+  
+  #reference_sequence =
+    #test_wt_F,
+  
+  #query_sequence =
+    #test_evo_F$protein_sequence,
+  
+  #protein = "F",
+  
+  #isolate =
+    #test_evo_F$isolate_record,
+  
+  #accession_version =
+    #test_evo_F$accession_version
+#)
+
+#test_F$QC
+
+# # A tibble: 1 × 10
+#   isolate  accession_version protein reference_length query_length aligned_length alignment_score n_substitutions n_insertions n_deletions
+#   <chr>    <chr>             <chr>              <int>        <int>          <int>           <dbl>           <int>        <int>       <int>
+# 1 Evo-Phi4 PZ509151.1        F                    427          427            427            2254               9            0           0
+
+
+#test_F$mutations %>%
+  #dplyr::mutate(
+    
+    #aa_position =
+      #dplyr::if_else(
+        #mutation_type == "substitution",
+        #ref_start,
+        #NA_integer_
+      #),
+    
+    #WT_AA =
+      #dplyr::if_else(
+        #mutation_type == "substitution",
+        #ref_allele,
+        #NA_character_
+      #),
+    
+    #mutant_AA =
+      #dplyr::if_else(
+        #mutation_type == "substitution",
+        #alt_allele,
+        #NA_character_
+      #)
+  #)
+
+
+
+```
+
+
+Codon changes from the reference WT-aligned genome
+- Get synonymous mutations in Evo design.
+- Report codon-level synonymous/missense consequences only for a CDS with no insertion or deletion inside that CDS.
+- Same nucleotide mutations can appear in more than one protein's codon table due to overlapping ORFs.
+```{r}
+# ============================================================
+# Build codon changes from one genome alignment
+# ============================================================
+
+annotate_codon_changes <- function(
+    nt_alignment_result,
+    reference
+) {
+
+  coordinate_map <-
+    nt_alignment_result$coordinate_map
+
+  nt_mutations <-
+    nt_alignment_result$mutations
+
+  ref_genome <-
+    reference$genome
+
+  CDS_table <-
+    reference$CDS
+
+
+  isolate_name <-
+    nt_alignment_result$QC$isolate[1]
+
+  accession <-
+    nt_alignment_result$QC$
+      accession_version[1]
+
+
+  codon_results <- list()
+  protein_QC_results <- list()
+
+
+  for (i in seq_len(nrow(CDS_table))) {
+
+    CDS_row <- CDS_table[i, ]
+
+    protein_name <-
+      CDS_row$protein
+
+    coding_positions <-
+      CDS_row$coding_positions[[1]]
+
+
+    # --------------------------------------------------------
+    # Identify insertions/deletions inside this CDS
+    # --------------------------------------------------------
+
+    # An insertion after the FINAL coding nucleotide is not
+    # considered part of the coding region here.
+    internal_insertion_anchors <-
+      coding_positions[
+        -length(coding_positions)
+      ]
+
+
+    coding_deletions <-
+      coordinate_map %>%
+      dplyr::filter(
+        event == "deletion",
+        ref_position %in%
+          coding_positions
+      )
+
+
+    coding_insertions <-
+      coordinate_map %>%
+      dplyr::filter(
+        event == "insertion",
+        ref_position %in%
+          internal_insertion_anchors
+      )
+
+
+    inserted_nt <-
+      nrow(coding_insertions)
+
+    deleted_nt <-
+      nrow(coding_deletions)
+
+
+    net_indel <-
+      inserted_nt -
+      deleted_nt
+
+
+    has_coding_indel <-
+      inserted_nt > 0 |
+      deleted_nt > 0
+
+
+    frameshift <-
+      has_coding_indel &&
+      (abs(net_indel) %% 3 != 0)
+
+
+    # --------------------------------------------------------
+    # Protein-level QC record
+    # --------------------------------------------------------
+
+    protein_QC_results[[protein_name]] <-
+      tibble::tibble(
+
+        isolate =
+          isolate_name,
+
+        accession_version =
+          accession,
+
+        protein =
+          protein_name,
+
+        has_coding_indel =
+          has_coding_indel,
+
+        inserted_nt =
+          inserted_nt,
+
+        deleted_nt =
+          deleted_nt,
+
+        net_indel_nt =
+          net_indel,
+
+        frame_preserved =
+          !has_coding_indel |
+          (abs(net_indel) %% 3 == 0),
+
+        frameshift =
+          frameshift
+      )
+
+
+    # --------------------------------------------------------
+    # If CDS contains an indel, do not naively assign codons
+    # --------------------------------------------------------
+
+    if (has_coding_indel) {
+      next
+    }
+
+
+    # --------------------------------------------------------
+    # Recover query nucleotide corresponding to each WT nt
+    # --------------------------------------------------------
+
+    reference_rows <-
+      coordinate_map %>%
+      dplyr::filter(
+        ref_char != "-"
+      ) %>%
+      dplyr::select(
+        ref_position,
+        query_char
+      )
+
+
+    coding_map <-
+      tibble::tibble(
+        ref_position =
+          coding_positions,
+
+        coding_nt_index =
+          seq_along(
+            coding_positions
+          )
+      ) %>%
+
+      dplyr::left_join(
+        reference_rows,
+        by = "ref_position"
+      ) %>%
+
+      dplyr::mutate(
+
+        WT_nt =
+          substr(
+            rep(
+              ref_genome,
+              dplyr::n()
+            ),
+            ref_position,
+            ref_position
+          ),
+
+        codon_index =
+          ceiling(
+            coding_nt_index / 3
+          ),
+
+        codon_position =
+          ((coding_nt_index - 1) %% 3) + 1
+      )
+
+    
+    # --------------------------------------------------------
+    # Reconstruct complete WT and Evo CDS sequences
+    # --------------------------------------------------------
+    
+    WT_CDS_sequence <- paste0(
+      coding_map$WT_nt,
+      collapse = ""
+    )
+    
+    Evo_CDS_sequence <- paste0(
+      coding_map$query_char,
+      collapse = ""
+    )
+    
+    
+    # --------------------------------------------------------
+    # Use translation table 11
+    # --------------------------------------------------------
+    
+    genetic_code_11 <-
+      Biostrings::getGeneticCode("11")
+    
+    
+    # --------------------------------------------------------
+    # Known WT protein is authoritative
+    # --------------------------------------------------------
+    
+    WT_protein_reference <-
+      reference$proteins %>%
+      dplyr::filter(
+        protein == protein_name
+      ) %>%
+      dplyr::pull(sequence)
+    
+    if (
+      length(WT_protein_reference) != 1
+    ) {
+      stop(
+        "Could not uniquely identify WT protein ",
+        protein_name
+      )
+    }
+    
+    
+    # --------------------------------------------------------
+    # Translate complete Evo CDS
+    #
+    # Important:
+    # translating the complete CDS ensures that alternative
+    # bacterial initiation codons are treated as initiation
+    # codons only at the first CDS position, rather than at
+    # every codon.
+    # --------------------------------------------------------
+    
+    Evo_protein_from_genome <-
+      as.character(
+        Biostrings::translate(
+          Biostrings::DNAString(
+            Evo_CDS_sequence
+          ),
+          genetic.code =
+            genetic_code_11,
+          if.fuzzy.codon =
+            "X"
+        )
+      )
+    
+    
+    # --------------------------------------------------------
+    # Convert proteins into AA vectors
+    # --------------------------------------------------------
+    
+    WT_AA_vector <-
+      strsplit(
+        WT_protein_reference,
+        "",
+        fixed = TRUE
+      )[[1]]
+    
+    Evo_AA_vector <-
+      strsplit(
+        Evo_protein_from_genome,
+        "",
+        fixed = TRUE
+      )[[1]]
+    
+    
+    # --------------------------------------------------------
+    # QC sequence lengths
+    # --------------------------------------------------------
+    
+    n_codons <-
+      max(
+        coding_map$codon_index
+      )
+    
+    if (
+      length(WT_AA_vector) != n_codons ||
+      length(Evo_AA_vector) != n_codons
+    ) {
+    
+      stop(
+        isolate_name,
+        " / ",
+        protein_name,
+        ": CDS/protein length mismatch. ",
+        "Expected ",
+        n_codons,
+        " aa; WT = ",
+        length(WT_AA_vector),
+        ", Evo = ",
+        length(Evo_AA_vector)
+      )
+    }
+
+    # --------------------------------------------------------
+    # Collapse into complete codons
+    # --------------------------------------------------------
+
+    codons <-
+      coding_map %>%
+
+      dplyr::group_by(
+        codon_index
+      ) %>%
+
+      dplyr::summarise(
+
+        genome_positions =
+          paste(
+            ref_position,
+            collapse = ","
+          ),
+
+        WT_codon =
+          paste0(
+            WT_nt,
+            collapse = ""
+          ),
+
+        Evo_codon =
+          paste0(
+            query_char,
+            collapse = ""
+          ),
+
+        .groups = "drop"
+      ) %>%
+
+      dplyr::mutate(
+
+        #WT_AA =
+          #purrr::map_chr(
+            #WT_codon,
+            #~ as.character(
+              #Biostrings::translate(
+                #Biostrings::DNAString(
+                 # .x
+                #)
+              #)
+            #)
+          #),
+
+        #Evo_AA =
+          #purrr::map_chr(
+            #Evo_codon,
+            #~ as.character(
+              #Biostrings::translate(
+                #Biostrings::DNAString(
+                  #.x
+                #)
+              #)
+            #)
+          #),
+
+        #WT_AA = substr(
+          #WT_protein_reference,
+          #codon_index,
+          #codon_index
+        #),
+    
+        #Evo_AA = substr(
+          #Evo_protein_from_genome,
+          #codon_index,
+          #codon_index
+        #),
+        
+        WT_AA = WT_AA_vector[codon_index],
+
+        Evo_AA = Evo_AA_vector[codon_index],
+        
+        n_nt_changes =
+          purrr::map2_int(
+            WT_codon,
+            Evo_codon,
+            ~ sum(
+              strsplit(.x, "")[[1]] !=
+                strsplit(.y, "")[[1]]
+            )
+          ),
+
+        consequence =
+          dplyr::case_when(
+
+            WT_codon == Evo_codon ~
+              "unchanged",
+
+            WT_AA == Evo_AA ~
+              "synonymous",
+
+            WT_AA != "*" &
+              Evo_AA == "*" ~
+              "nonsense",
+
+            WT_AA == "*" &
+              Evo_AA != "*" ~
+              "stop_loss",
+
+            TRUE ~
+              "missense"
+          ),
+
+        protein =
+          protein_name,
+
+        aa_position =
+          codon_index,
+
+        aa_mutation_id =
+          dplyr::if_else(
+            WT_AA != Evo_AA,
+
+            paste0(
+              "gp",
+              protein_name,
+              "_",
+              WT_AA,
+              aa_position,
+              Evo_AA
+            ),
+
+            NA_character_
+          )
+      )
+
+
+    # --------------------------------------------------------
+    # Add contributing nucleotide mutation IDs
+    # --------------------------------------------------------
+
+    codons <-
+      codons %>%
+
+      dplyr::rowwise() %>%
+
+      dplyr::mutate(
+
+        nt_mutation_ids = {
+
+          positions <-
+            as.integer(
+              strsplit(
+                genome_positions,
+                ","
+              )[[1]]
+            )
+
+          ids <-
+            nt_mutations %>%
+            dplyr::filter(
+              mutation_type ==
+                "substitution",
+              ref_start %in%
+                positions
+            ) %>%
+            dplyr::pull(
+              mutation_id
+            )
+
+          if (length(ids) == 0) {
+            NA_character_
+          } else {
+            paste(
+              ids,
+              collapse = ";"
+            )
+          }
+        }
+      ) %>%
+
+      dplyr::ungroup() %>%
+
+      dplyr::mutate(
+        isolate =
+          isolate_name,
+
+        accession_version =
+          accession,
+
+        .before = 1
+      )
+
+
+    # Keep changed codons only
+    codon_results[[protein_name]] <-
+      codons %>%
+      dplyr::filter(
+        consequence !=
+          "unchanged"
+      )
+  }
+
+
+  list(
+
+    codon_changes =
+      dplyr::bind_rows(
+        codon_results
+      ),
+
+    protein_QC =
+      dplyr::bind_rows(
+        protein_QC_results
+      )
+  )
+}
+
+
+
+# Test codon identification on Evo-Phi4 [Confirmed working]
+#test_codon <-
+  #annotate_codon_changes(
+    #nt_alignment_result =
+      #test_nt,
+    #reference =
+      #phix174_reference
+  #)
+
+#test_codon$protein_QC
+
+
+#test_codon$codon_changes %>%
+  #dplyr::filter(
+    #consequence ==
+      #"synonymous"
+  #) %>%
+  #dplyr::select(
+    #protein,
+    #aa_position,
+    #WT_codon,
+    #Evo_codon,
+    #n_nt_changes,
+    #nt_mutation_ids
+  #)
+
+
+#test_codon$codon_changes %>%
+  #dplyr::filter(
+    #protein == "F",
+    #!is.na(aa_mutation_id)
+  #) %>%
+  #dplyr::select(
+    #aa_position,
+    #WT_codon,
+    #Evo_codon,
+    #WT_AA,
+    #Evo_AA,
+    #consequence,
+    #aa_mutation_id
+  #)
+
+
+
+# Cross-validation of the amino-acid mutations 
+# - Compare gpF genome-derived mutation calls with the direct F alignment, see below
+
+# 1) Genome-derived
+#test_F_from_genome <-
+  #test_codon$codon_changes %>%
+  #dplyr::filter(
+    #protein == "F",
+    #consequence != "synonymous"
+  #) %>%
+  #dplyr::pull(
+    #aa_mutation_id
+  #) %>%
+  #sort()
+
+# 2) Direct protein alignment
+#test_F_direct <-
+  #test_F$mutations %>%
+  #dplyr::filter(
+    #mutation_type ==
+      #"substitution"
+  #) %>%
+  #dplyr::pull(
+    #mutation_id
+  #) %>%
+  #sort()
+
+# 3) Compare these two
+#identical(
+  #test_F_from_genome,
+  #test_F_direct
+#)
+# [1] TRUE
+
+
+
+# Test codon identification on a indel-rich genome Evo-Phi63
+#test_codon_indel <-
+  #annotate_codon_changes(
+    #nt_alignment_result =
+      #test_nt_indel,
+    #reference =
+      #phix174_reference
+  #)
+
+#test_codon_indel$protein_QC %>%
+  #dplyr::filter(
+    #has_coding_indel
+  #)
+
+# # A tibble: 1 × 9
+#   isolate   accession_version protein has_coding_indel inserted_nt deleted_nt net_indel_nt frame_preserved frameshift
+#   <chr>     <chr>             <chr>   <lgl>                  <int>      <int>        <int> <lgl>           <lgl>     
+# 1 Evo-Phi63 PZ509155.1        J       TRUE                     268          0          268 FALSE           TRUE      
+
+
+
+
+```
+
+
+### 3) Scale-up mutation calling 
+To 16 viable evo-designed phages
+- evo_phage_analysis
+```{r}
+# ============================================================
+# Helper to get one WT protein sequence
+# ============================================================
+
+get_reference_protein <- function(
+    reference,
+    protein_name
+) {
+  
+  reference$proteins %>%
+    dplyr::filter(
+      protein == protein_name
+    ) %>%
+    dplyr::pull(
+      sequence
+    )
+}
+
+
+# ============================================================
+# Process all annotated proteins from one isolate
+# ============================================================
+
+process_isolate_proteins <- function(
+    isolate_name,
+    accession_version,
+    evo_proteins,
+    reference
+) {
+  
+  isolate_proteins <- evo_proteins %>%
+    dplyr::filter(
+      isolate_record == isolate_name,
+      accession_version == accession_version,
+      !is.na(protein)
+    )
+  
+  
+  reference_names <- reference$proteins$protein
+  
+  
+  protein_results <- purrr::map(
+    reference_names,
+    function(protein_name) {
+      
+      evo_row <- isolate_proteins %>%
+        dplyr::filter(
+          protein == protein_name
+        )
+      
+      
+      # Protein not annotated in this genome
+      if (nrow(evo_row) == 0) {
+        
+        return(
+          list(
+            protein = protein_name,
+            status = "not_annotated",
+            alignment = NULL,
+            mutations = tibble::tibble(),
+            QC = tibble::tibble(
+              isolate = isolate_name,
+              accession_version = accession_version,
+              protein = protein_name,
+              status = "not_annotated"
+            )
+          )
+        )
+      }
+      
+      
+      # If somehow duplicated, use first but flag it
+      duplicated_annotation <- nrow(evo_row) > 1
+      
+      evo_row <- evo_row %>%
+        dplyr::slice(1)
+      
+      
+      wt_seq <- get_reference_protein(
+        reference = reference,
+        protein_name = protein_name
+      )
+      
+      
+      result <- tryCatch(
+        
+        align_and_call_aa_mutations(
+          reference_sequence = wt_seq,
+          query_sequence = evo_row$protein_sequence,
+          protein = protein_name,
+          isolate = isolate_name,
+          accession_version = accession_version
+        ),
+        
+        error = function(e) {
+          e
+        }
+      )
+      
+      
+      if (inherits(result, "error")) {
+        
+        return(
+          list(
+            protein = protein_name,
+            status = "alignment_error",
+            error = conditionMessage(result),
+            alignment = NULL,
+            mutations = tibble::tibble(),
+            QC = tibble::tibble(
+              isolate = isolate_name,
+              accession_version = accession_version,
+              protein = protein_name,
+              status = "alignment_error",
+              error = conditionMessage(result)
+            )
+          )
+        )
+      }
+      
+      
+      result$QC <- result$QC %>%
+        dplyr::mutate(
+          status = "aligned",
+          duplicated_annotation = duplicated_annotation
+        )
+      
+      
+      list(
+        protein = protein_name,
+        status = "aligned",
+        alignment = result$alignment,
+        aligned_reference = result$aligned_reference,
+        aligned_query = result$aligned_query,
+        coordinate_map = result$coordinate_map,
+        mutations = result$mutations,
+        QC = result$QC
+      )
+    }
+  )
+  
+  
+  names(protein_results) <- reference_names
+  
+  
+  protein_mutations <- purrr::map_dfr(
+    protein_results,
+    "mutations"
+  )
+  
+  
+  protein_QC <- purrr::map_dfr(
+    protein_results,
+    "QC"
+  )
+  
+  
+  list(
+    results = protein_results,
+    mutations = protein_mutations,
+    QC = protein_QC
+  )
+}
+
+
+# ============================================================
+# One complete isolate processor
+# ============================================================
+
+process_one_evo_phage <- function(
+    isolate_name,
+    #accession_version,
+    accession_id,
+    evo_metadata,
+    evo_genomes,
+    evo_proteins,
+    evo_translation_QC,
+    reference
+) {
+  
+  # ----------------------------------------------------------
+  # Metadata
+  # ----------------------------------------------------------
+  
+  metadata_row <- evo_metadata %>%
+    dplyr::filter(
+      isolate == isolate_name,
+      accession_version == accession_id
+    ) %>%
+    dplyr::slice(1)
+  
+  
+  # ----------------------------------------------------------
+  # Genome
+  # ----------------------------------------------------------
+  
+  genome_row <- evo_genomes %>%
+    dplyr::filter(
+      isolate == isolate_name,
+      accession_version == accession_id
+    ) %>%
+    dplyr::slice(1)
+  
+  
+  nt_result <- align_and_call_nt_mutations(
+    reference_sequence = reference$genome,
+    query_sequence = genome_row$genome_sequence,
+    isolate = isolate_name,
+    accession_version = accession_id
+  )
+  
+  
+  # ----------------------------------------------------------
+  # Codon / genome-derived protein consequences
+  # ----------------------------------------------------------
+  
+  codon_result <- annotate_codon_changes(
+    nt_alignment_result = nt_result,
+    reference = reference
+  )
+  
+  
+  # ----------------------------------------------------------
+  # Direct protein alignment
+  # ----------------------------------------------------------
+  
+  protein_result <- process_isolate_proteins(
+    isolate_name = isolate_name,
+    accession_version = accession_id,
+    evo_proteins = evo_proteins,
+    reference = reference
+  )
+  
+  
+  # ----------------------------------------------------------
+  # GenBank CDS translation QC
+  # ----------------------------------------------------------
+  
+  translation_QC <- evo_translation_QC %>%
+    dplyr::filter(
+      isolate_record == isolate_name,
+      accession_version == accession_id
+    )
+  
+  
+  # ----------------------------------------------------------
+  # Summary counts
+  # ----------------------------------------------------------
+  
+  summary <- tibble::tibble(
+    
+    isolate = isolate_name,
+    accession_version = accession_id,
+    
+    genome_length = genome_row$genome_length,
+    
+    n_nt_substitutions =
+      sum(
+        nt_result$mutations$mutation_type ==
+          "substitution"
+      ),
+    
+    n_nt_insertions =
+      sum(
+        nt_result$mutations$mutation_type ==
+          "insertion"
+      ),
+    
+    n_nt_deletions =
+      sum(
+        nt_result$mutations$mutation_type ==
+          "deletion"
+      ),
+    
+    inserted_nt =
+      nt_result$QC$inserted_nt,
+    
+    deleted_nt =
+      nt_result$QC$deleted_nt,
+    
+    n_aa_substitutions =
+      sum(
+        protein_result$mutations$mutation_type ==
+          "substitution"
+      ),
+    
+    n_aa_insertions =
+      sum(
+        protein_result$mutations$mutation_type ==
+          "insertion"
+      ),
+    
+    n_aa_deletions =
+      sum(
+        protein_result$mutations$mutation_type ==
+          "deletion"
+      ),
+    
+    n_synonymous_codons =
+      sum(
+        codon_result$codon_changes$consequence ==
+          "synonymous"
+      ),
+    
+    n_missense_codons =
+      sum(
+        codon_result$codon_changes$consequence ==
+          "missense"
+      ),
+    
+    n_nonsense_codons =
+      sum(
+        codon_result$codon_changes$consequence ==
+          "nonsense"
+      ),
+    
+    n_proteins_with_coding_indel =
+      sum(
+        codon_result$protein_QC$has_coding_indel
+      ),
+    
+    all_GenBank_translations_match =
+      all(
+        translation_QC$translation_match,
+        na.rm = TRUE
+      )
+  )
+  
+  
+  # ----------------------------------------------------------
+  # Final isolate object
+  # ----------------------------------------------------------
+  
+  list(
+    
+    metadata = metadata_row,
+    
+    genome = list(
+      sequence = genome_row$genome_sequence,
+      alignment = nt_result$alignment,
+      aligned_reference = nt_result$aligned_reference,
+      aligned_query = nt_result$aligned_query,
+      coordinate_map = nt_result$coordinate_map,
+      mutations = nt_result$mutations,
+      QC = nt_result$QC
+    ),
+    
+    codons = list(
+      changes = codon_result$codon_changes,
+      protein_QC = codon_result$protein_QC
+    ),
+    
+    proteins = list(
+      results = protein_result$results,
+      mutations = protein_result$mutations,
+      QC = protein_result$QC
+    ),
+    
+    GenBank_translation_QC =
+      translation_QC,
+    
+    summary =
+      summary
+  )
+}
+
+
+# Create the table defining the 18 analyses
+evo_analysis_index <- evo_metadata %>%
+  dplyr::select(
+    isolate,
+    accession_version
+  ) %>%
+  dplyr::distinct() %>%
+  dplyr::arrange(
+    accession_version
+  )
+
+
+# Run all 18 analyses
+evo_phage_analysis <- purrr::map2(
+  
+  evo_analysis_index$isolate,
+  evo_analysis_index$accession_version,
+  
+  ~ process_one_evo_phage(
+    
+    isolate_name = .x,
+    accession_id = .y,
+    
+    evo_metadata = evo_metadata,
+    evo_genomes = evo_genomes,
+    evo_proteins = evo_proteins,
+    evo_translation_QC = evo_translation_QC,
+    
+    reference = phix174_reference
+  )
+)
+
+
+# Name the analyses result list by phage isolate names
+names(evo_phage_analysis) <-
+  evo_analysis_index$isolate
+
+names(evo_phage_analysis)
+
+str(
+  evo_phage_analysis[[1]],
+  max.level = 2
+)
+#  [1] "Evo-Phi4"    "Evo-Phi5"    "Evo-Phi36"   "Evo-Phi46"   "Evo-Phi63"   "Evo-Phi69"   "Evo-Phi75"   "Evo-Phi100"  "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi316"  "Evo-Phi2147" "Evo-Phi2483" "Evo-Phi2498"
+# [16] "Evo-Phi3392" "Evo-PhiR1"   "Evo-PhiR2"  
+
+# Analysis for all Evo design
+evo_phage_analysis
+
+names(evo_phage_analysis)
+
+# $Evo-Phi4
+    # $metadata
+    # $genome
+        # $sequence
+        # $alignment
+        # $coordinate_map
+        # $mutations
+        # $QC
+    # $codons
+        # $changes
+        # $protein_QC
+    # $proteins
+        # $results
+        # $mutations
+        # $QC
+    # $GenBank_translation_QC
+    # $summary
+
+
+# Check an individual isolate
+#evo_phage_analysis[["Evo-Phi4"]]$genome$mutations
+#evo_phage_analysis[["Evo-Phi4"]]$summary
+#evo_phage_analysis[["Evo-Phi63"]]$proteins$mutations
+
+#view(evo_phage_analysis[["Evo-Phi36"]]$genome$mutations)
+#view(evo_phage_analysis[["Evo-Phi36"]]$genome$coordinate_map)
+#view(evo_phage_analysis[["Evo-Phi36"]]$codons$changes)
+#view(evo_phage_analysis[["Evo-Phi36"]]$proteins$QC)
+
+
+
+```
+
+
+
+
+
+## Summary and visualization
+### 1) Combined all mutation calling results
+```{r}
+# Generate the combined nucleotide mutation table
+evo_nt_mutations <- purrr::map_dfr(
+  evo_phage_analysis,
+  ~ .x$genome$mutations
+)
+
+dim(
+  evo_nt_mutations
+  )
+# [1] 2097   11
+
+evo_nt_mutations %>%
+  dplyr::count(
+    isolate,
+    mutation_type
+  )
+# # A tibble: 24 × 3
+#    isolate     mutation_type     n
+#    <chr>       <chr>         <int>
+#  1 Evo-Phi100  substitution    138
+#  2 Evo-Phi108  substitution    142
+#  3 Evo-Phi111  substitution    108
+#  4 Evo-Phi114  substitution     78
+#  5 Evo-Phi2147 insertion         7
+
+
+# Generate the combined amino-acid mutation table
+evo_aa_mutations <- purrr::map_dfr(
+  evo_phage_analysis,
+  ~ .x$proteins$mutations
+)
+
+evo_aa_mutations <- evo_aa_mutations %>%
+  dplyr::mutate(
+    
+    aa_position = dplyr::if_else(
+      mutation_type == "substitution",
+      ref_start,
+      NA_integer_
+    ),
+    
+    WT_AA = dplyr::if_else(
+      mutation_type == "substitution",
+      ref_allele,
+      NA_character_
+    ),
+    
+    mutant_AA = dplyr::if_else(
+      mutation_type == "substitution",
+      alt_allele,
+      NA_character_
+    )
+  )
+
+
+# Combined codon/consequence table
+evo_codon_changes <- purrr::map_dfr(
+  evo_phage_analysis,
+  ~ .x$codons$changes
+)
+
+evo_codon_changes %>%
+  dplyr::count(
+    consequence,
+    sort = TRUE
+  )
+# # A tibble: 3 × 2
+#   consequence     n
+#   <chr>       <int>
+# 1 synonymous   1483
+# 2 missense      505
+# 3 nonsense        1
+
+evo_codon_changes %>%
+  dplyr::count(
+    isolate,
+    consequence
+  )
+# # A tibble: 37 × 3
+#    isolate     consequence     n
+#    <chr>       <chr>       <int>
+#  1 Evo-Phi100  missense       32
+#  2 Evo-Phi100  synonymous    105
+#  3 Evo-Phi108  missense       29
+#  4 Evo-Phi108  synonymous    117
+#  5 Evo-Phi111  missense       30
+
+
+# Combined QC tables
+evo_protein_QC <- purrr::map_dfr(
+  evo_phage_analysis,
+  ~ .x$proteins$QC
+)
+
+evo_codon_QC <- purrr::map_dfr(
+  evo_phage_analysis,
+  ~ .x$codons$protein_QC
+)
+
+evo_analysis_summary <- purrr::map_dfr(
+  evo_phage_analysis,
+  "summary"
+)
+
+
+# Check missing proteins
+evo_protein_QC %>%
+  dplyr::filter(
+    status != "aligned"
+  )
+
+# # A tibble: 3 × 12
+#   isolate    accession_version protein reference_length query_length aligned_length alignment_score n_substitutions n_insertions n_deletions status        duplicated_annotation
+#   <chr>      <chr>             <chr>              <int>        <int>          <int>           <dbl>           <int>        <int>       <int> <chr>         <lgl>                
+# 1 Evo-Phi114 PZ509161.1        K                     NA           NA             NA              NA              NA           NA          NA not_annotated NA                   
+# 2 Evo-PhiR1  PZ509167.1        K                     NA           NA             NA              NA              NA           NA          NA not_annotated NA                   
+# 3 Evo-PhiR2  PZ509168.1        K                     NA           NA             NA              NA              NA           NA          NA not_annotated NA                   
+
+
+# Check GenBank translation consistency
+evo_analysis_summary %>%
+  dplyr::filter(
+    !all_GenBank_translations_match
+  )
+
+
+# ============================================================
+# Cross-check genome-derived vs direct AA substitutions for all proteins
+# ============================================================
+
+validate_aa_calls <- function(
+    isolate_name,
+    codon_changes,
+    aa_mutations
+) {
+  
+  genome_calls <- codon_changes %>%
+    dplyr::filter(
+      isolate == isolate_name,
+      consequence %in%
+        c(
+          "missense",
+          "nonsense",
+          "stop_loss"
+        ),
+      !is.na(aa_mutation_id)
+    ) %>%
+    dplyr::distinct(
+      protein,
+      aa_mutation_id
+    )
+  
+  
+  direct_calls <- aa_mutations %>%
+    dplyr::filter(
+      isolate == isolate_name,
+      mutation_type ==
+        "substitution"
+    ) %>%
+    dplyr::distinct(
+      protein,
+      mutation_id
+    ) %>%
+    dplyr::rename(
+      aa_mutation_id =
+        mutation_id
+    )
+  
+  
+  comparison <- dplyr::full_join(
+    genome_calls %>%
+      dplyr::mutate(
+        genome_call = TRUE
+      ),
+    
+    direct_calls %>%
+      dplyr::mutate(
+        direct_call = TRUE
+      ),
+    
+    by = c(
+      "protein",
+      "aa_mutation_id"
+    )
+  ) %>%
+    dplyr::mutate(
+      genome_call =
+        tidyr::replace_na(
+          genome_call,
+          FALSE
+        ),
+      
+      direct_call =
+        tidyr::replace_na(
+          direct_call,
+          FALSE
+        ),
+      
+      calls_match =
+        genome_call ==
+        direct_call,
+      
+      isolate =
+        isolate_name,
+      
+      .before = 1
+    )
+  
+  
+  comparison
+}
+
+evo_AA_validation <- purrr::map_dfr(
+  names(evo_phage_analysis),
+  ~ validate_aa_calls(
+    isolate_name = .x,
+    codon_changes = evo_codon_changes,
+    aa_mutations = evo_aa_mutations
+  )
+)
+
+evo_AA_validation %>%
+  dplyr::count(
+    calls_match
+  )
+# # A tibble: 2 × 2
+#   calls_match     n
+#   <lgl>       <int>
+# 1 FALSE          22
+# 2 TRUE          497
+
+evo_AA_validation %>%
+  dplyr::filter(
+    !calls_match
+  ) %>%
+  dplyr::arrange(
+    isolate,
+    protein,
+    aa_mutation_id
+  )
+
+
+# There are really three different mismatch mechanisms, rather than 22 independent problems.
+# 1) the codon pipeline skipped that CDS because of an indel
+# Evo-Phi36   J   S2K, G4S, K5I, K6R, R25S, Q36T, F38Y
+#evo_phage_analysis[["Evo-Phi36"]]$codons$protein_QC %>%
+  #dplyr::filter(protein == "J")
+
+# Evo-Phi2483 G   S97A, D113N
+#evo_phage_analysis[["Evo-Phi2483"]]$codons$protein_QC %>%
+  #dplyr::filter(protein == "G")
+
+# Evo-Phi2498 G   L20A, T21S, S28L, S97A
+#evo_phage_analysis[["Evo-Phi2498"]]$codons$protein_QC %>%
+  #dplyr::filter(protein == "G")
+
+# 2) Protein K mismatches: genome architecture predicts gpK, but the deposited annotation does not provide the corresponding K protein
+# Evo-Phi114   gpK_M1T, gpK_Q10L
+#evo_phage_analysis[["Evo-Phi114"]]$GenBank_translation_QC %>%
+  #dplyr::filter(note == "K") # Empty
+# Evo-PhiR1    gpK_M1T, gpK_Q10L
+# Evo-PhiR2    gpK_M1T, gpK_Q10L
+
+# 3) The remaining three are different annotation/translation discrepancies
+# Evo-Phi75 — gpC_K85*, nonsense mutation represented as protein truncation rather than an explicit AA substitution.
+# Evo-Phi100 — gpC_S10N, N-terminal CDS annotation/start-site discrepancy.
+#evo_phage_analysis[["Evo-Phi100"]]$GenBank_translation_QC %>%
+  #dplyr::filter(note == "C") %>%
+  #print(width = Inf)
+
+# Evo-Phi316 — gpB_V39M, likely residual annotation/alignment discrepancy
+#evo_phage_analysis[["Evo-Phi316"]]$codons$changes %>%
+  #dplyr::filter(
+    #protein == "B",
+    #aa_position == 39
+  #) %>%
+  #dplyr::select(
+    #genome_positions,
+    #WT_codon,
+    #Evo_codon,
+    #WT_AA,
+    #Evo_AA,
+    #consequence,
+    #aa_mutation_id,
+    #nt_mutation_ids
+  #)
+
+
+
+
+```
+
+
+### 2) Final check all current datasets
+Before merging fitness data; Troubleshooting those unmatched mutation calling above. 
+```{r}
+# Analysis for all Evo design
+evo_phage_analysis
+
+# $Evo-Phi4
+    # $metadata
+    # $genome
+        # $sequence
+        # $alignment
+        # $coordinate_map
+        # $mutations
+        # $QC
+    # $codons
+        # $changes
+        # $protein_QC
+    # $proteins
+        # $results
+        # $mutations
+        # $QC
+    # $GenBank_translation_QC
+    # $summary
+
+
+# Combined analysis tables
+
+#evo_nt_mutations
+#evo_codon_changes
+#evo_aa_mutations
+
+#evo_analysis_summary
+#evo_protein_QC
+#evo_codon_QC
+#evo_AA_validation
+
+
+# Final check before merging fitness data
+evo_codon_changes %>%
+  dplyr::distinct(isolate)
+# # A tibble: 18 × 1
+#    isolate    
+#    <chr>      
+#  1 Evo-Phi4   
+#  2 Evo-Phi5   
+#  3 Evo-Phi36  
+#  4 Evo-Phi46  
+#  5 Evo-Phi63  
+#  6 Evo-Phi69  
+#  7 Evo-Phi75  
+#  8 Evo-Phi100 
+#  9 Evo-Phi108 
+# 10 Evo-Phi111 
+# 11 Evo-Phi114 
+# 12 Evo-Phi316 
+# 13 Evo-Phi2147
+# 14 Evo-Phi2483
+# 15 Evo-Phi2498
+# 16 Evo-Phi3392
+# 17 Evo-PhiR1  
+# 18 Evo-PhiR2  
+
+evo_aa_mutations %>%
+  dplyr::distinct(isolate)
+
+evo_analysis_summary
+
+evo_protein_QC %>%
+  dplyr::filter(
+    status != "aligned"
+  )
+# # A tibble: 3 × 12
+#   isolate    accession_version protein reference_length query_length aligned_length alignment_score n_substitutions n_insertions n_deletions status        duplicated_annotation
+#   <chr>      <chr>             <chr>              <int>        <int>          <int>           <dbl>           <int>        <int>       <int> <chr>         <lgl>                
+# 1 Evo-Phi114 PZ509161.1        K                     NA           NA             NA              NA              NA           NA          NA not_annotated NA                   
+# 2 Evo-PhiR1  PZ509167.1        K                     NA           NA             NA              NA              NA           NA          NA not_annotated NA                   
+# 3 Evo-PhiR2  PZ509168.1        K                     NA           NA             NA              NA              NA           NA          NA not_annotated NA                   
+
+evo_codon_QC %>%
+  dplyr::filter(
+    has_coding_indel
+  )
+# # A tibble: 4 × 9
+#   isolate     accession_version protein has_coding_indel inserted_nt deleted_nt net_indel_nt frame_preserved frameshift
+#   <chr>       <chr>             <chr>   <lgl>                  <int>      <int>        <int> <lgl>           <lgl>     
+# 1 Evo-Phi36   PZ509153.1        J       TRUE                       0         37          -37 FALSE           TRUE      
+# 2 Evo-Phi63   PZ509155.1        J       TRUE                     268          0          268 FALSE           TRUE      
+# 3 Evo-Phi2483 PZ509164.1        G       TRUE                     223          0          223 FALSE           TRUE      
+# 4 Evo-Phi2498 PZ509165.1        G       TRUE                     188          0          188 FALSE           TRUE      
+
+evo_AA_validation %>%
+  dplyr::filter(
+    !calls_match
+  )
+
+# Check the 57 AA mutation call mismatches
+evo_AA_validation_QC <- evo_AA_validation %>%
+  dplyr::left_join(
+    evo_codon_QC %>%
+      dplyr::select(
+        isolate,
+        accession_version,
+        protein,
+        has_coding_indel,
+        inserted_nt,
+        deleted_nt,
+        frameshift
+      ),
+    by = c(
+      "isolate",
+      "protein"
+    )
+  )
+
+evo_AA_validation_QC %>%
+  dplyr::filter(!calls_match) %>%
+  dplyr::count(
+    has_coding_indel,
+    frameshift
+  )
+
+# # A tibble: 2 × 3
+#   has_coding_indel frameshift     n
+#   <lgl>            <lgl>      <int>
+# 1 FALSE            FALSE          9
+# 2 TRUE             TRUE          13
+
+evo_AA_validation_QC %>%
+  dplyr::filter(
+    !calls_match,
+    !has_coding_indel
+  ) %>%
+  dplyr::arrange(
+    isolate,
+    protein,
+    aa_mutation_id
+  ) %>%
+  print(n = Inf)
+
+evo_AA_validation_QC %>%
+  dplyr::filter(
+    is.na(has_coding_indel) |
+      !has_coding_indel
+  ) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    n_match = sum(calls_match),
+    n_mismatch = sum(!calls_match),
+    proportion_match = mean(calls_match)
+  )
+
+
+# Two genuinely unexpected cases left: gpC_S10N and gpB_V39M.
+evo_codon_changes %>%
+  dplyr::filter(
+    aa_mutation_id %in%
+      c(
+        "gpC_S10N",
+        "gpB_V39M"
+      )
+  ) %>%
+  dplyr::select(
+    isolate,
+    protein,
+    aa_position,
+    genome_positions,
+    WT_codon,
+    Evo_codon,
+    WT_AA,
+    Evo_AA,
+    nt_mutation_ids,
+    aa_mutation_id
+  )
+
+
+evo_aa_mutations %>%
+  dplyr::filter(
+    isolate %in%
+      c(
+        "Evo-Phi100",
+        "Evo-Phi316"
+      ),
+    protein %in%
+      c("B", "C")
+  ) %>%
+  dplyr::select(
+    isolate,
+    protein,
+    mutation_type,
+    ref_start,
+    ref_allele,
+    alt_allele,
+    mutation_id
+  )
+
+evo_proteins %>%
+  dplyr::filter(
+    isolate_record %in%
+      c(
+        "Evo-Phi100",
+        "Evo-Phi316"
+      ),
+    protein %in%
+      c("B", "C")
+  ) %>%
+  dplyr::select(
+    isolate_record,
+    protein,
+    location,
+    protein_sequence
+  )
+
+# These two mismatches are due to intragenic indels
+# 1) For Evo-Phi100 protein C, the genome-based WT-coordinate reconstruction detects gpC_S10N from AGC → AAC at genomic position 161. But GenBank annotates C as: Evo-Phi100 C: 250..393; So gpC_S10N occurs in a genomic region that corresponds to WT C, but that region is no longer part of the annotated C protein in Evo-Phi100. That is why the direct protein alignment cannot contain gpC_S10N.
+# 2) For Evo-Phi316 protein B, Its B CDS begins at: join(5190..5387,1..51) rather than the WT-like 5075..5386,1..51. In Evo-Phi316, that ATG has effectively become the new annotated start of the shortened B protein, so the direct protein representation is an N-terminal deletion rather than an internal V39M substitution.
+
+# All nine non-indel discrepancies are explained
+# They fall into recognizable categories:
+
+# 1) K in Evo-Phi114/R1/R2: K is not annotated as a protein in GenBank.
+# 2) Evo-Phi100 C and Evo-Phi316 B: CDS boundaries have shifted/truncated substantially.
+# 3) gpC_K85*: stop/truncation behavior, which direct protein alignment cannot represent in exactly the same way as a codon substitution.
+
+# So the initial apparent 98.2% agreement actually understates how well the two pipelines agree. For ordinary intact CDSs with comparable annotations, they appear essentially concordant.
+
+
+
+# This analysis tells us we should keep the two sources conceptually distinct:
+# Genome-derived coding consequences
+#     ↓
+# "What would this nucleotide change do
+# in the WT ΦX174 coordinate/ORF system?"
+
+# Direct GenBank protein alignment
+#     ↓
+# "What protein sequence is actually annotated
+# in the Evo-designed genome?"
+
+
+# For protein-level Evo mutation analysis, we use the direct protein alignment as the primary source. Thus for Evo-Phi316 B we keep: gpB_2_39del... rather than an ordinary gpB_V39M substitution.
+# For nucleotide-level analysis, we retain the genomic mutation G5189A, and the existing 1-nt DMS annotation can tell us what that same nucleotide mutation does in the WT ΦX174 background.
+
+
+# The Evo-design sequence extraction/alignment/validation stage complete and ready to move on to the DMS merge.
+
+
+```
+
+
+
+
+
+## Integrating fitness data
+Focus on single-nucleotide variants.
+
+### 1) Prepare Evo analysis tables for merging
+```{r}
+# Prepare the nucleotide-level Evo master table
+evo_nt_analysis <- evo_nt_mutations %>%
+  dplyr::mutate(
+    
+    mutation_level = "nt",
+    
+    is_substitution =
+      mutation_type == "substitution",
+    
+    is_indel =
+      mutation_type %in%
+      c("insertion", "deletion"),
+    
+    DMS_eligible =
+      mutation_type == "substitution"
+  )
+
+evo_nt_analysis %>%
+  dplyr::count(
+    mutation_type
+  )
+
+# # A tibble: 3 × 2
+#   mutation_type     n
+#   <chr>         <int>
+# 1 deletion          5
+# 2 insertion        12
+# 3 substitution   2080
+
+evo_nt_analysis %>%
+  dplyr::count(
+    isolate,
+    mutation_type
+  )
+
+
+# Prepare the AA-level Evo master table
+#evo_aa_analysis <- evo_aa_mutations %>%
+  #dplyr::mutate(
+    
+    #mutation_level = "aa",
+    
+    #is_substitution =
+      #mutation_type == "substitution",
+    
+    #is_indel =
+      #mutation_type %in%
+      #c("insertion", "deletion"),
+    
+    #DMS_eligible =
+      #mutation_type == "substitution"
+  #)
+
+#evo_aa_analysis %>%
+  #dplyr::filter(
+    #mutation_type == "substitution"
+  #) %>%
+  #dplyr::select(
+    #isolate,
+    #protein,
+    #aa_position,
+    #WT_AA,
+    #mutant_AA,
+    #mutation_id
+  #) %>%
+  #head()
+# # A tibble: 6 × 6
+#   isolate  protein aa_position WT_AA mutant_AA mutation_id
+#   <chr>    <chr>         <int> <chr> <chr>     <chr>      
+# 1 Evo-Phi4 A                28 E     A         gpA_E28A   
+# 2 Evo-Phi4 A                42 G     A         gpA_G42A   
+# 3 Evo-Phi4 A                63 Q     R         gpA_Q63R   
+# 4 Evo-Phi4 A               395 L     F         gpA_L395F  
+# 5 Evo-Phi4 A               402 T     M         gpA_T402M  
+# 6 Evo-Phi4 A               424 Q     K         gpA_Q424K  
+
+
+# Prepare the Codon-level Evo master table
+#evo_coding_analysis <- evo_codon_changes %>%
+  #dplyr::mutate(
+    #coding_change = TRUE
+  #)
+
+#evo_coding_analysis %>%
+  #dplyr::count(
+    #consequence,
+    #sort = TRUE
+  #)
+# # A tibble: 3 × 2
+#   consequence     n
+#   <chr>       <int>
+# 1 synonymous   1483
+# 2 missense      505
+# 3 nonsense        1
+
+
+
+
+```
+
+
+### 2) Prepare DMS 1nt and 1aa mutation tables
+Load processed datasets.
+```{r}
+## All Data
+#load("./codes_Github_final/data/processed_fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat.RData")
+#head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat), 0)
+#nrow(phix_all_dms_sub_libraries_normalized_unique_stat)
+# [1] 44195
+
+
+## 1nt Data
+load("./codes_Github_final/data/processed_fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_1nt.RData")
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_1nt), 0)
+nrow(phix_all_dms_sub_libraries_normalized_unique_stat_1nt)
+# [1] 16098
+
+
+## Proteome Mutations
+# 1) AA Subs + Syns Level, with advanced residue annotations
+#load("./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_mut_Fitness_unique_advanced.RData")
+#head(as.data.frame(phix_proteome_dms_mut_Fitness_unique_advanced), 0)
+
+#table(phix_proteome_dms_mut_Fitness_unique_advanced$phix_aa_mut_orf_class)
+# multi_orf single_orf Synonymous 
+#     12427      34121       1588 
+#nrow(phix_proteome_dms_mut_Fitness_unique_advanced)
+# [1] 48136
+
+
+
+```
+
+Prepare DMS look-up tables to merge with Evo designs.
+```{r}
+# check data
+head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_1nt), 0)
+table(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$genome_nt_pos_annotation)
+#            Ori (+)           Promoter                RBS       RBS,Promoter     RBS,Terminator         Terminator Terminator,Ori (-)  Unknown Noncoding 
+#                 90                381                120                  6                 33                411                130                269 
+
+# For the nucleotide level, use the existing genome_mut_ID_nt as the join key
+phix_nt_DMS_merge <-
+  phix_all_dms_sub_libraries_normalized_unique_stat_1nt %>%
+  dplyr::transmute(
+
+    mutation_id = genome_mut_ID_nt,
+
+    # mutation identity
+    genome_position = genome_nt_mut_pos,
+    WT_nt_DMS = genome_nt_mut_wt,
+    mutant_nt_DMS = genome_nt_mut_sub,
+
+    # fitness
+    DMS_fitness = fitness_final,
+    DMS_FDR = p_value_1nt_two_sample_ttest_syn_FDR,
+    DMS_effect_size = effect_size_vs_1nt_syn,
+
+    # effect classification
+    DMS_effect_category = 
+      mutation_category_FDR_1nt,
+    
+    DMS_effect_category_lethal = 
+      mutation_category_FDR_lethal_1nt,
+    
+    #DMS_effect_category_cutoff =
+      #mutation_category_FDR_cutoff_1nt_combined,
+    
+    DMS_mutation_direction =
+      mutation_direction_1nt,
+    
+    #DMS_mutation_direction =
+      #mutation_direction_lethal_1nt,
+
+    # genomic context
+    nt_noncoding = genome_nt_pos_noncoding,
+    nt_coding = genome_nt_pos_coding,
+    nt_overlap_orf = genome_nt_pos_overlap_orf,
+    nucleotide_class = genome_nt_pos_nucleotide_class,
+    genome_annotation = genome_nt_pos_annotation,
+
+    # regulatory annotations
+    RBS = genome_nt_pos_RBS,
+    RBS_gene = genome_nt_pos_RBS_gene,
+
+    promoter = genome_nt_pos_promoter,
+    promoter_gene = genome_nt_pos_promoter_gene,
+
+    terminator = genome_nt_pos_terminator,
+    terminator_gene = genome_nt_pos_terminator_gene,
+
+    ori = genome_nt_pos_ori,
+
+    # coding consequences already annotated in your DMS table
+    affected_genes = phix_aa_mut_genes,
+    aa_mutation_IDs = phix_aa_mut_ID,
+    aa_mutation_class = phix_aa_mut_class
+  )
+
+
+# For the amino-acid level, use the existing aa mut ID or mutation id as the join key
+#phix_proteome_dms_mut_Fitness_unique_advanced %>%
+  #dplyr::count(
+    #phix_aa_mut_orf_class,
+    #aa_mut_class
+  #)
+
+# # A tibble: 7 × 3
+#   phix_aa_mut_orf_class aa_mut_class     n
+#   <chr>                 <chr>        <int>
+# 1 Synonymous            Synonymous    1588
+# 2 multi_orf             Missense     11696
+# 3 multi_orf             Nonsense       604
+# 4 multi_orf             Stop-loss      127
+# 5 single_orf            Missense     32314
+# 6 single_orf            Nonsense      1715
+# 7 single_orf            Stop-loss       92
+
+#phix_aa_DMS_merge <-
+  #phix_proteome_dms_mut_Fitness_unique_advanced %>%
+  #dplyr::transmute(
+
+    #mutation_id = aa_mut_ID,
+
+    #protein_DMS = aa_mut_gene,
+    #aa_position_DMS = aa_mut_pos,
+    #WT_AA_DMS = aa_mut_wt,
+    #mutant_AA_DMS = aa_mut_sub,
+
+    # IMPORTANT: ORF context
+    #DMS_orf_class = phix_aa_mut_orf_class,
+
+    # fitness
+    #DMS_fitness = fitness_aa_mut,
+    #DMS_FDR = p_value_1aa_two_sample_ttest_syn_FDR,
+    #DMS_effect_size = effect_size_vs_1aa_syn,
+
+    # effect classification
+    #DMS_effect_category = 
+      #mutation_category_FDR_1aa,
+    
+    #DMS_effect_category_lethal =
+      #mutation_category_FDR_lethal_1aa,
+
+    #DMS_effect_category_cutoff =
+      #mutation_category_FDR_cutoff_1aa_combined,
+
+    #DMS_mutation_direction =
+      #mutation_direction_lethal_1aa,
+
+    # mutation annotation
+    #aa_mut_class = aa_mut_class,
+    #aa_mutation_type = aa_mutation_type,
+
+    # structural annotation
+    #residue_structural_group =
+      #residue_structural_group_predicted,
+
+    #residue_surface_class =
+      #residue_surface_class_predicted,
+
+    #residue_interaction_class =
+      #residue_interaction_class
+  #)
+
+
+# Before joining, check whether the DMS IDs are unique
+phix_nt_DMS_merge %>%
+  dplyr::count(mutation_id) %>%
+  dplyr::filter(n > 1)
+
+#phix_aa_DMS_merge %>%
+  #dplyr::count(mutation_id) %>%
+  #dplyr::filter(n > 1)
+
+
+# Check mutation IDs match in both groups
+head(phix_nt_DMS_merge$mutation_id)
+head(evo_nt_mutations$mutation_id)
+
+#head(phix_aa_DMS_merge$mutation_id)
+#head(evo_aa_mutations$mutation_id)
+
+#table(phix_aa_DMS_merge$residue_structural_group)
+
+
+table(phix_nt_DMS_merge$DMS_effect_category)
+#   Increased   No effect Detrimental 
+#         176        7693        8229 
+
+table(phix_nt_DMS_merge$DMS_effect_category_lethal)
+#            Increased            No effect          Detrimental Strongly detrimental 
+#                  176                 7693                 3164                 5065 
+
+
+
+```
+
+
+### 3) Merge Evo designs and DMS data
+- evo_nt_analysis
+- evo_aa_analysis
+ - evo_aa_analysis_single_orf
+```{r}
+# The nucleotide master table
+evo_nt_analysis <-
+  evo_nt_mutations %>%
+  dplyr::mutate(
+
+    mutation_level = "nt",
+
+    is_substitution =
+      mutation_type == "substitution",
+
+    is_indel =
+      mutation_type %in%
+      c("insertion", "deletion")
+  ) %>%
+
+  dplyr::left_join(
+    phix_nt_DMS_merge,
+    by = "mutation_id"
+  ) %>%
+
+  dplyr::mutate(
+
+    DMS_available =
+      !is.na(DMS_fitness),
+
+    DMS_status =
+      dplyr::case_when(
+
+        is_indel ~
+          "Indel not assayed",
+
+        DMS_available ~
+          "DMS covered",
+
+        TRUE ~
+          "DMS not covered"
+      )
+  )
+
+
+# Report nucleotide classification
+evo_nt_analysis %>%
+  dplyr::filter(
+    mutation_type == "substitution"
+  ) %>%
+  dplyr::distinct(
+    nt_noncoding,
+    nt_coding,
+    nt_overlap_orf
+  )
+# # A tibble: 4 × 3
+#   nt_noncoding nt_coding nt_overlap_orf    
+#   <chr>        <chr>     <chr>             
+# 1 NA           Coding    NA                
+# 2 NA           Coding    Overlapping Coding
+# 3 Noncoding    NA        NA                
+# 4 NA           NA        NA                
+
+names(
+  evo_nt_analysis
+)
+
+
+# ============================================================
+# Genomic context for nucleotide substitutions
+# ============================================================
+
+genomic_context_levels <- c(
+  "Noncoding",
+  "Single coding",
+  "Overlapping coding",
+  "DMS not covered"
+)
+
+evo_nt_analysis <- evo_nt_analysis %>%
+  dplyr::mutate(
+    genomic_context = dplyr::case_when(
+      nt_overlap_orf == "Overlapping Coding" ~ "Overlapping coding",
+      nt_coding == "Coding" ~ "Single coding",
+      nt_noncoding == "Noncoding" ~ "Noncoding",
+      TRUE ~ "DMS not covered"
+    ),
+    genomic_context = factor(
+      genomic_context,
+      levels = genomic_context_levels
+    )
+  )
+
+evo_nt_analysis %>%
+  dplyr::count(genomic_context)
+
+# # A tibble: 4 × 2
+#   genomic_context        n
+#   <fct>              <int>
+# 1 Noncoding            133
+# 2 Single coding       1746
+# 3 Overlapping coding   185
+# 4 DMS not covered       33
+
+evo_nt_analysis %>%
+  dplyr::count(DMS_status)
+# # A tibble: 3 × 2
+#   DMS_status            n
+#   <chr>             <int>
+# 1 DMS covered        2064
+# 2 DMS not covered      16
+# 3 Indel not assayed    17
+
+
+# The AA master table
+#evo_aa_analysis <-
+  #evo_aa_mutations %>%
+  #dplyr::mutate(
+
+    #mutation_level = "aa",
+
+    #is_substitution =
+      #mutation_type == "substitution",
+
+    #is_indel =
+      #mutation_type %in%
+      #c("insertion", "deletion")
+  #) %>%
+
+  #dplyr::left_join(
+    #phix_aa_DMS_merge,
+    #by = c(
+      #"mutation_id" = "mutation_id",
+      #"protein" = "protein_DMS"
+    #)
+  #) %>%
+
+  #dplyr::mutate(
+
+    #DMS_available =
+      #!is.na(DMS_fitness),
+
+    # Can this DMS phenotype be uniquely attributed
+    # to this single protein substitution?
+    #DMS_single_orf =
+      #DMS_available &
+      #DMS_orf_class == "single_orf",
+
+    #DMS_status = dplyr::case_when(
+
+      #is_indel ~
+        #"Indel not assayed",
+
+      #!DMS_available ~
+        #"DMS not covered",
+
+      #DMS_orf_class == "single_orf" ~
+        #"DMS covered: single ORF",
+
+      #DMS_orf_class == "multi_orf" ~
+        #"DMS covered: multiple ORFs",
+
+      #DMS_orf_class == "Synonymous" ~
+        #"DMS covered: synonymous",
+
+      #TRUE ~
+        #"DMS others"
+    #)
+  #)
+
+# Use only single orf AA mutations data for analysis
+#evo_aa_analysis_single_orf <- evo_aa_analysis %>%
+  #dplyr::filter(
+    #mutation_type == "substitution",
+    #DMS_single_orf
+  #)
+
+
+# Coverage checks
+evo_nt_analysis %>%
+  dplyr::count(
+    mutation_type,
+    DMS_status
+  )
+
+# # A tibble: 4 × 3
+#   mutation_type DMS_status                   n
+#   <chr>         <chr>                    <int>
+# 1 deletion      Indel_not_assayed            5
+# 2 insertion     Indel_not_assayed           12
+# 3 substitution  covered                   2064
+# 4 substitution  DMS_not_covered             16
+
+
+evo_nt_analysis %>%
+  dplyr::filter(
+    mutation_type == "substitution"
+  ) %>%
+  dplyr::summarise(
+    n_substitutions = dplyr::n(),
+    n_DMS_measured = sum(DMS_available),
+    coverage = mean(DMS_available)
+  )
+
+# # A tibble: 1 × 3
+#   n_substitutions n_DMS_measured coverage
+#             <int>          <int>    <dbl>
+# 1            2080           2064    0.992
+
+
+#evo_aa_analysis %>%
+  #dplyr::count(
+    #mutation_type,
+    #DMS_status
+  #)
+
+# # A tibble: 5 × 3
+#   mutation_type DMS_status                     n
+#   <chr>         <chr>                      <int>
+# 1 deletion      Indel not assayed              6
+# 2 insertion     Indel not assayed             19
+# 3 substitution  DMS covered: multiple ORFs    29
+# 4 substitution  DMS covered: single ORF      480
+# 5 substitution  DMS not covered                1
+
+#evo_aa_analysis %>%
+  #dplyr::filter(
+    #mutation_type == "substitution"
+  #) %>%
+  #dplyr::summarise(
+    #n_substitutions = dplyr::n(),
+    #n_DMS_measured = sum(DMS_available),
+    #coverage = mean(DMS_available)
+  #)
+
+# # A tibble: 1 × 3
+#   n_substitutions n_DMS_measured coverage
+#             <int>          <int>    <dbl>
+# 1             510            509    0.998
+
+#evo_aa_analysis %>%
+  #dplyr::filter(
+    #mutation_type == "substitution",
+    #DMS_available
+  #) %>%
+  #dplyr::summarise(
+    #n_DMS_matched = dplyr::n(),
+
+    #n_single_orf =
+      #sum(DMS_single_orf, na.rm = TRUE),
+
+    #n_excluded =
+      #sum(!DMS_single_orf, na.rm = TRUE),
+
+    #proportion_single_orf =
+      #mean(DMS_single_orf, na.rm = TRUE)
+  #)
+
+# # A tibble: 1 × 4
+#   n_DMS_matched n_single_orf n_excluded proportion_single_orf
+#           <int>        <int>      <int>                 <dbl>
+# 1           509          480         29                 0.943
+
+
+
+
+```
+
+Need a coding-event table to include synonymous mutations
+- evo_codon_changes
+```{r}
+## Prepare a coding-event table
+# ============================================================
+# Coding substitution consequences
+# ============================================================
+
+#evo_coding_substitutions <- evo_codon_changes %>%
+  #dplyr::filter(
+    #consequence %in% c(
+      #"synonymous",
+      #"missense",
+      #"nonsense",
+      #"stop_loss"
+    #)
+  #) %>%
+  #dplyr::transmute(
+    #isolate,
+    #accession_version,
+    #protein,
+    #event_id = dplyr::coalesce(aa_mutation_id, nt_mutation_ids),
+    #coding_event_type = dplyr::case_when(
+      #consequence == "synonymous" ~ "Synonymous",
+      #consequence == "missense"   ~ "Missense",
+      #consequence == "nonsense"   ~ "Nonsense",
+      #consequence == "stop_loss"  ~ "Stop-loss",
+      #TRUE ~ as.character(consequence)
+    #)
+  #)
+
+
+# ============================================================
+# Coding indel consequences
+# One row per isolate-protein with a coding indel
+# ============================================================
+
+#evo_coding_indels <- evo_codon_QC %>%
+  #dplyr::filter(has_coding_indel) %>%
+  #dplyr::transmute(
+    #isolate,
+    #accession_version,
+    #protein,
+    #event_id = paste0(
+      #"coding_indel_",
+      #protein,
+      #"_ins", inserted_nt,
+      #"_del", deleted_nt
+    #),
+    #coding_event_type = dplyr::case_when(
+      #frameshift ~ "Frameshift",
+      #TRUE ~ "In-frame indel"
+    #),
+    #inserted_nt,
+    #deleted_nt,
+    #frameshift
+  #)
+
+
+# ============================================================
+# Combined coding events table
+# ============================================================
+
+#coding_event_levels <- c(
+  #"Synonymous",
+  #"Missense",
+  #"Nonsense",
+  #"Stop-loss",
+  #"In-frame indel",
+  #"Frameshift"
+#)
+
+#evo_coding_events <- dplyr::bind_rows(
+  #evo_coding_substitutions,
+  #evo_coding_indels
+#) %>%
+  #dplyr::mutate(
+    #isolate = factor(isolate, levels = evo_analysis_index$isolate),
+    #protein = factor(protein, levels = c("A", "B", "C", "D", "E", "F", "G", "H", "J", "K")),
+    #coding_event_type = factor(
+      #coding_event_type,
+      #levels = coding_event_levels
+    #)
+  #)
+
+#evo_coding_events %>%
+  #dplyr::count(coding_event_type)
+
+# # A tibble: 4 × 2
+#   coding_event_type     n
+#   <fct>             <int>
+# 1 Synonymous         1483
+# 2 Missense            505
+# 3 Nonsense              1
+# 4 Frameshift            4
+
+
+
+
+# Create synonymous IDs
+#evo_codon_changes <- evo_codon_changes %>%
+  #dplyr::mutate(
+
+    #synonymous_mutation_id = dplyr::case_when(
+
+      #consequence == "synonymous" ~
+        #paste0(
+          #"gp",
+          #protein,
+          #"_",
+          #WT_AA,
+          #aa_position,
+          #"syn"
+        #),
+
+      #TRUE ~ NA_character_
+    #)
+  #)
+
+#evo_codon_changes <- evo_codon_changes %>%
+  #dplyr::mutate(
+
+    #codon_mutation_id = dplyr::case_when(
+
+      #consequence == "synonymous" ~
+        #synonymous_mutation_id,
+
+      #consequence %in% c(
+        #"missense",
+        #"nonsense",
+        #"stop_loss"
+      #) ~
+        #aa_mutation_id,
+
+      #TRUE ~ NA_character_
+    #)
+  #)
+
+
+# Merging synonymous data
+#evo_codon_changes %>%
+  #dplyr::filter(
+    #consequence == "synonymous"
+  #) %>%
+  #dplyr::count(
+    #synonymous_mutation_id,
+    #sort = TRUE
+  #) %>%
+  #dplyr::filter(
+    #n > 1
+  #)
+
+#phix_proteome_dms_mut_Fitness_unique_advanced %>%
+  #dplyr::filter(
+    #phix_aa_mut_orf_class == "Synonymous"
+  #) %>%
+  #dplyr::count(
+    #aa_mut_ID,
+    #sort = TRUE
+  #) %>%
+  #dplyr::filter(
+    #n > 1
+  #)
+
+# Synonymous look-up table
+#phix_syn_DMS_merge <-
+  #phix_proteome_dms_mut_Fitness_unique_advanced %>%
+  #dplyr::filter(
+    #phix_aa_mut_orf_class == "Synonymous"
+  #) %>%
+  #dplyr::transmute(
+
+    #mutation_id = aa_mut_ID,
+
+    #protein_DMS = aa_mut_gene,
+    #aa_position_DMS = aa_mut_pos,
+
+    #WT_AA_DMS = aa_mut_wt,
+
+    #DMS_orf_class = phix_aa_mut_orf_class,
+
+    #DMS_fitness = fitness_aa_mut,
+    #DMS_FDR = p_value_1aa_two_sample_ttest_syn_FDR,
+    #DMS_effect_size = effect_size_vs_1aa_syn,
+
+    #DMS_effect_category =
+      #mutation_category_FDR_1aa,
+    
+    #DMS_effect_category_lethal =
+      #mutation_category_FDR_lethal_1aa,
+
+    #DMS_mutation_direction =
+      #mutation_direction_lethal_1aa
+  #)
+
+#phix_syn_DMS_merge %>%
+  #dplyr::count(mutation_id) %>%
+  #dplyr::filter(n > 1)
+
+
+# Create the Evo synonymous mutation table
+#evo_synonymous_mutations <- evo_codon_changes %>%
+  #dplyr::filter(
+    #consequence == "synonymous"
+  #) %>%
+  #dplyr::transmute(
+
+    #isolate,
+    #accession_version,
+
+    #protein,
+    #aa_position,
+
+    #WT_AA,
+
+    #WT_codon,
+    #Evo_codon,
+
+    #nt_mutation_ids,
+
+    #mutation_id =
+      #synonymous_mutation_id
+  #)
+
+
+# Merge synonymous DMS data 
+#evo_synonymous_analysis <- evo_synonymous_mutations %>%
+  #dplyr::left_join(
+    #phix_syn_DMS_merge,
+    #by = c(
+      #"mutation_id" = "mutation_id",
+      #"protein" = "protein_DMS"
+    #)
+  #) %>%
+  #dplyr::mutate(
+
+    #DMS_available =
+      #!is.na(DMS_fitness),
+
+    #DMS_status =
+      #dplyr::case_when(
+
+        #DMS_available ~
+          #"DMS covered",
+
+        #TRUE ~
+          #"DMS not covered"
+      #)
+  #)
+
+# Check coverage
+#evo_synonymous_analysis %>%
+  #dplyr::count(
+    #DMS_status
+  #)
+# # A tibble: 2 × 2
+#   DMS_status          n
+#   <chr>           <int>
+# 1 DMS covered      1333
+# 2 DMS not covered   150
+
+
+#evo_synonymous_analysis %>%
+  #dplyr::summarise(
+    #n_synonymous = dplyr::n(),
+    #n_DMS_measured = sum(DMS_available),
+    #coverage = mean(DMS_available)
+  #)
+# # A tibble: 1 × 3
+#   n_synonymous n_DMS_measured coverage
+#          <int>          <int>    <dbl>
+# 1         1483           1333    0.899
+
+
+
+
+
+```
+
+
+### 4) Counts and Proportions of mutations, overview
+The count of detrimental and non-detrimental mutants in each of the 16 Evo-phage
+- Subset the 16 Evo design phages provided with the lytic rank
+```{r}
+# Define the 16 phages
+analysis_isolates <- intersect(
+  unique(evo_lytic_ranking$isolate),
+  unique(evo_nt_analysis$isolate)
+)
+
+length(analysis_isolates)
+analysis_isolates
+# [1] "Evo-Phi2483" "Evo-Phi69"   "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi46"   "Evo-Phi2498" "Evo-Phi5"    "Evo-Phi100"  "Evo-Phi2147" "Evo-Phi75"   "Evo-Phi36"   "Evo-Phi4"    "Evo-Phi3392" "Evo-Phi316"  "Evo-Phi63"  
+
+
+# NT substitutions: detrimental vs non-detrimental per phage
+nt_effect_counts_by_phage <- evo_nt_analysis %>%
+  dplyr::filter(
+    isolate %in% analysis_isolates,
+    mutation_type == "substitution",
+    DMS_available
+  ) %>%
+  dplyr::distinct(
+    isolate,
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::mutate(
+    effect_group = dplyr::case_when(
+      DMS_effect_category %in% c(
+        #"Reduced replication",
+        #"Strongly detrimental"
+        
+        "Detrimental",
+        "Strongly detrimental"
+      ) ~ "Detrimental",
+
+      DMS_effect_category %in% c(
+        #"Increased replication",
+        #"No measurable effect"
+        
+        "Increased",
+        "No effect"
+      ) ~ "Non-detrimental",
+
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::filter(
+    !is.na(effect_group)
+  ) %>%
+  dplyr::group_by(isolate) %>%
+  dplyr::summarise(
+    n_nt_total = dplyr::n(),
+
+    n_nt_detrimental = sum(
+      effect_group == "Detrimental"
+    ),
+
+    n_nt_non_detrimental = sum(
+      effect_group == "Non-detrimental"
+    ),
+
+    .groups = "drop"
+  )
+
+nt_effect_counts_by_phage
+# # A tibble: 16 × 4
+#    isolate     n_nt_total n_nt_detrimental n_nt_non_detrimental
+#    <chr>            <int>            <int>                <int>
+#  1 Evo-Phi100         137               17                  120
+#  2 Evo-Phi108         141               11                  130
+#  3 Evo-Phi111         107               13                   94
+#  4 Evo-Phi114          77                6                   71
+ # 5 Evo-Phi2147        116                8                  108
+
+
+
+# AA substitutions: detrimental vs non-detrimental
+#aa_effect_counts_by_phage <- evo_aa_analysis %>%
+  #dplyr::filter(
+    #isolate %in% analysis_isolates,
+    #mutation_type == "substitution",
+    #DMS_single_orf
+  #) %>%
+  #dplyr::distinct(
+    #isolate,
+    #protein,
+    #mutation_id,
+    #.keep_all = TRUE
+  #) %>%
+  #dplyr::mutate(
+    #effect_group = dplyr::case_when(
+      #DMS_effect_category %in% c(
+        #"Reduced replication",
+        #"Strongly detrimental"
+      #) ~ "Detrimental",
+
+      #DMS_effect_category %in% c(
+        #"Increased replication",
+        #"No measurable effect"
+      #) ~ "Non-detrimental",
+
+      #TRUE ~ NA_character_
+    #)
+  #) %>%
+  #dplyr::filter(
+    #!is.na(effect_group)
+  #) %>%
+  #dplyr::group_by(isolate) %>%
+  #dplyr::summarise(
+    #n_aa_total = dplyr::n(),
+
+    #n_aa_detrimental = sum(
+      #effect_group == "Detrimental"
+    #),
+
+    #n_aa_non_detrimental = sum(
+      #effect_group == "Non-detrimental"
+    #),
+
+    #.groups = "drop"
+  #)
+
+
+# Noncoding NT substitutions
+noncoding_effect_counts_by_phage <- evo_nt_analysis %>%
+  dplyr::filter(
+    isolate %in% analysis_isolates,
+    mutation_type == "substitution",
+    DMS_available,
+    genomic_context == "Noncoding"
+  ) %>%
+  dplyr::distinct(
+    isolate,
+    mutation_id,
+    .keep_all = TRUE
+  ) %>%
+  dplyr::mutate(
+    effect_group = dplyr::case_when(
+      DMS_effect_category %in% c(
+        #"Reduced replication",
+        #"Strongly detrimental"
+        
+        "Detrimental",
+        "Strongly detrimental"
+      ) ~ "Detrimental",
+
+      DMS_effect_category %in% c(
+        #"Increased replication",
+        #"No measurable effect"
+        
+        "Increased",
+        "No effect"
+      ) ~ "Non-detrimental",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::filter(
+    !is.na(effect_group)
+  ) %>%
+  dplyr::group_by(isolate) %>%
+  dplyr::summarise(
+    n_noncoding_total = dplyr::n(),
+
+    n_noncoding_detrimental = sum(
+      effect_group == "Detrimental"
+    ),
+
+    n_noncoding_non_detrimental = sum(
+      effect_group == "Non-detrimental"
+    ),
+
+    .groups = "drop"
+  )
+noncoding_effect_counts_by_phage
+
+
+
+# One-master-table
+#evo_detrimental_summary_by_phage <- tibble::tibble(
+  #isolate = analysis_isolates
+#) %>%
+  #dplyr::left_join(
+    #nt_effect_counts_by_phage,
+    #by = "isolate"
+  #) %>%
+  #dplyr::left_join(
+    #aa_effect_counts_by_phage,
+    #by = "isolate"
+  #) %>%
+  #dplyr::left_join(
+    #noncoding_effect_counts_by_phage,
+    #by = "isolate"
+  #) %>%
+  #dplyr::arrange(
+    #match(isolate, analysis_isolates)
+  #)
+
+
+#evo_detrimental_summary_by_phage %>%
+  #dplyr::select(
+    #isolate,
+
+    #n_nt_detrimental,
+    #n_nt_non_detrimental,
+
+    #n_aa_detrimental,
+    #n_aa_non_detrimental,
+
+    #n_noncoding_detrimental,
+    #n_noncoding_non_detrimental
+  #)
+
+# # A tibble: 16 × 7
+#    isolate     n_nt_detrimental n_nt_non_detrimental n_aa_detrimental n_aa_non_detrimental n_noncoding_detrimental n_noncoding_non_detrimental
+#    <chr>                  <int>                <int>            <int>                <int>                   <int>                       <int>
+#  1 Evo-Phi2483                3                   55                3                   12                       0                           6
+#  2 Evo-Phi69                  4                   65                3                   19                       0                           8
+#  3 Evo-Phi108                11                  130                4                   23                       0                           7
+#  4 Evo-Phi111                13                   94                8                   22                       0                           8
+#  5 Evo-Phi114                 6                   71                4                   13                       0                           7
+#  6 Evo-Phi46                 14                  151                4                   34                       0                           8
+#  7 Evo-Phi2498                3                   69                2                   12                       0                           5
+#  8 Evo-Phi5                  12                  200                5                   27                       0                           9
+#  9 Evo-Phi100                17                  120                7                   23                       0                           9
+# 10 Evo-Phi2147                8                  108                3                   20                       1                          10
+# 11 Evo-Phi75                 12                  102                4                   27                      NA                          NA
+# 12 Evo-Phi36                 18                  103                8                   22                       0                          12
+# 13 Evo-Phi4                  24                  155               11                   29                       0                           9
+# 14 Evo-Phi3392               11                  103                6                   20                       0                           5
+# 15 Evo-Phi316                 7                   68                4                   21                       0                           6
+# 16 Evo-Phi63                  6                  115                4                   29                       0                           8
+
+
+
+
+# Get the Min / Median / Max counts
+#nt_detrimental_range <- summarise_detrimental_range(
+  #data = nt_effect_counts_by_phage,
+  #detrimental_col = n_nt_detrimental,
+  #non_detrimental_col = n_nt_non_detrimental
+#)
+
+#nt_detrimental_range
+# # A tibble: 5 × 5
+#   statistic                  detrimental_count isolate     non_detrimental_count median_detrimental_count
+#   <chr>                                  <int> <chr>                       <int>                    <dbl>
+# 1 Minimum                                    3 Evo-Phi2483                    55                       11
+# 2 Minimum                                    3 Evo-Phi2498                    69                       11
+# 3 Median / closest to median                11 Evo-Phi108                    130                       11
+# 4 Median / closest to median                11 Evo-Phi3392                   103                       11
+# 5 Maximum                                   24 Evo-Phi4                      155                       11
+
+#aa_detrimental_range <- summarise_detrimental_range(
+  #data = aa_effect_counts_by_phage,
+  #detrimental_col = n_aa_detrimental,
+  #non_detrimental_col = n_aa_non_detrimental
+#)
+
+#aa_detrimental_range
+# # A tibble: 8 × 5
+#   statistic                  detrimental_count isolate     non_detrimental_count median_detrimental_count
+#   <chr>                                  <int> <chr>                       <int>                    <dbl>
+# 1 Minimum                                    2 Evo-Phi2498                    12                        4
+# 2 Median / closest to median                 4 Evo-Phi108                     23                        4
+# 3 Median / closest to median                 4 Evo-Phi114                     13                        4
+# 4 Median / closest to median                 4 Evo-Phi316                     21                        4
+# 5 Median / closest to median                 4 Evo-Phi46                      34                        4
+# 6 Median / closest to median                 4 Evo-Phi63                      29                        4
+# 7 Median / closest to median                 4 Evo-Phi75                      27                        4
+# 8 Maximum                                   11 Evo-Phi4                       29                        4
+
+#noncoding_detrimental_range <- summarise_detrimental_range(
+  #data = noncoding_effect_counts_by_phage,
+  #detrimental_col = n_noncoding_detrimental,
+  #non_detrimental_col = n_noncoding_non_detrimental
+#)
+
+#noncoding_detrimental_range
+# # A tibble: 29 × 5
+#    statistic detrimental_count isolate     non_detrimental_count median_detrimental_count
+#    <chr>                 <int> <chr>                       <int>                    <int>
+#  1 Minimum                   0 Evo-Phi100                      9                        0
+#  2 Minimum                   0 Evo-Phi108                      7                        0
+#  3 Minimum                   0 Evo-Phi111                      8                        0
+#  4 Minimum                   0 Evo-Phi114                      7                        0
+#  5 Minimum                   0 Evo-Phi2483                     6                        0
+#  6 Minimum                   0 Evo-Phi2498                     5                        0
+#  7 Minimum                   0 Evo-Phi316                      6                        0
+#  8 Minimum                   0 Evo-Phi3392                     5                        0
+#  9 Minimum                   0 Evo-Phi36                      12                        0
+# 10 Minimum                   0 Evo-Phi4                        9                        0
+# # ℹ 19 more rows
+# # ℹ Use `print(n = ...)` to see more rows
+
+
+# Calculate the simple numerical summaries
+nt_effect_counts_by_phage %>%
+  dplyr::summarise(
+    min_detrimental =
+      min(n_nt_detrimental),
+
+    median_detrimental =
+      median(n_nt_detrimental),
+
+    max_detrimental =
+      max(n_nt_detrimental),
+
+    min_non_detrimental =
+      min(n_nt_non_detrimental),
+
+    median_non_detrimental =
+      median(n_nt_non_detrimental),
+
+    max_non_detrimental =
+      max(n_nt_non_detrimental)
+  )
+# # A tibble: 1 × 6
+#   min_detrimental median_detrimental max_detrimental min_non_detrimental median_non_detrimental max_non_detrimental
+#             <int>              <dbl>           <int>               <int>                  <dbl>               <int>
+# 1               3                 11              24                  55                    103                 200
+
+#aa_effect_counts_by_phage %>%
+  #dplyr::summarise(
+    #min_detrimental =
+      #min(n_aa_detrimental),
+
+    #median_detrimental =
+      #median(n_aa_detrimental),
+
+    #max_detrimental =
+      #max(n_aa_detrimental),
+
+    #min_non_detrimental =
+      #min(n_aa_non_detrimental),
+
+    #median_non_detrimental =
+      #median(n_aa_non_detrimental),
+
+    #max_non_detrimental =
+      #max(n_aa_non_detrimental)
+  #)
+# # A tibble: 1 × 6
+#   min_detrimental median_detrimental max_detrimental min_non_detrimental median_non_detrimental max_non_detrimental
+#             <int>              <dbl>           <int>               <int>                  <dbl>               <int>
+# 1               2                  4              11                  12                     22                  34
+
+#noncoding_effect_counts_by_phage %>%
+  #dplyr::summarise(
+    #min_detrimental =
+      #min(n_noncoding_detrimental),
+
+    #median_detrimental =
+      #median(n_noncoding_detrimental),
+
+    #max_detrimental =
+      #max(n_noncoding_detrimental),
+
+    #min_non_detrimental =
+      #min(n_noncoding_non_detrimental),
+
+    #median_non_detrimental =
+      #median(n_noncoding_non_detrimental),
+
+    #max_non_detrimental =
+      #max(n_noncoding_non_detrimental)
+  #)
+# # A tibble: 1 × 6
+#   min_detrimental median_detrimental max_detrimental min_non_detrimental median_non_detrimental max_non_detrimental
+#             <int>              <int>           <int>               <int>                  <int>               <int>
+# 1               0                  0               1                   5                      8                  12
+
+
+# combine three classes
+#detrimental_range_summary <- dplyr::bind_rows(
+
+  #nt_detrimental_range %>%
+    #dplyr::mutate(
+      #mutation_level = "NT",
+      #.before = 1
+    #),
+
+  #aa_detrimental_range %>%
+    #dplyr::mutate(
+      #mutation_level = "AA",
+      #.before = 1
+    #),
+
+  #noncoding_detrimental_range %>%
+    #dplyr::mutate(
+      #mutation_level = "Noncoding NT",
+      #.before = 1
+    #)
+#)
+
+#detrimental_range_summary
+
+
+
+
+## Plottings [Skipped, updated below]
+# First make sure the summary tables have 0 instead of NA
+nt_effect_counts_by_phage <- nt_effect_counts_by_phage %>%
+  dplyr::mutate(
+    dplyr::across(
+      c(
+        n_nt_total,
+        n_nt_detrimental,
+        n_nt_non_detrimental
+      ),
+      ~ tidyr::replace_na(.x, 0)
+    )
+  )
+
+#aa_effect_counts_by_phage <- aa_effect_counts_by_phage %>%
+  #dplyr::mutate(
+    #dplyr::across(
+      #c(
+        #n_aa_total,
+        #n_aa_detrimental,
+        #n_aa_non_detrimental
+      #),
+      #~ tidyr::replace_na(.x, 0)
+    #)
+  #)
+
+#noncoding_effect_counts_by_phage <- noncoding_effect_counts_by_phage %>%
+  #dplyr::mutate(
+    #dplyr::across(
+      #c(
+        #n_noncoding_total,
+        #n_noncoding_detrimental,
+        #n_noncoding_non_detrimental
+      #),
+      #~ tidyr::replace_na(.x, 0)
+    #)
+  #)
+
+
+#detrimental_group_colors <- c(
+  #"Non-detrimental" = "gray80",
+  #"Detrimental" = "#F0988C"
+#)
+
+#phage_order_16 <- analysis_isolates
+
+#p_nt_detrimental_counts <- plot_detrimental_bar(
+  #data = nt_effect_counts_by_phage,
+  #isolate_col = isolate,
+  #detrimental_col = n_nt_detrimental,
+  #non_detrimental_col = n_nt_non_detrimental,
+  #title = "NT substitutions in Evo-phages",
+  #y_label = "Count of NT substitutions",
+  #isolate_levels = phage_order_16
+#)
+
+#p_nt_detrimental_counts
+
+
+#p_aa_detrimental_counts <- plot_detrimental_bar(
+  #data = aa_effect_counts_by_phage,
+  #isolate_col = isolate,
+  #detrimental_col = n_aa_detrimental,
+  #non_detrimental_col = n_aa_non_detrimental,
+  #title = "AA substitutions in Evo-phages",
+  #y_label = "Count of AA substitutions",
+  #isolate_levels = phage_order_16
+#)
+
+#p_aa_detrimental_counts
+
+
+#p_noncoding_detrimental_counts <- plot_detrimental_bar(
+  #data = noncoding_effect_counts_by_phage,
+  #isolate_col = isolate,
+  #detrimental_col = n_noncoding_detrimental,
+  #non_detrimental_col = n_noncoding_non_detrimental,
+  #title = "Noncoding NT substitutions in Evo-phages",
+  #y_label = "Count of noncoding NT substitutions",
+  #isolate_levels = phage_order_16
+#)
+
+#p_noncoding_detrimental_counts
+
+
+
+
+
+# A reusable function to plot bar plots
+plot_detrimental_bar <- function(
+    data,
+    isolate_col,
+    detrimental_col,
+    non_detrimental_col,
+    title,
+    y_label = "Mutation count",
+    isolate_levels = NULL
+) {
+
+  isolate_col <- rlang::ensym(isolate_col)
+  detrimental_col <- rlang::ensym(detrimental_col)
+  non_detrimental_col <- rlang::ensym(non_detrimental_col)
+
+  plot_df <- data %>%
+    dplyr::transmute(
+      isolate = as.character(!!isolate_col),
+      Detrimental = !!detrimental_col,
+      `Non-detrimental` = !!non_detrimental_col
+    ) %>%
+    tidyr::pivot_longer(
+      cols = c("Detrimental", "Non-detrimental"),
+      names_to = "effect_group",
+      values_to = "count"
+    )
+
+  if (!is.null(isolate_levels)) {
+    plot_df <- plot_df %>%
+      dplyr::mutate(
+        isolate = factor(
+          isolate,
+          levels = isolate_levels
+        )
+      )
+  }
+
+  total_df <- plot_df %>%
+    dplyr::group_by(isolate) %>%
+    dplyr::summarise(
+      total_count = sum(count),
+      .groups = "drop"
+    )
+
+  ggplot2::ggplot(
+    plot_df,
+    ggplot2::aes(
+      x = isolate,
+      y = count,
+      fill = effect_group
+    )
+  ) +
+    ggplot2::geom_col(
+      width = 0.85,
+      color = "black"
+    ) +
+    ggplot2::scale_fill_manual(
+      values = detrimental_group_colors,
+      name = NULL
+    ) +
+    ggplot2::geom_text(
+      data = total_df,
+      ggplot2::aes(
+        x = isolate,
+        y = total_count,
+        label = total_count
+      ),
+      inherit.aes = FALSE,
+      vjust = -0.3,
+      size = 3.5
+    ) +
+    ggplot2::labs(
+      title = title,
+      x = "Evo-phage isolate",
+      y = y_label
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        angle = 45,
+        hjust = 1
+      )
+    ) +
+    ggplot2::coord_cartesian(
+      clip = "off"
+    )
+}
+
+
+
+# Function to get the Min/Median/Max function
+summarise_detrimental_range <- function(
+    data,
+    detrimental_col,
+    non_detrimental_col
+) {
+
+  detrimental_col <- rlang::ensym(detrimental_col)
+  non_detrimental_col <- rlang::ensym(non_detrimental_col)
+
+  det_name <- rlang::as_name(detrimental_col)
+  nondet_name <- rlang::as_name(non_detrimental_col)
+
+  df <- data %>%
+    dplyr::filter(
+      !is.na(!!detrimental_col),
+      !is.na(!!non_detrimental_col)
+    )
+
+  min_value <- min(
+    df[[det_name]],
+    na.rm = TRUE
+  )
+
+  median_value <- stats::median(
+    df[[det_name]],
+    na.rm = TRUE
+  )
+
+  max_value <- max(
+    df[[det_name]],
+    na.rm = TRUE
+  )
+
+  min_rows <- df %>%
+    dplyr::filter(
+      .data[[det_name]] == min_value
+    ) %>%
+    dplyr::transmute(
+      statistic = "Minimum",
+      detrimental_count = .data[[det_name]],
+      isolate,
+      non_detrimental_count = .data[[nondet_name]]
+    )
+
+  max_rows <- df %>%
+    dplyr::filter(
+      .data[[det_name]] == max_value
+    ) %>%
+    dplyr::transmute(
+      statistic = "Maximum",
+      detrimental_count = .data[[det_name]],
+      isolate,
+      non_detrimental_count = .data[[nondet_name]]
+    )
+
+  median_distance <- abs(
+    df[[det_name]] - median_value
+  )
+
+  median_rows <- df %>%
+    dplyr::filter(
+      abs(.data[[det_name]] - median_value) ==
+        min(median_distance)
+    ) %>%
+    dplyr::transmute(
+      statistic = "Median / closest to median",
+      detrimental_count = .data[[det_name]],
+      isolate,
+      non_detrimental_count = .data[[nondet_name]]
+    )
+
+  dplyr::bind_rows(
+    min_rows,
+    median_rows,
+    max_rows
+  ) %>%
+    dplyr::mutate(
+      median_detrimental_count = median_value
+    )
+}
+
+
+
+```
+
+
+
+
+
+## Visualizing mutational effects in viable Evo genomes
+### 1) Prepare plotting data
+Prepare substitution-only genomes for downstream analysis
+```{r}
+# Check data 
+head(as.data.frame(evo_analysis_summary), 0)
+
+names(evo_analysis_summary)
+
+# Evo designed genome architecture
+evo_genome_architecture <- evo_analysis_summary %>%
+  dplyr::mutate(
+
+    genome_class = dplyr::case_when(
+
+      n_nt_insertions == 0 &
+        n_nt_deletions == 0 ~
+        "Substitution only",
+
+      TRUE ~
+        "Contains indel"
+    )
+  )
+
+evo_genome_architecture %>%
+  dplyr::select(
+    isolate,
+    genome_length,
+    n_nt_substitutions,
+    n_nt_insertions,
+    n_nt_deletions,
+    inserted_nt,
+    deleted_nt,
+    genome_class
+  )
+
+table(evo_genome_architecture$genome_class)
+#   Contains indel Substitution only 
+#                6                12 
+
+
+# Get substitution-only genomes
+substitution_only_isolates <- evo_genome_architecture %>%
+  dplyr::filter(
+    genome_class == "Substitution only"
+  ) %>%
+  dplyr::pull(isolate) %>%
+  as.character()
+
+substitution_only_isolates
+length(substitution_only_isolates)
+# [1] 12
+
+
+# Order the genomes
+substitution_only_isolate_order <-
+  evo_analysis_index$isolate[
+    evo_analysis_index$isolate %in%
+      substitution_only_isolates
+  ]
+
+
+# Apply to two levels
+evo_nt_analysis_subs <- evo_nt_analysis %>%
+  dplyr::filter(
+    isolate %in% substitution_only_isolates,
+    mutation_type == "substitution"
+  ) %>%
+  dplyr::mutate(
+    isolate = factor(
+      isolate,
+      levels = substitution_only_isolate_order
+    )
+  )
+
+
+#evo_aa_analysis_subs <- evo_aa_analysis %>%
+  #dplyr::filter(
+    #isolate %in% substitution_only_isolates,
+    #mutation_type == "substitution"
+  #) %>%
+  #dplyr::distinct(
+    #isolate,
+    #protein,
+    #mutation_id,
+    #.keep_all = TRUE
+  #) %>%
+  #dplyr::mutate(
+    #isolate = factor(
+      #isolate,
+      #levels = substitution_only_isolate_order
+    #)
+  #)
+
+# Single-orf AA mutations
+#evo_aa_analysis_subs <- evo_aa_analysis %>%
+  #dplyr::filter(
+    #isolate %in% substitution_only_isolates,
+    #mutation_type == "substitution"
+  #)
+
+#evo_aa_effect_subs_single_orf <- evo_aa_analysis_subs %>%
+  #dplyr::filter(
+    #DMS_single_orf
+  #)
+
+
+# Follow the metadata order 
+evo_isolate_order <- evo_analysis_index$isolate
+#  [1] "Evo-Phi4"    "Evo-Phi5"    "Evo-Phi36"   "Evo-Phi46"   "Evo-Phi63"   "Evo-Phi69"   "Evo-Phi75"   "Evo-Phi100"  "Evo-Phi108"  "Evo-Phi111"  "Evo-Phi114"  "Evo-Phi316"  "Evo-Phi2147" "Evo-Phi2483" "Evo-Phi2498"
+# [16] "Evo-Phi3392" "Evo-PhiR1"   "Evo-PhiR2"  
+
+
+# Apply to both datasets 
+evo_nt_analysis <- evo_nt_analysis %>%
+  dplyr::mutate(
+    isolate = factor(
+      isolate,
+      levels = evo_isolate_order
+    )
+  )
+
+#evo_aa_analysis <- evo_aa_analysis %>%
+  #dplyr::mutate(
+    #isolate = factor(
+      #isolate,
+      #levels = evo_isolate_order
+    #)
+  #)
+
+#evo_aa_effect_subs_single_orf <- evo_aa_effect_subs_single_orf %>%
+  #dplyr::mutate(
+    #isolate = factor(
+      #isolate,
+      #levels = evo_isolate_order
+    #)
+  #)
+
+#evo_synonymous_analysis <- evo_synonymous_analysis %>%
+  #dplyr::filter(
+    #isolate %in% substitution_only_isolates
+  #) %>%
+  #dplyr::mutate(
+    #isolate = factor(
+      #isolate,
+      #levels = evo_isolate_order
+    #)
+  #)
+
+
+
+```
+
+
+### 2) Plotting
+Define common factor levels and palettes
+```{r}
+# Inspect the exact category
+unique(evo_nt_analysis$DMS_effect_category)
+# [1] Neutral     Lethal      Detrimental Beneficial  <NA>  
+# Levels: Increased No effect Detrimental
+
+unique(evo_nt_analysis$DMS_effect_category_lethal)
+# [1] No effect            Strongly detrimental Detrimental          Increased            <NA>    
+# Levels: Increased No effect Detrimental Strongly detrimental
+
+
+# Effect categories
+effect_levels <- c(
+  "Increased",
+  "No effect",
+  "Detrimental",
+  "Strongly detrimental"
+)
+
+effect_colors <- c(
+  "Increased"  = "#A1A9D0",
+  "No effect"     = "#D9D9D9",
+  "Detrimental" = "#F4A6A6",
+  "Strongly detrimental"      = "#F0988C"
+)
+
+evo_nt_analysis <- evo_nt_analysis %>%
+  dplyr::mutate(
+    DMS_effect_category = factor(
+      DMS_effect_category,
+      levels = effect_levels
+    )
+  )
+
+#evo_aa_analysis <- evo_aa_analysis %>%
+  #dplyr::mutate(
+    #DMS_effect_category = factor(
+      #DMS_effect_category,
+      #levels = effect_levels
+    #)
+  #)
+
+#evo_aa_effect_subs_single_orf <- evo_aa_effect_subs_single_orf %>%
+  #dplyr::mutate(
+    #DMS_effect_category = factor(
+      #DMS_effect_category,
+      #levels = effect_levels
+    #)
+  #)
+
+
+
+# DMS coverage categories
+evo_nt_analysis %>%
+  dplyr::count(DMS_status)
+
+# # A tibble: 3 × 2
+#   DMS_status            n
+#   <chr>             <int>
+# 1 DMS covered        2064
+# 2 DMS not covered      16
+# 3 Indel not assayed    17
+
+
+
+```
+
+Reusable data-preparation and plotting function
+```{r}
+# ============================================================
+# Prepare stacked bar summary data
+# ============================================================
+
+prepare_stacked_percent_data <- function(
+    data,
+    class_var,
+    category_var,
+    facet_var = NULL
+) {
+
+  class_var <- rlang::ensym(class_var)
+  category_var <- rlang::ensym(category_var)
+
+  if (is.null(facet_var)) {
+
+    summary_df <- data %>%
+      dplyr::filter(
+        !is.na(!!class_var),
+        !is.na(!!category_var)
+      ) %>%
+      dplyr::count(
+        !!class_var,
+        !!category_var,
+        name = "count"
+      ) %>%
+      dplyr::group_by(!!class_var) %>%
+      dplyr::mutate(
+        total_count = sum(count),
+        percent = 100 * count / total_count
+      ) %>%
+      dplyr::ungroup()
+
+    total_df <- summary_df %>%
+      dplyr::distinct(
+        !!class_var,
+        total_count
+      )
+
+    return(
+      list(
+        summary_df = summary_df,
+        total_df = total_df
+      )
+    )
+  }
+
+  facet_var <- rlang::ensym(facet_var)
+
+  summary_df <- data %>%
+    dplyr::filter(
+      !is.na(!!class_var),
+      !is.na(!!category_var),
+      !is.na(!!facet_var)
+    ) %>%
+    dplyr::count(
+      !!facet_var,
+      !!class_var,
+      !!category_var,
+      name = "count"
+    ) %>%
+    dplyr::group_by(
+      !!facet_var,
+      !!class_var
+    ) %>%
+    dplyr::mutate(
+      total_count = sum(count),
+      percent = 100 * count / total_count
+    ) %>%
+    dplyr::ungroup()
+
+  total_df <- summary_df %>%
+    dplyr::distinct(
+      !!facet_var,
+      !!class_var,
+      total_count
+    )
+
+  list(
+    summary_df = summary_df,
+    total_df = total_df
+  )
+}
+
+
+
+# ============================================================
+# Plot donut plots showing proportions
+# ============================================================
+
+plot_donut_percent <- function(
+    df,
+    category_col = Category,
+    count_col = count,
+    percent_col = NULL,
+    title = "Composition",
+    label_acc = 0.1,
+    palette = NULL,
+    show_count = FALSE
+) {
+
+  cat_sym <- rlang::enquo(category_col)
+  cnt_sym <- rlang::enquo(count_col)
+  pct_sym <- rlang::enquo(percent_col)
+
+  # ----------------------------------------------------------
+  # Collapse to category level
+  # ----------------------------------------------------------
+
+  if (!rlang::quo_is_null(pct_sym)) {
+
+    df_cat <- df %>%
+      dplyr::group_by(!!cat_sym) %>%
+      dplyr::summarise(
+        percent = sum(!!pct_sym, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        percent = dplyr::if_else(
+          percent > 1,
+          percent / 100,
+          percent
+        ),
+        count = NA_integer_
+      )
+
+  } else {
+
+    df_cat <- df %>%
+      dplyr::group_by(!!cat_sym) %>%
+      dplyr::summarise(
+        count = sum(!!cnt_sym, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        percent = count / sum(count)
+      )
+  }
+
+  # ----------------------------------------------------------
+  # Labels
+  # ----------------------------------------------------------
+
+  if (show_count) {
+
+    df_cat <- df_cat %>%
+      dplyr::mutate(
+        label = paste0(
+          scales::percent(
+            percent,
+            accuracy = label_acc
+          ),
+          "\n(n=",
+          scales::comma(count),
+          ")"
+        )
+      )
+
+  } else {
+
+    df_cat <- df_cat %>%
+      dplyr::mutate(
+        label = scales::percent(
+          percent,
+          accuracy = label_acc
+        )
+      )
+  }
+
+  # ----------------------------------------------------------
+  # Donut
+  # ----------------------------------------------------------
+
+  p <- ggplot2::ggplot(
+    df_cat,
+    ggplot2::aes(
+      x = 2,
+      y = percent,
+      fill = !!cat_sym
+    )
+  ) +
+    ggplot2::geom_col(
+      color = "white",
+      width = 0.9
+    ) +
+    ggplot2::coord_polar(
+      theta = "y"
+    ) +
+    ggplot2::xlim(
+      0.5,
+      2.5
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(
+        label = label
+      ),
+      position = ggplot2::position_stack(
+        vjust = 0.5
+      ),
+      size = 4
+    ) +
+    ggplot2::labs(
+      title = title,
+      x = NULL,
+      y = NULL,
+      fill = rlang::as_name(cat_sym)
+    ) +
+    ggplot2::theme_void() +
+    ggplot2::theme(
+      legend.position = "none"
+    )
+
+  if (!is.null(palette)) {
+
+    p <- p +
+      ggplot2::scale_fill_manual(
+        values = palette,
+        drop = FALSE
+      )
+  }
+
+  p
+}
+
+
+
+# ============================================================
+# Stacked bar plot
+# Updated: make plot_stacked_bar() aggregate count internally according to the dimensions actually being plotted
+# - internally aggregates counts
+# - recalculates totals and percentages
+# ============================================================
+
+plot_stacked_bar <- function(
+    summary_df,
+    total_df = NULL,
+    class_name,
+    category_name,
+    fill_values,
+    fill_legend_title,
+    plot_title = NULL,
+    x_label = "Class",
+    y_label = NULL,
+    facet_name = NULL,
+    x_text_angle = 45,
+    y_type = c("percent", "count"),
+    show_total_labels = TRUE,
+    aggregate_counts = TRUE
+) {
+
+  y_type <- match.arg(y_type)
+
+
+  # ----------------------------------------------------------
+  # Internally aggregate counts
+  # ----------------------------------------------------------
+
+  if (aggregate_counts) {
+
+    grouping_vars <- c(
+      class_name,
+      category_name
+    )
+
+    # If faceting, retain facet as part of grouping
+    if (!is.null(facet_name)) {
+      grouping_vars <- c(
+        facet_name,
+        grouping_vars
+      )
+    }
+
+
+    summary_df <- summary_df %>%
+
+      dplyr::group_by(
+        dplyr::across(
+          dplyr::all_of(
+            grouping_vars
+          )
+        )
+      ) %>%
+
+      dplyr::summarise(
+        count = sum(
+          count,
+          na.rm = TRUE
+        ),
+        .groups = "drop"
+      )
+
+
+    # --------------------------------------------------------
+    # Recalculate totals
+    #
+    # Without facet:
+    #   total per class
+    #
+    # With facet:
+    #   total per class within each facet
+    # --------------------------------------------------------
+
+    total_group_vars <- class_name
+
+    if (!is.null(facet_name)) {
+      total_group_vars <- c(
+        facet_name,
+        class_name
+      )
+    }
+
+
+    total_df <- summary_df %>%
+
+      dplyr::group_by(
+        dplyr::across(
+          dplyr::all_of(
+            total_group_vars
+          )
+        )
+      ) %>%
+
+      dplyr::summarise(
+        total_count = sum(
+          count,
+          na.rm = TRUE
+        ),
+        .groups = "drop"
+      )
+
+
+    # --------------------------------------------------------
+    # Recalculate percentages
+    # --------------------------------------------------------
+
+    summary_df <- summary_df %>%
+
+      dplyr::left_join(
+        total_df,
+        by = total_group_vars
+      ) %>%
+
+      dplyr::mutate(
+        percent =
+          100 * count / total_count
+      )
+  }
+
+
+  # ----------------------------------------------------------
+  # Select Y variable
+  # ----------------------------------------------------------
+
+  if (y_type == "percent") {
+
+    y_var <- "percent"
+
+    if (is.null(y_label)) {
+      y_label <- "Proportion (%)"
+    }
+
+  } else {
+
+    y_var <- "count"
+
+    if (is.null(y_label)) {
+      y_label <- "Count"
+    }
+  }
+
+
+  # ----------------------------------------------------------
+  # Base plot
+  # ----------------------------------------------------------
+
+  p <- ggplot2::ggplot(
+    summary_df,
+    ggplot2::aes(
+      x = .data[[class_name]],
+      y = .data[[y_var]],
+      fill = .data[[category_name]]
+    )
+  ) +
+
+    ggplot2::geom_col(
+      position = "stack",
+      width = 0.9,
+      color = "black"
+    ) +
+
+    ggplot2::scale_fill_manual(
+      values = fill_values,
+      name = fill_legend_title,
+      drop = FALSE
+    ) +
+
+    ggplot2::labs(
+      title = plot_title,
+      x = x_label,
+      y = y_label
+    ) +
+
+    ggplot2::theme_classic() +
+
+    ggplot2::theme(
+
+      axis.text.x =
+        ggplot2::element_text(
+          angle = x_text_angle,
+          hjust =
+            ifelse(
+              x_text_angle == 0,
+              0.5,
+              1
+            )
+        ),
+
+      strip.background =
+        ggplot2::element_blank(),
+
+      strip.text =
+        ggplot2::element_text(
+          face = "bold"
+        )
+    )
+
+
+  # ----------------------------------------------------------
+  # Y-axis
+  # ----------------------------------------------------------
+
+  if (y_type == "percent") {
+
+    p <- p +
+
+      ggplot2::scale_y_continuous(
+        breaks = seq(
+          0,
+          100,
+          25
+        ),
+        expand = c(
+          0,
+          0
+        )
+      ) +
+
+      ggplot2::coord_cartesian(
+        ylim = c(
+          0,
+          110
+        ),
+        clip = "off"
+      )
+
+  } else {
+
+    p <- p +
+
+      ggplot2::scale_y_continuous(
+        expand =
+          ggplot2::expansion(
+            mult = c(
+              0,
+              0.12
+            )
+          )
+      )
+  }
+
+
+  # ----------------------------------------------------------
+  # Total labels
+  # ----------------------------------------------------------
+
+  if (show_total_labels) {
+
+    if (y_type == "percent") {
+
+      p <- p +
+
+        ggplot2::geom_text(
+          data = total_df,
+
+          ggplot2::aes(
+            x = .data[[class_name]],
+            y = 105,
+            label =
+              scales::comma(
+                total_count
+              )
+          ),
+
+          inherit.aes = FALSE,
+          size = 3.5,
+          vjust = 0
+        )
+
+    } else {
+
+      p <- p +
+
+        ggplot2::geom_text(
+          data = total_df,
+
+          ggplot2::aes(
+            x = .data[[class_name]],
+            y = total_count,
+            label =
+              scales::comma(
+                total_count
+              )
+          ),
+
+          inherit.aes = FALSE,
+          size = 3.5,
+          vjust = -0.4
+        )
+    }
+  }
+
+
+  # ----------------------------------------------------------
+  # Faceting
+  # ----------------------------------------------------------
+
+  if (!is.null(facet_name)) {
+
+    p <- p +
+
+      ggplot2::facet_wrap(
+        stats::as.formula(
+          paste(
+            "~",
+            facet_name
+          )
+        ),
+        ncol = 1
+      )
+  }
+
+
+  p
+}
+
+
+
+
+
+```
+
+
+(Fig. S8A) Fitness effects of measured nucleotide substitutions, faceted by genomic context
+```{r}
+# check data
+head(as.data.frame(evo_nt_analysis), 0)
+
+names(evo_nt_analysis)
+
+evo_nt_analysis %>%
+  dplyr::count(
+    isolate
+  )
+# # A tibble: 18 × 2
+#    isolate         n
+#    <chr>       <int>
+#  1 Evo-Phi100    138
+#  2 Evo-Phi108    142
+#  3 Evo-Phi111    108
+#  4 Evo-Phi114     78
+#  5 Evo-Phi2147   124
+#  6 Evo-Phi2483    60
+#  7 Evo-Phi2498    74
+#  8 Evo-Phi316     77
+#  9 Evo-Phi3392   114
+# 10 Evo-Phi36     127
+# 11 Evo-Phi4      180
+# 12 Evo-Phi46     166
+# 13 Evo-Phi5      214
+# 14 Evo-Phi63     123
+# 15 Evo-Phi69      70
+# 16 Evo-Phi75     114
+# 17 Evo-PhiR1     101
+# 18 Evo-PhiR2      87
+
+
+# ============================================================
+# Stacked bar plot
+# ============================================================
+
+# prepare summary 
+nt_effect_context_plot_data <- prepare_stacked_percent_data(
+  data = evo_nt_analysis %>%
+    dplyr::filter(
+      mutation_type == "substitution",
+      DMS_available,
+      genomic_context != "Unknown"
+    ),
+  class_var = isolate,
+  
+  #category_var = DMS_effect_category,
+  category_var = DMS_effect_category_lethal,
+  
+  facet_var = "genomic_context"
+)
+
+head(as.data.frame(nt_effect_context_plot_data$summary_df), 0)
+# head(as.data.frame(nt_effect_context_plot_data$summary_df), 0)
+# [1] genomic_context            isolate                    DMS_effect_category_lethal count                      total_count                percent    
+
+names(nt_effect_context_plot_data$summary_df)
+names(nt_effect_context_plot_data$total_df)
+
+p_nt_effect_context <- 
+  #plot_stacked_percent_bar(
+  plot_stacked_bar(
+    
+  summary_df = nt_effect_context_plot_data$summary_df,
+  total_df = nt_effect_context_plot_data$total_df,
+  
+  class_name = "isolate",
+  
+  #category_name = "DMS_effect_category",
+  category_name = "DMS_effect_category_lethal",
+  
+  fill_values = effect_colors,
+  fill_legend_title = "Mutational effect",
+  plot_title = "Fitness effects of measured nucleotide substitutions",
+  
+  x_label = "Viable Phage isolate",
+  #y_label = "Proportion (%)",
+  y_label = "Counts",
+  
+  y_type = "count",
+  
+  #facet_name = "genomic_context"
+)
+
+p_nt_effect_context
+
+# Saving
+#ggsave(p_nt_effect_context, filename = "./plots/p_nt_effect_context.pdf", width = 7, height = 2.5)
+
+
+
+# ============================================================
+# Donut plots - overall Nt substitutions mutational effects
+# ============================================================
+
+# NT-level donut: unique nucleotide substitutions
+evo_nt_analysis_subs <- evo_nt_analysis %>%
+  dplyr::filter(
+    isolate %in% substitution_only_isolates,
+    mutation_type == "substitution"
+  ) %>%
+  dplyr::mutate(
+    isolate = factor(
+      isolate,
+      levels = substitution_only_isolate_order
+    )
+  )
+
+
+evo_nt_unique_effects <- evo_nt_analysis_subs %>%
+  dplyr::filter(
+    mutation_type == "substitution",
+    DMS_available
+  ) %>%
+  dplyr::distinct(
+    mutation_id,
+    .keep_all = TRUE
+  )
+
+evo_nt_unique_effects %>%
+  dplyr::count(
+    #DMS_effect_category
+    DMS_effect_category_lethal
+  )
+# # A tibble: 4 × 2
+#   DMS_effect_category_lethal     n
+#   <fct>                      <int>
+# 1 Increased                      4
+# 2 No effect                    415
+# 3 Detrimental                   36
+# 4 Strongly detrimental          13
+
+
+# # A tibble: 3 × 2
+#   DMS_effect_category       n
+#   <fct>                 <int>
+# 1 Increased replication     4
+# 2 No measurable effect    415
+# 3 Reduced replication      49
+
+# # A tibble: 4 × 2
+#   DMS_effect_category_lethal     n
+#   <fct>                      <int>
+# 1 Increased replication          4
+# 2 No measurable effect         415
+# 3 Reduced replication           36
+# 4 Strongly detrimental          13
+
+nt_donut_data <- evo_nt_unique_effects %>%
+  dplyr::count(
+    #DMS_effect_category,
+    DMS_effect_category_lethal,
+    name = "count"
+  )
+
+p_nt_effect_donut <- plot_donut_percent(
+  df = nt_donut_data,
+  
+  #category_col = DMS_effect_category,
+  category_col = DMS_effect_category_lethal,
+  
+  count_col = count,
+  title = "Unique nucleotide substitutions",
+  palette = effect_colors,
+  show_count = TRUE
+)
+
+p_nt_effect_donut
+
+# Save plots
+#ggplot2::ggsave(
+  #filename = "p_nt_effect_donut.pdf",
+  #path = "./plots",
+  #plot = p_nt_effect_donut,
+  #width = 3,
+  #height = 3
+#)
+
+
+
+```
+
+
+
+
+
+## Save script checkpoint
+save a snapshot of all objects produced by the script
+
+```{r}
+# checkpoint - 07a. evo designed genome analysis - Viable phage isolates 
+# save.image(file = "data/checkpoints/07a_evo_phage_genomes_analysis.RData")
+
+
+```
+
+
+save a working environment for running all analysis script
+```{r}
+# save the working environment image
+#save.image(file = "data/phix_WGM_analysis.RData")
+#save.image(file = "./codes_Github_final/data/phix_WGM_analysis.RData")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

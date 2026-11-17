@@ -18,6 +18,7 @@ renv::install("tidyr")
 renv::install("tibble")
 renv::install("stringr")
 renv::install("purrr")
+renv::install("readr")
 renv::install("data.table")
 renv::install("tidyverse")  # Bundles many above packages
 
@@ -88,6 +89,7 @@ library(tidyr)
 library(tibble)
 library(stringr)
 library(purrr)
+library(readr)
 library(data.table)
 library(tidyverse)       # (includes dplyr, tidyr, ggplot2, etc.)
 library(rlang)
@@ -155,8 +157,8 @@ library(jsonlite)        # JSON data handling
 data(AAindex)
 
 ## Test amino acid composition
-aaComp("ACDEFGHIKLMNPQRSTVWY")
-
+# 1) aaComp("ACDEFGHIKLMNPQRSTVWY") # calculates the proportions of physicochemical amino acid groups
+# 2) protr::extractAAC("ACDEFGHIKLMNPQRSTVWY") # calculates the frequency of each of the 20 individual amino acids.
 
 
 ```

@@ -1,0 +1,2079 @@
+---
+title: "Single-nucleotide mutational landscape"
+output: html_document
+date: "2026-11-13"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Data S2: Supplementary File 2 ΦX174 single-nucleotide genomic variants dataset.xlsx
+```{r}
+# ============================================================
+# Data S2: ΦX174 single-nucleotide variants
+# ============================================================
+
+# 1. Load required packages
+library(readxl)
+library(dplyr)
+library(purrr)
+
+
+# 2. Define supplementary data file
+file_path <- paste0(
+  "./codes_Github_final/Supplementary_Data/",
+  "Supplementary File 2 ΦX174 single-nucleotide genomic variants dataset.xlsx"
+)
+
+# Check file exists
+stopifnot(file.exists(file_path))
+
+
+# 3. Load all worksheets into a named list
+sheet_names <- readxl::excel_sheets(file_path)
+
+data_s2 <- purrr::map(
+  sheet_names,
+  ~ readxl::read_excel(
+    file_path,
+    sheet = .x,
+    guess_max = 10000
+  )
+)
+
+names(data_s2) <- sheet_names
+
+
+# 4. Inspect loaded worksheets
+
+# Sheet names
+names(data_s2)
+# [1] "WT_sequence"                 "1nt_mutations"               "1nt_residues"                "reported_individual_mutants"
+
+# Dimensions
+purrr::map(data_s2, dim)
+
+# Column names
+purrr::map(data_s2, names)
+
+
+# 5. Extract individual datasets
+# Confirm exact sheet names before running
+
+phix_wt_sequence <- data_s2[["WT_sequence"]]
+
+phix_1nt_mutations <- data_s2[["1nt_mutations"]]
+
+phix_1nt_residues <- data_s2[["1nt_residues"]]
+
+phix_reported_mutants <- data_s2[["reported_individual_mutants"]]
+
+
+# 6. Inspect datasets
+dplyr::glimpse(phix_wt_sequence)
+dplyr::glimpse(phix_1nt_mutations)
+dplyr::glimpse(phix_1nt_residues)
+dplyr::glimpse(phix_reported_mutants)
+
+
+
+
+```
+
+
+
+## Main analyses
+Fig. 1C, D, E, F; Fig. S1E, H, I, J.
+
+### 1) Circular annotation and mutation heatmap (Fig. 1C)
+```{r}
+# ============================================================
+# Data S2 - Circular heatmap of 1nt mutational effects
+# Fig. 1C
+# ============================================================
+
+# Required packages
+library(dplyr)
+library(tidyr)
+library(circlize)
+library(ComplexHeatmap)
+
+
+# ------------------------------------------------------------
+# 1. Genome length and input checks
+# ------------------------------------------------------------
+
+phix_genome_length <- as.integer(
+  phix_wt_sequence$genome_length_nt[1]
+)
+
+stopifnot(phix_genome_length == 5386)
+
+# Confirm that each nucleotide substitution occurs once
+duplicate_1nt <- phix_1nt_mutations %>%
+  dplyr::count(
+    genome_nt_mut_pos,
+    genome_nt_mut_sub
+  ) %>%
+  dplyr::filter(n > 1)
+
+stopifnot(nrow(duplicate_1nt) == 0)
+
+
+# ------------------------------------------------------------
+# 2. Prepare coding-region annotation
+# ------------------------------------------------------------
+
+# Retain the original annotation coordinates
+phix_coding <- data.frame(
+  pos = seq_len(phix_genome_length),
+  coding = 0,
+  overlapping = 0
+)
+
+# Original track: selected noncoding regions
+phix_coding$coding[
+  phix_coding$pos >= 965 &
+  phix_coding$pos <= 1000
+] <- 1
+
+phix_coding$coding[
+  phix_coding$pos >= 2285 &
+  phix_coding$pos <= 2394
+] <- 1
+
+phix_coding$coding[
+  phix_coding$pos >= 2923 &
+  phix_coding$pos <= 2930
+] <- 1
+
+phix_coding$coding[
+  phix_coding$pos >= 3918 &
+  phix_coding$pos <= 3980
+] <- 1
+
+
+# Original overlapping coding regions
+phix_coding$overlapping[
+  phix_coding$pos < 222
+] <- 2
+
+phix_coding$overlapping[
+  phix_coding$pos > 389 &
+  phix_coding$pos < 394
+] <- 2
+
+phix_coding$overlapping[
+  phix_coding$pos > 567 &
+  phix_coding$pos < 844
+] <- 2
+
+phix_coding$overlapping[
+  phix_coding$pos == 848
+] <- 2
+
+phix_coding$overlapping[
+  phix_coding$pos > 5074
+] <- 2
+
+
+# Check annotations
+print(table(phix_coding$coding))
+#    0    1 
+# 5169  217 
+print(table(phix_coding$overlapping))
+#    0    2 
+# 4572  814 
+
+# Convert to matrix
+phix_coding_matrix <- as.matrix(
+  phix_coding[, c("coding", "overlapping")]
+)
+
+rownames(phix_coding_matrix) <- phix_coding$pos
+
+
+# ------------------------------------------------------------
+# 3. Prepare single-nucleotide replication score matrix
+# ------------------------------------------------------------
+
+phix_dms_circle <- phix_1nt_mutations %>%
+  dplyr::transmute(
+    pos = as.integer(genome_nt_mut_pos),
+    nucleotide = as.character(genome_nt_mut_sub),
+    replication_score = as.numeric(replication_score)
+  ) %>%
+  dplyr::filter(
+    !is.na(pos),
+    pos >= 1,
+    pos <= phix_genome_length,
+    nucleotide %in% c("A", "C", "G", "T")
+  )
+
+
+# Build a complete genome-position by nucleotide table
+phix_circle_grid <- tidyr::expand_grid(
+  pos = seq_len(phix_genome_length),
+  nucleotide = c("A", "C", "G", "T")
+)
+
+phix_circle_wide <- phix_circle_grid %>%
+  dplyr::left_join(
+    phix_dms_circle,
+    by = c("pos", "nucleotide")
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = nucleotide,
+    values_from = replication_score
+  ) %>%
+  dplyr::arrange(pos)
+
+
+# Convert to matrix
+phix_matrix <- as.matrix(
+  phix_circle_wide[, c("A", "C", "G", "T")]
+)
+
+rownames(phix_matrix) <- phix_circle_wide$pos
+
+
+# Check dimensions and score range
+dim(phix_matrix)
+# [1] 5386    4
+
+range(phix_matrix, na.rm = TRUE)
+# [1] -0.8263775  1.2367972
+
+stopifnot(
+  nrow(phix_matrix) == phix_genome_length,
+  ncol(phix_matrix) == 4
+)
+
+
+# ------------------------------------------------------------
+# 4. Define original color scales
+# ------------------------------------------------------------
+
+col_phix_coding <- circlize::colorRamp2(
+  c(0, 1, 2),
+  c("white", "gray", "black")
+)
+
+col_phix <- circlize::colorRamp2(
+  c(-1, 0, 1, 1.5),
+  c("darkred", "red", "gray88", "blue")
+)
+
+
+# ------------------------------------------------------------
+# 5. Plot circular heatmap
+# ------------------------------------------------------------
+
+circlize::circos.clear()
+
+circlize::circos.par(
+  start.degree = 90,
+  gap.degree = 0,
+  cell.padding = c(0, 0, 0, 0)
+)
+
+
+# Track 1: coding-region annotations
+circlize::circos.heatmap(
+  phix_coding_matrix,
+  cluster = FALSE,
+  col = col_phix_coding,
+  track.height = 0.05,
+  na.col = "white"
+)
+
+
+# Track 2: nucleotide mutational effects
+circlize::circos.heatmap(
+  phix_matrix,
+  cluster = FALSE,
+  col = col_phix,
+  na.col = "white"
+)
+
+
+# Genome coordinate axis
+circlize::circos.axis(
+  h = "bottom",
+  major.at = seq(
+    0,
+    phix_genome_length,
+    by = 500
+  ),
+  labels = seq(
+    0,
+    phix_genome_length,
+    by = 500
+  ),
+  labels.cex = 0.6,
+  labels.facing = "inside",
+  direction = "inside",
+  minor.ticks = 0,
+  labels.pos.adjust = TRUE
+)
+
+# Clear layout after plotting
+circlize::circos.clear()
+
+
+# ------------------------------------------------------------
+# 6. Replication score legend
+# ------------------------------------------------------------
+
+lgd_phix <- ComplexHeatmap::Legend(
+  title = "Replication score",
+  col_fun = col_phix,
+  at = c(-1, 0, 1, 1.5),
+  labels = c("-1", "0", "1", "1.5"),
+  direction = "horizontal"
+)
+
+# Draw legend separately
+grid::grid.newpage()
+ComplexHeatmap::draw(lgd_phix)
+
+
+
+
+```
+
+
+### 2) Four noncoding-region nucleotide substitution heatmaps (Fig. 1E)
+```{r}
+# ============================================================
+# Noncoding regions - Data S2
+# ============================================================
+
+# Function for heatmaps with a color for the wt blocks 
+
+# ============================================================
+# Function: Plot nucleotide substitution heatmap
+# with WT reference positions
+# ============================================================
+
+plot_heatmap_noncoding_colored_wt <- function(
+    data,
+    pos_col = "genome_nt_mut_pos",
+    sub_col = "genome_nt_mut_sub",
+    wt_col = "genome_nt_mut_wt",
+    value_col = "replication_score",
+    plot_title = "",
+    show_legend = TRUE,
+    show_title = TRUE,
+    x_label = "WT Nucleotides",
+    y_label = "Mutants",
+    wt_value = 1.0,
+    wt_shape = 21,
+    wt_size = 0.8
+) {
+
+  # ---- Check required columns ----
+  stopifnot(
+    all(
+      c(pos_col, sub_col, wt_col, value_col) %in%
+        names(data)
+    )
+  )
+
+  # ---- 1. Create WT rows ----
+  wt_rows <- data %>%
+    dplyr::distinct(
+      .data[[pos_col]],
+      .data[[wt_col]]
+    ) %>%
+    dplyr::mutate(
+      !!sub_col := .data[[wt_col]],
+      !!value_col := wt_value,
+      is_wt = TRUE
+    )
+
+  # ---- 2. Combine data ----
+  data_plot <- dplyr::bind_rows(
+    data %>%
+      dplyr::mutate(is_wt = FALSE),
+    wt_rows
+  )
+
+  # ---- 3. X-axis mapping ----
+  x_map <- data %>%
+    dplyr::distinct(
+      .data[[pos_col]],
+      .data[[wt_col]]
+    ) %>%
+    dplyr::arrange(.data[[pos_col]])
+
+  # ---- 4. Plot ----
+  p <- ggplot2::ggplot(
+    data_plot,
+    ggplot2::aes(
+      x = .data[[pos_col]],
+      y = .data[[sub_col]],
+      fill = .data[[value_col]]
+    )
+  ) +
+
+    ggplot2::geom_tile(
+      color = "white",
+      width = 1,
+      height = 1
+    ) +
+
+    # WT reference overlay
+    ggplot2::geom_point(
+      data = dplyr::filter(data_plot, is_wt),
+      mapping = ggplot2::aes(
+        x = .data[[pos_col]],
+        y = .data[[sub_col]]
+      ),
+      shape = wt_shape,
+      size = wt_size,
+      stroke = 0.5,
+      color = "black",
+      fill = "white",
+      inherit.aes = FALSE
+    ) +
+
+    ggplot2::coord_fixed() +
+
+    # ---- Color scale ----
+    ggplot2::scale_fill_gradientn(
+      colors = c(
+        "darkred",
+        "red",
+        "gray88",
+        "blue"
+      ),
+      values = scales::rescale(
+        c(-1, 0, 1, 1.5)
+      ),
+      limits = c(-1, 1.5),
+      name = value_col,
+      na.value = "white",
+      guide = if (show_legend) {
+        ggplot2::guide_colorbar(
+          barwidth = 10,
+          barheight = 1,
+          direction = "horizontal",
+          title.position = "top",
+          title.hjust = 0.5
+        )
+      } else {
+        "none"
+      }
+    ) +
+
+    # ---- X axis ----
+    ggplot2::scale_x_continuous(
+      breaks = x_map[[pos_col]],
+      labels = x_map[[wt_col]],
+      expand = c(0, 0)
+    ) +
+
+    # ---- Y axis ----
+    ggplot2::scale_y_discrete(
+      expand = c(0, 0)
+    ) +
+
+    # ---- Theme ----
+    ggplot2::theme_minimal(base_size = 12) +
+
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        hjust = 1,
+        vjust = 0.5
+      ),
+      axis.text.y = ggplot2::element_text(
+        vjust = 0.5
+      ),
+      axis.title.x = ggplot2::element_text(
+        face = "bold"
+      ),
+      axis.title.y = ggplot2::element_text(
+        face = "bold"
+      ),
+      panel.grid = ggplot2::element_blank(),
+      legend.position = if (show_legend) "right" else "none",
+      plot.title = ggplot2::element_text(
+        hjust = 0.5,
+        face = "bold"
+      ),
+      plot.margin = ggplot2::margin(
+        10, 10, 10, 10
+      )
+    )
+
+  # ---- 5. Title ----
+  if (show_title) {
+    p <- p + ggplot2::ggtitle(plot_title)
+  }
+
+  # ---- 6. Axis labels ----
+  if (!is.null(x_label)) {
+    p <- p + ggplot2::xlab(x_label)
+  }
+
+  if (!is.null(y_label)) {
+    p <- p + ggplot2::ylab(y_label)
+  }
+
+  return(p)
+}
+
+
+
+# Extract the four noncoding regions
+
+phix_noncoding1 <- phix_1nt_mutations %>%
+  dplyr::filter(
+    dplyr::between(genome_nt_mut_pos, 965, 1000)
+  )
+
+phix_noncoding2 <- phix_1nt_mutations %>%
+  dplyr::filter(
+    dplyr::between(genome_nt_mut_pos, 2285, 2394)
+  )
+
+phix_noncoding3 <- phix_1nt_mutations %>%
+  dplyr::filter(
+    dplyr::between(genome_nt_mut_pos, 2923, 2930)
+  )
+
+phix_noncoding4 <- phix_1nt_mutations %>%
+  dplyr::filter(
+    dplyr::between(genome_nt_mut_pos, 3918, 3980)
+  )
+
+
+# Check nucleotide position coverage
+sapply(
+  list(
+    J_F = phix_noncoding1,
+    F_G = phix_noncoding2,
+    G_H = phix_noncoding3,
+    H_A = phix_noncoding4
+  ),
+  function(x) dplyr::n_distinct(x$genome_nt_mut_pos)
+)
+# J_F F_G G_H H_A 
+#  36 110   8  63 
+
+noncoding_summary <- dplyr::bind_rows(
+  J_F = phix_noncoding1,
+  F_G = phix_noncoding2,
+  G_H = phix_noncoding3,
+  H_A = phix_noncoding4,
+  .id = "region"
+) %>%
+  dplyr::group_by(region) %>%
+  dplyr::summarise(
+    n_positions = dplyr::n_distinct(genome_nt_mut_pos),
+    n_mutations = dplyr::n(),
+    n_with_score = sum(!is.na(replication_score)),
+    .groups = "drop"
+  )
+
+print(noncoding_summary)
+# # A tibble: 4 × 4
+#   region n_positions n_mutations n_with_score
+#   <chr>        <int>       <int>        <int>
+# 1 F_G            110         325          325
+# 2 G_H              8          24           24
+# 3 H_A             63         179          179
+# 4 J_F             36         108          108
+
+
+# ============================================================
+# Plot noncoding region heatmaps
+# ============================================================
+
+# 1. Noncoding region J-F (36 positions)
+heatmap_non1 <- plot_heatmap_noncoding_colored_wt(
+  data = phix_noncoding1,
+  plot_title = "Noncoding region between genes J-F",
+  show_legend = FALSE,
+  show_title = FALSE,
+  wt_value = 0.9807835,
+  wt_shape = 4
+)
+
+print(heatmap_non1)
+
+
+# 2. Noncoding region F-G (110 positions)
+heatmap_non2 <- plot_heatmap_noncoding_colored_wt(
+  data = phix_noncoding2,
+  plot_title = "Noncoding region between genes F-G",
+  show_legend = FALSE,
+  show_title = FALSE,
+  wt_value = 0.9807835,
+  wt_shape = 4
+)
+
+print(heatmap_non2)
+
+
+# 3. Noncoding region G-H (8 positions)
+heatmap_non3 <- plot_heatmap_noncoding_colored_wt(
+  data = phix_noncoding3,
+  plot_title = "Noncoding region between genes G-H",
+  show_legend = FALSE,
+  show_title = FALSE,
+  wt_value = 0.9807835,
+  wt_shape = 4
+)
+
+print(heatmap_non3)
+
+
+# 4. Noncoding region H-A (63 positions)
+heatmap_non4 <- plot_heatmap_noncoding_colored_wt(
+  data = phix_noncoding4,
+  plot_title = "Noncoding region between genes H-A",
+  show_legend = TRUE,
+  show_title = FALSE,
+  wt_value = 0.9807835,
+  wt_shape = 4
+)
+
+print(heatmap_non4)
+
+
+# Create output directory
+#dir.create("./plots", showWarnings = FALSE, recursive = TRUE)
+
+#ggplot2::ggsave(
+  #filename = "./plots/heatmap_non1_substitutions.pdf",
+  #plot = heatmap_non1, width = 4, height = 2
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/heatmap_non2_substitutions.pdf",
+  #plot = heatmap_non2, width = 12, height = 2
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/heatmap_non3_substitutions.pdf",
+  #plot = heatmap_non3, width = 1.5, height = 2
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/heatmap_non4_substitutions.pdf",
+  #plot = heatmap_non4, width = 9, height = 2
+#)
+
+
+
+```
+
+
+### 3) Mutation categories, stacked bar plots and donut plots (Fig. 1D, F; Fig. S1H)
+```{r}
+# ============================================================
+# Mutation categories and plotting colors
+# ============================================================
+
+replication_category_levels <- c(
+  "Increased",
+  "No effect",
+  "Detrimental",
+  "Strongly detrimental"
+)
+
+replication_category_colors <- c(
+  "Increased" = "#A1A9D0",
+  "No effect" = "#D9D9D9",
+  "Detrimental" = "#F4A6A6",
+  "Strongly detrimental" = "#F0988C"
+)
+
+# Inspect categories from Supplementary Data S2
+table(
+  phix_1nt_mutations$mutational_effect_category_1nt,
+  useNA = "ifany"
+)
+# Detrimental   Increased   No effect 
+#        8229         176        7693 
+
+table(
+  phix_1nt_mutations$mutational_effect_category_lethal_1nt,
+  useNA = "ifany"
+)
+#          Detrimental            Increased            No effect Strongly detrimental 
+#                 3164                  176                 7693                 5065 
+
+
+# ============================================================
+# Function: Generate mutation-category summary
+# ============================================================
+
+generate_mutation_category_summary <- function(
+    df,
+    class_col,
+    category_col,
+    total_count = NULL
+) {
+
+  stopifnot(
+    all(c(class_col, category_col) %in% names(df))
+  )
+
+  df %>%
+    dplyr::filter(
+      !is.na(.data[[category_col]])
+    ) %>%
+    dplyr::group_by(
+      dplyr::across(dplyr::all_of(class_col)),
+      .data[[category_col]]
+    ) %>%
+    dplyr::summarise(
+      count = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::group_by(
+      dplyr::across(dplyr::all_of(class_col))
+    ) %>%
+    dplyr::mutate(
+      proportion = if (is.null(total_count)) {
+        count / sum(count)
+      } else {
+        count / total_count
+      },
+      percent = round(proportion * 100, 2)
+    ) %>%
+    dplyr::ungroup()
+}
+
+
+# ============================================================
+# 1nt mutations - nucleotide region classes
+# ============================================================
+
+summary_1nt_mut <- generate_mutation_category_summary(
+  df = phix_1nt_mutations,
+  class_col = "genome_nt_pos_nucleotide_class",
+  category_col = "mutational_effect_category_1nt"
+)
+
+print(summary_1nt_mut)
+# # A tibble: 9 × 5
+#   genome_nt_pos_nucleotide_class mutational_effect_category_1nt count proportion percent
+#   <chr>                          <chr>                          <int>      <dbl>   <dbl>
+# 1 Coding                         Detrimental                     6733    0.517     51.7 
+# 2 Coding                         Increased                         93    0.00714    0.71
+# 3 Coding                         No effect                       6195    0.476     47.6 
+# 4 Noncoding                      Detrimental                      122    0.192     19.2 
+# 5 Noncoding                      Increased                         41    0.0645     6.45
+# 6 Noncoding                      No effect                        473    0.744     74.4 
+# 7 Overlapping Coding             Detrimental                     1374    0.563     56.3 
+# 8 Overlapping Coding             Increased                         42    0.0172     1.72
+# 9 Overlapping Coding             No effect                       1025    0.420     42.0 
+
+
+# Four-category classification, including strongly detrimental
+summary_1nt_mut_lethal <- generate_mutation_category_summary(
+  df = phix_1nt_mutations,
+  class_col = "genome_nt_pos_nucleotide_class",
+  category_col = "mutational_effect_category_lethal_1nt"
+)
+
+print(summary_1nt_mut_lethal)
+# # A tibble: 12 × 5
+#    genome_nt_pos_nucleotide_class mutational_effect_category_lethal_1nt count proportion percent
+#    <chr>                          <chr>                                 <int>      <dbl>   <dbl>
+#  1 Coding                         Detrimental                            2656    0.204     20.4 
+#  2 Coding                         Increased                                93    0.00714    0.71
+#  3 Coding                         No effect                              6195    0.476     47.6 
+#  4 Coding                         Strongly detrimental                   4077    0.313     31.3 
+#  5 Noncoding                      Detrimental                              73    0.115     11.5 
+#  6 Noncoding                      Increased                                41    0.0645     6.45
+#  7 Noncoding                      No effect                               473    0.744     74.4 
+#  8 Noncoding                      Strongly detrimental                     49    0.0770     7.7 
+#  9 Overlapping Coding             Detrimental                             435    0.178     17.8 
+# 10 Overlapping Coding             Increased                                42    0.0172     1.72
+# 11 Overlapping Coding             No effect                              1025    0.420     42.0 
+# 12 Overlapping Coding             Strongly detrimental                    939    0.385     38.5 
+
+
+# ============================================================
+# Noncoding mutation analyses
+# ============================================================
+
+phix_1nt_noncoding <- phix_1nt_mutations %>%
+  dplyr::filter(
+    genome_nt_pos_nucleotide_class == "Noncoding"
+  )
+
+# Check regulatory annotations
+table(
+  phix_1nt_noncoding$genome_nt_pos_annotation_combined,
+  useNA = "ifany"
+)
+
+
+# Mutation categories across regulatory annotations
+summary_1nt_noncoding_mut <- generate_mutation_category_summary(
+  df = phix_1nt_noncoding,
+  class_col = "genome_nt_pos_annotation",
+  category_col = "mutational_effect_category_lethal_1nt"
+)
+
+print(summary_1nt_noncoding_mut)
+# # A tibble: 19 × 5
+#    genome_nt_pos_annotation mutational_effect_category_lethal_1nt count proportion percent
+#    <chr>                    <chr>                                 <int>      <dbl>   <dbl>
+#  1 Promoter                 Detrimental                               5     0.0617    6.17
+#  2 Promoter                 No effect                                46     0.568    56.8 
+#  3 Promoter                 Strongly detrimental                     30     0.370    37.0 
+#  4 RBS                      Detrimental                               8     0.296    29.6 
+#  5 RBS                      No effect                                15     0.556    55.6 
+#  6 RBS                      Strongly detrimental                      4     0.148    14.8 
+#  7 RBS,Terminator           Detrimental                               9     0.273    27.3 
+#  8 RBS,Terminator           No effect                                14     0.424    42.4 
+#  9 RBS,Terminator           Strongly detrimental                     10     0.303    30.3 
+# 10 Terminator               Detrimental                              11     0.115    11.5 
+# 11 Terminator               No effect                                82     0.854    85.4 
+# 12 Terminator               Strongly detrimental                      3     0.0312    3.12
+# 13 Terminator,Ori (-)       Detrimental                              17     0.131    13.1 
+# 14 Terminator,Ori (-)       Increased                                38     0.292    29.2 
+# 15 Terminator,Ori (-)       No effect                                73     0.562    56.2 
+# 16 Terminator,Ori (-)       Strongly detrimental                      2     0.0154    1.54
+# 17 Unknown Noncoding        Detrimental                              23     0.0855    8.55
+# 18 Unknown Noncoding        Increased                                 3     0.0112    1.12
+# 19 Unknown Noncoding        No effect                               243     0.903    90.3 
+
+
+# Alternative summary using combined annotations
+summary_1nt_noncoding_combined <- generate_mutation_category_summary(
+  df = phix_1nt_noncoding,
+  class_col = "genome_nt_pos_annotation_combined",
+  category_col = "mutational_effect_category_lethal_1nt"
+)
+
+print(summary_1nt_noncoding_combined)
+
+
+
+
+# ============================================================
+# Function: Stacked bar plot for mutation categories
+# ============================================================
+
+bar_percent_stacked_genome <- function(
+    summary_df,
+    class_col = "Class",
+    category_col = "Category",
+    count_col = "count",
+    plot_title = "Mutation Category by Class",
+    fill_legend_title = "Mutation Category",
+    x_order = NULL,
+    facet_col = NULL,
+    custom_colors = replication_category_colors,
+    show_segment_labels = FALSE,
+    label_digits = 1,
+    use_percent = TRUE,
+    stat_df = NULL,
+    stat_p_col = "p_value",
+    stat_format = c("p", "stars"),
+    stat_position = c("subtitle", "caption", "none")
+) {
+
+  stat_format <- match.arg(stat_format)
+  stat_position <- match.arg(stat_position)
+
+  required_cols <- c(
+    class_col, category_col, count_col, facet_col
+  )
+
+  stopifnot(
+    all(required_cols %in% names(summary_df))
+  )
+
+  grouping_cols <- c(facet_col, class_col)
+
+  # Aggregate counts
+  plot_data <- summary_df %>%
+    dplyr::filter(
+      !is.na(.data[[class_col]]),
+      !is.na(.data[[category_col]])
+    ) %>%
+    dplyr::group_by(
+      dplyr::across(
+        dplyr::all_of(c(grouping_cols, category_col))
+      )
+    ) %>%
+    dplyr::summarise(
+      count = sum(.data[[count_col]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::group_by(
+      dplyr::across(dplyr::all_of(grouping_cols))
+    ) %>%
+    dplyr::mutate(
+      proportion = count / sum(count),
+      percent = 100 * proportion
+    ) %>%
+    dplyr::ungroup()
+
+  # Category order
+  plot_data[[category_col]] <- factor(
+    plot_data[[category_col]],
+    levels = names(custom_colors)
+  )
+
+  # X-axis order
+  if (!is.null(x_order)) {
+
+    plot_data[[class_col]] <- factor(
+      plot_data[[class_col]],
+      levels = x_order
+    )
+
+  } else if (is.null(facet_col)) {
+
+    class_order <- plot_data %>%
+      dplyr::group_by(.data[[class_col]]) %>%
+      dplyr::summarise(
+        detrimental_fraction = sum(
+          proportion[
+            as.character(.data[[category_col]]) %in%
+              c("Detrimental", "Strongly detrimental")
+          ],
+          na.rm = TRUE
+        ),
+        .groups = "drop"
+      ) %>%
+      dplyr::arrange(
+        dplyr::desc(detrimental_fraction)
+      ) %>%
+      dplyr::pull(.data[[class_col]])
+
+    plot_data[[class_col]] <- factor(
+      plot_data[[class_col]],
+      levels = class_order
+    )
+  }
+
+  # Total count per bar
+  total_df <- plot_data %>%
+    dplyr::group_by(
+      dplyr::across(dplyr::all_of(grouping_cols))
+    ) %>%
+    dplyr::summarise(
+      total_count = sum(count),
+      .groups = "drop"
+    )
+
+  y_max <- if (use_percent) 100 else 1
+  y_col <- if (use_percent) "percent" else "proportion"
+
+  # Base plot
+  p <- ggplot2::ggplot(
+    plot_data,
+    ggplot2::aes(
+      x = .data[[class_col]],
+      y = .data[[y_col]],
+      fill = .data[[category_col]]
+    )
+  ) +
+    ggplot2::geom_col(
+      position = "stack",
+      width = 0.9,
+      color = "black"
+    ) +
+    ggplot2::geom_text(
+      data = total_df,
+      ggplot2::aes(
+        x = .data[[class_col]],
+        y = y_max * 1.05,
+        label = scales::comma(total_count)
+      ),
+      inherit.aes = FALSE,
+      size = 3.5
+    ) +
+    ggplot2::scale_fill_manual(
+      values = custom_colors,
+      name = fill_legend_title,
+      drop = FALSE
+    ) +
+    ggplot2::scale_y_continuous(
+      breaks = seq(0, y_max, length.out = 5),
+      expand = c(0, 0)
+    ) +
+    ggplot2::coord_cartesian(
+      ylim = c(0, y_max * 1.1)
+    ) +
+    ggplot2::labs(
+      title = plot_title,
+      x = "Class",
+      y = if (use_percent) {
+        "Proportion (%)"
+      } else {
+        "Proportion"
+      }
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        angle = 45,
+        hjust = 1
+      )
+    )
+
+  # Optional segment labels
+  if (show_segment_labels) {
+
+    p <- p +
+      ggplot2::geom_text(
+        ggplot2::aes(
+          label = if (use_percent) {
+            paste0(
+              round(.data[[y_col]], label_digits),
+              "%"
+            )
+          } else {
+            round(.data[[y_col]], label_digits)
+          }
+        ),
+        position = ggplot2::position_stack(vjust = 0.5),
+        size = 3
+      )
+  }
+
+  # Optional faceting
+  if (!is.null(facet_col)) {
+    p <- p +
+      ggplot2::facet_wrap(
+        ggplot2::vars(.data[[facet_col]]),
+        scales = "free_x"
+      )
+  }
+
+  # Optional statistical annotation
+  if (!is.null(stat_df) &&
+      stat_position != "none" &&
+      is.null(facet_col)) {
+
+    p_value <- stat_df[[stat_p_col]][1]
+
+    stat_label <- if (stat_format == "p") {
+      if (is.na(p_value)) {
+        "p = NA"
+      } else if (p_value < 2.2e-16) {
+        "p < 2.2e-16"
+      } else {
+        paste0("p = ", signif(p_value, 3))
+      }
+    } else {
+      if (is.na(p_value)) {
+        "NA"
+      } else if (p_value < 0.001) {
+        "***"
+      } else if (p_value < 0.01) {
+        "**"
+      } else if (p_value < 0.05) {
+        "*"
+      } else {
+        "ns"
+      }
+    }
+
+    label_text <- paste0(
+      "Chi-square test: ", stat_label
+    )
+
+    if (stat_position == "subtitle") {
+      p <- p + ggplot2::labs(subtitle = label_text)
+    } else {
+      p <- p + ggplot2::labs(caption = label_text)
+    }
+  }
+
+  return(p)
+}
+
+
+# ============================================================
+# Stacked bar plots
+# Output: Fig. 1D, F
+# ============================================================
+
+# All 1nt mutations grouped by nucleotide region
+plot_1nt_categories <- bar_percent_stacked_genome(
+  summary_df = summary_1nt_mut_lethal,
+  class_col = "genome_nt_pos_nucleotide_class",
+  category_col = "mutational_effect_category_lethal_1nt",
+  count_col = "count",
+  custom_colors = replication_category_colors,
+  plot_title = "Single-nucleotide mutation categories",
+  fill_legend_title = "Mutational effect"
+)
+
+print(plot_1nt_categories)
+
+
+# Noncoding mutations grouped by regulatory annotation
+plot_1nt_noncoding_categories <- bar_percent_stacked_genome(
+  summary_df = summary_1nt_noncoding_mut,
+  class_col = "genome_nt_pos_annotation",
+  category_col = "mutational_effect_category_lethal_1nt",
+  count_col = "count",
+  custom_colors = replication_category_colors,
+  plot_title = "Noncoding mutation categories",
+  fill_legend_title = "Mutational effect"
+)
+
+print(plot_1nt_noncoding_categories)
+
+
+
+
+# ============================================================
+# Function: Donut plot of mutation-category proportions
+# ============================================================
+
+plot_donut_percent <- function(
+    df,
+    category_col = "Category",
+    count_col = "count",
+    percent_col = NULL,
+    title = "Composition",
+    label_acc = 0.1,
+    palette = NULL
+) {
+
+  stopifnot(category_col %in% names(df))
+
+  if (!is.null(percent_col)) {
+
+    df_cat <- df %>%
+      dplyr::group_by(.data[[category_col]]) %>%
+      dplyr::summarise(
+        percent = sum(.data[[percent_col]], na.rm = TRUE),
+        .groups = "drop"
+      )
+
+    # Interpret supplied values as proportions or percentages
+    if (sum(df_cat$percent, na.rm = TRUE) > 1.01) {
+      df_cat$percent <- df_cat$percent / 100
+    }
+
+    df_cat <- df_cat %>%
+      dplyr::mutate(
+        percent = percent / sum(percent)
+      )
+
+  } else {
+
+    df_cat <- df %>%
+      dplyr::group_by(.data[[category_col]]) %>%
+      dplyr::summarise(
+        count = sum(.data[[count_col]], na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        percent = count / sum(count)
+      )
+  }
+
+  # Preserve palette order
+  if (!is.null(palette)) {
+    df_cat[[category_col]] <- factor(
+      df_cat[[category_col]],
+      levels = names(palette)
+    )
+  }
+
+  df_cat <- df_cat %>%
+    dplyr::mutate(
+      label = scales::percent(
+        percent,
+        accuracy = label_acc
+      )
+    )
+
+  # Donut plot
+  p <- ggplot2::ggplot(
+    df_cat,
+    ggplot2::aes(
+      x = 2,
+      y = percent,
+      fill = .data[[category_col]]
+    )
+  ) +
+    ggplot2::geom_col(
+      color = "white",
+      width = 0.9
+    ) +
+    ggplot2::coord_polar(theta = "y") +
+    ggplot2::xlim(0.5, 2.5) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = label),
+      position = ggplot2::position_stack(vjust = 0.5),
+      size = 4
+    ) +
+    ggplot2::labs(
+      title = title,
+      x = NULL,
+      y = NULL,
+      fill = category_col
+    ) +
+    ggplot2::theme_void() +
+    ggplot2::theme(
+      legend.position = "none"
+    )
+
+  if (!is.null(palette)) {
+    p <- p +
+      ggplot2::scale_fill_manual(
+        values = palette,
+        drop = FALSE
+      )
+  }
+
+  return(p)
+}
+
+
+# Generate overall category summary
+summary_1nt_overall <- phix_1nt_mutations %>%
+  dplyr::filter(
+    !is.na(mutational_effect_category_lethal_1nt)
+  ) %>%
+  dplyr::count(
+    mutational_effect_category_lethal_1nt,
+    name = "count"
+  )
+
+# Plot
+donut_1nt_overall <- plot_donut_percent(
+  df = summary_1nt_overall,
+  category_col = "mutational_effect_category_lethal_1nt",
+  count_col = "count",
+  title = "Single-nucleotide mutational effects",
+  palette = replication_category_colors
+)
+
+print(donut_1nt_overall)
+
+
+
+
+
+```
+
+Volcano plot, Fig. S1H
+```{r}
+
+# ============================================================
+# Volcano plot - single-nucleotide variants
+# Input: Data S2 - 1nt_mutations
+# Output: Fig. S1H
+# ============================================================
+
+# 1. Check required columns
+required_cols <- c(
+  "replication_score",
+  "p_value_vs_synonymous_FDR",
+  "mutational_effect_category_lethal_1nt"
+)
+
+stopifnot(
+  all(required_cols %in% names(phix_1nt_mutations))
+)
+
+
+# 2. Inspect mutation categories
+table(
+  phix_1nt_mutations$mutational_effect_category_lethal_1nt,
+  useNA = "ifany"
+)
+
+
+# 3. Generate volcano plot
+volcano_plot_1nt <- plot_volcano(
+  data = phix_1nt_mutations,
+
+  x_col = "replication_score",
+
+  y_col = "p_value_vs_synonymous_FDR",
+
+  color_col = "mutational_effect_category_lethal_1nt",
+
+  x_lim = c(-1, 1.5),
+
+  y_lim = c(0, 2.7),
+
+  reference_value = 1,
+
+  strong_effect_cutoff = 0.5,
+
+  fdr_cutoff = 0.05,
+
+  plot_title = paste0(
+    "Single-nucleotide (1nt) variants, n=",
+    format(
+      nrow(phix_1nt_mutations),
+      big.mark = ",",
+      scientific = FALSE
+    )
+  )
+)
+
+print(volcano_plot_1nt)
+
+
+
+```
+
+
+### 4) Nucleotide-residue categories, stacked bar plots and donut plots (Fig. S1J)
+```{r}
+# ============================================================
+# Nucleotide residue category analysis
+# Input: Data S2 - 1nt_residues
+# ============================================================
+
+# 1. Generate summary by nucleotide region class
+
+summary_1nt_pos_essential_category <-
+  generate_mutation_category_summary(
+    df = phix_1nt_residues,
+    class_col = "genome_nt_pos_nucleotide_class",
+    category_col = "genome_nt_pos_nucleotide_category"
+  )
+
+print(summary_1nt_pos_essential_category)
+# # A tibble: 12 × 5
+#    genome_nt_pos_nucleotide_class genome_nt_pos_nucleotide_category count proportion percent
+#    <chr>                          <chr>                             <int>      <dbl>   <dbl>
+#  1 Coding                         Essential                          2084    0.479     47.8 
+#  2 Coding                         Sensitive                           921    0.211     21.2 
+#  3 Coding                         Tolerant                           1328    0.305     30.5 
+#  4 Coding                         Unable to define                     22    0.00505    0.51
+#  5 Noncoding                      Essential                            24    0.111     11.1 
+#  6 Noncoding                      Sensitive                            42    0.194     19.4 
+#  7 Noncoding                      Tolerant                            142    0.654     65.4 
+#  8 Noncoding                      Unable to define                      9    0.0415     4.15
+#  9 Overlapping Coding             Essential                           480    0.590     59.0 
+# 10 Overlapping Coding             Sensitive                           139    0.171     17.1 
+# 11 Overlapping Coding             Tolerant                            194    0.238     23.8 
+# 12 Overlapping Coding             Unable to define                      1    0.00123    0.12
+
+# 2. Define nucleotide residue category colors
+
+nucleotide_category_colors <- c(
+  "Unable to define" = "#2B82AC",
+  "Tolerant" = "#DFCBBC",
+  "Sensitive" = "#EDB01D",
+  "Essential" = "#CD6143"
+)
+
+
+# 3. Check nucleotide category distribution
+
+table(
+  phix_1nt_residues$genome_nt_pos_nucleotide_category,
+  useNA = "ifany"
+)
+#        Essential        Sensitive         Tolerant Unable to define 
+#             2588             1102             1664               32 
+
+# Check classified nucleotide positions
+sum(summary_1nt_pos_essential_category$count)
+# [1] 5386
+
+# Expected genome length: 5386
+nrow(phix_1nt_residues)
+
+
+
+# ============================================================
+# Donut plot - nucleotide residue categories
+# ============================================================
+
+donut_plot_genome_nt_mut <- plot_donut_percent(
+  df = summary_1nt_pos_essential_category,
+
+  category_col = "genome_nt_pos_nucleotide_category",
+
+  count_col = "count",
+
+  title = NULL,
+
+  palette = nucleotide_category_colors
+)
+
+print(donut_plot_genome_nt_mut)
+
+
+
+
+# ============================================================
+# Stacked bar plot - nucleotide categories by genomic region
+# ============================================================
+
+# Function for stacked bar plot across nucleotide classes
+bar_percent_stacked_genome_nucleotide <- function(
+  data,
+  x_col,
+  fill_col,
+  palette = NULL,
+  title = NULL,
+  legend_title = "Factor Class",
+  show_legend = TRUE,
+  x_order = NULL
+) {
+
+  # Required packages:
+  # dplyr, ggplot2, rlang
+
+  # --- Capture columns safely ---
+  x_sym    <- rlang::ensym(x_col)
+  fill_sym <- rlang::ensym(fill_col)
+
+  x_name   <- rlang::as_name(x_sym)
+  fill_name <- rlang::as_name(fill_sym)
+
+  # --- Step 1: Compute total counts per x group ---
+  total_counts <- data %>%
+    dplyr::group_by(!!x_sym) %>%
+    dplyr::summarise(total = sum(count, na.rm = TRUE), .groups = "drop")
+
+  # --- Step 2: Sum counts per x and fill category ---
+  grouped_data <- data %>%
+    dplyr::group_by(!!x_sym, !!fill_sym) %>%
+    dplyr::summarise(count = sum(count, na.rm = TRUE), .groups = "drop")
+
+  # --- Step 3: Calculate percentage ---
+  percent_data <- grouped_data %>%
+    dplyr::left_join(total_counts, by = x_name) %>%
+    dplyr::mutate(percent = 100 * count / total) %>%
+    dplyr::select(-total)
+
+  # --- Step 4: Handle x ordering ---
+  if (!is.null(x_order)) {
+    percent_data <- percent_data %>%
+      dplyr::mutate(!!x_sym := factor(.data[[x_name]], levels = x_order))
+  }
+
+  # --- Step 5: Enforce stack order from palette ---
+  if (!is.null(palette) && !is.null(names(palette))) {
+    percent_data[[fill_name]] <- factor(
+      percent_data[[fill_name]],
+      levels = names(palette)
+    )
+  }
+
+  # --- Step 6: Compute total counts for bar-top labels ---
+  bar_totals <- percent_data %>%
+    dplyr::group_by(!!x_sym) %>%
+    dplyr::summarise(
+      n = sum(count, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    #dplyr::mutate(label = paste0("n = ", n))
+    dplyr::mutate(label = n)
+
+  # --- Step 7: Build plot ---
+  p <- ggplot2::ggplot(percent_data,
+              ggplot2::aes(x = !!x_sym,
+                           y = percent,
+                           fill = !!fill_sym)) +
+    ggplot2::geom_bar(stat = "identity",
+             position = "stack",
+             width = 0.9,
+             color = "black") +
+    ggplot2::geom_text(
+      data = bar_totals,
+      ggplot2::aes(x = !!x_sym, y = 100, label = label),
+      inherit.aes = FALSE,
+      vjust = -0.5,
+      size = 4
+    ) +
+    ggplot2::labs(
+      title = title,
+      x = NULL,
+      y = "Percentage (%)",
+      fill = if (show_legend) legend_title else NULL
+    ) +
+    ggplot2::scale_y_continuous(
+      #limits = c(0, 110),   # room for top labels
+      #expand = ggplot2::expansion(mult = c(0, 0.05))
+      breaks = seq(0, 100, 25),
+      labels = scales::label_number(scale = 1),
+      expand = expansion(mult = c(0, 0.10))
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      legend.position = if (show_legend) "right" else "none",
+      axis.text.x = ggplot2::element_text(angle = 0)
+    )
+
+  # --- Step 8: Apply custom palette ---
+  if (!is.null(palette)) {
+    p <- p +
+      ggplot2::scale_fill_manual(
+        values = palette,
+        drop = FALSE,
+        na.value = "white"
+      )
+  }
+
+  return(p)
+}
+
+
+bar_stacked_genome_nt_category <-
+  bar_percent_stacked_genome_nucleotide(
+    data = summary_1nt_pos_essential_category,
+
+    x_col = genome_nt_pos_nucleotide_class,
+
+    fill_col = genome_nt_pos_nucleotide_category,
+
+    palette = nucleotide_category_colors,
+
+    x_order = c(
+      "Overlapping Coding",
+      "Coding",
+      "Noncoding"
+    ),
+
+    legend_title = "Nucleotide category",
+
+    show_legend = FALSE
+  )
+
+print(bar_stacked_genome_nt_category)
+
+
+
+
+
+```
+
+
+### 5) Correlation to individually assayed mutants (Fig. S1E)
+```{r}
+# ============================================================
+# Data S2: Comparison with individually assayed mutants
+# Input: reported_individual_mutants
+# ============================================================
+
+# 1. Inspect available literature studies
+table(
+  phix_reported_mutants$study,
+  useNA = "ifany"
+)
+# Domingo-Calap et al. 2009 
+#                        45 
+
+
+# 2. Extract Domingo-Calap et al. (2009)
+domingo_2009_dms_structure <- phix_reported_mutants %>%
+  dplyr::filter(
+    grepl("Domingo", study, ignore.case = TRUE)
+  ) %>%
+  dplyr::mutate(
+    fitness_dms = replication_score_dms
+  )
+
+
+# 3. Check data
+nrow(domingo_2009_dms_structure)
+# [1] 45
+
+domingo_2009_dms_structure %>%
+  dplyr::select(
+    mutation_literature,
+    genome_mut_ID_nt,
+    gene_literature,
+    fitness_dms,
+    fitness_literature,
+    residue_structural_group_predicted_plot
+  ) %>%
+  head()
+
+
+# 4. Inspect structural categories
+table(
+  domingo_2009_dms_structure$
+    residue_structural_group_predicted_plot,
+  useNA = "ifany"
+)
+#                        Core                   Interface Multiple structural classes        No amino-acid change       Non-interface surface           Unknown structure 
+#                          10                          16                           4                           1                          10                           4 
+
+
+# ============================================================
+# Structural colors
+# ============================================================
+
+structural_colors_literature <- c(
+  "Core" = "#A6B5C6",
+  "Interface" = "#A9C6B0",
+  "Non-interface surface" = "#C5BFA0",
+  "Unknown structure" = "#979188",
+  "Multiple structural classes" = "#6F6F6F",
+  "No amino-acid change" = "#D9D9D9"
+)
+
+
+# ============================================================
+# Function: Correlation with literature measurements
+# ============================================================
+
+calculate_literature_cor <- function(
+    df,
+    x_col = "fitness_dms",
+    y_col = "fitness_literature"
+) {
+
+  df_cor <- df %>%
+    dplyr::filter(
+      is.finite(.data[[x_col]]),
+      is.finite(.data[[y_col]])
+    )
+
+  n <- nrow(df_cor)
+
+  if (
+    n < 3 ||
+    dplyr::n_distinct(df_cor[[x_col]]) < 2 ||
+    dplyr::n_distinct(df_cor[[y_col]]) < 2
+  ) {
+    return(
+      tibble::tibble(
+        n = n,
+        pearson_r = NA_real_,
+        pearson_p = NA_real_,
+        spearman_rho = NA_real_,
+        spearman_p = NA_real_
+      )
+    )
+  }
+
+  # Pearson correlation
+  pearson_test <- stats::cor.test(
+    df_cor[[x_col]],
+    df_cor[[y_col]],
+    method = "pearson"
+  )
+
+  # Spearman rank correlation
+  spearman_test <- suppressWarnings(
+    stats::cor.test(
+      df_cor[[x_col]],
+      df_cor[[y_col]],
+      method = "spearman"
+    )
+  )
+
+  tibble::tibble(
+    n = n,
+    pearson_r = unname(pearson_test$estimate),
+    pearson_p = pearson_test$p.value,
+    spearman_rho = unname(spearman_test$estimate),
+    spearman_p = spearman_test$p.value
+  )
+}
+
+
+# ============================================================
+# Function: Literature vs DMS correlation scatter plot
+# Colored by structural classification
+# ============================================================
+
+plot_literature_correlation_structure <- function(
+    df,
+    title = "Comparison with individually assayed mutants",
+    y_label = "Literature measurement",
+    x_col = "replication_score_dms",
+    literature_col = "fitness_literature",
+    structure_col = "residue_structural_group_predicted_plot",
+    structural_colors = structural_colors_literature
+) {
+
+  # ---- 1. Prepare data ----
+  df_plot <- df %>%
+    dplyr::filter(
+      is.finite(.data[[x_col]]),
+      is.finite(.data[[literature_col]])
+    )
+
+  # ---- 2. Calculate correlations ----
+  cor_stats <- calculate_literature_cor(
+    df = df_plot,
+    x_col = x_col,
+    y_col = literature_col
+  )
+
+  # ---- 3. Format p-values ----
+  format_p <- function(p) {
+
+    if (is.na(p)) {
+      return("NA")
+    }
+
+    if (p < 0.001) {
+      return("< 0.001")
+    }
+
+    paste0("= ", sprintf("%.3f", p))
+  }
+
+  stat_label <- paste0(
+    "Pearson r = ",
+    sprintf("%.2f", cor_stats$pearson_r),
+    ", P ", format_p(cor_stats$pearson_p),
+    ";   Spearman \u03c1 = ",
+    sprintf("%.2f", cor_stats$spearman_rho),
+    ", P ", format_p(cor_stats$spearman_p),
+    ";   n = ", cor_stats$n
+  )
+
+  # ---- 4. Structural-class counts for legend ----
+  structural_counts <- df_plot %>%
+    dplyr::filter(
+      !is.na(.data[[structure_col]])
+    ) %>%
+    dplyr::count(
+      .data[[structure_col]],
+      name = "n"
+    ) %>%
+    dplyr::mutate(
+      legend_label = paste0(
+        .data[[structure_col]],
+        " (n=", n, ")"
+      )
+    )
+
+  structural_labels <- stats::setNames(
+    structural_counts$legend_label,
+    structural_counts[[structure_col]]
+  )
+
+  legend_breaks <- names(structural_colors)[
+    names(structural_colors) %in%
+      structural_counts[[structure_col]]
+  ]
+
+  legend_labels <- structural_labels[legend_breaks]
+
+  # ---- 5. Plot ----
+  p <- ggplot2::ggplot(
+    df_plot,
+    ggplot2::aes(
+      x = .data[[x_col]],
+      y = .data[[literature_col]]
+    )
+  ) +
+
+    # Linear regression
+    ggplot2::geom_smooth(
+      method = "lm",
+      formula = y ~ x,
+      se = FALSE,
+      linewidth = 0.8,
+      color = "black"
+    ) +
+
+    # Individual mutants
+    ggplot2::geom_point(
+      ggplot2::aes(
+        color = .data[[structure_col]]
+      ),
+      size = 3,
+      alpha = 0.85
+    ) +
+
+    # Structural color scale
+    ggplot2::scale_color_manual(
+      values = structural_colors,
+      breaks = legend_breaks,
+      labels = legend_labels,
+      name = "Structural class",
+      drop = TRUE,
+      na.value = "grey70"
+    ) +
+
+    ggplot2::labs(
+      title = title,
+      subtitle = stat_label,
+      x = "Mutational effect measured by DMS",
+      y = y_label
+    ) +
+
+    ggplot2::theme_classic(
+      base_size = 12
+    ) +
+
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(
+        hjust = 0.5,
+        face = "bold"
+      ),
+
+      plot.subtitle = ggplot2::element_text(
+        hjust = 0.5,
+        size = 10,
+        margin = ggplot2::margin(b = 8)
+      ),
+
+      legend.position = "right",
+
+      legend.title = ggplot2::element_text(
+        face = "bold"
+      )
+    )
+
+  return(p)
+}
+
+
+# ============================================================
+# Scatter plot: Domingo-Calap et al. (2009)
+# ============================================================
+
+plot_domingo_2009_structure <-
+  plot_literature_correlation_structure(
+    df = domingo_2009_dms_structure,
+
+    title = "Comparison with individually assayed mutants",
+
+    y_label = "Domingo-Calap et al. (2009)"
+  )
+
+print(plot_domingo_2009_structure)
+
+
+# Save PDF
+#ggplot2::ggsave(
+  #filename = "./plots/plot_domingo_2009_structure.pdf",
+  #plot = plot_domingo_2009_structure,
+  #width = 6,
+  #height = 3.5
+#)
+
+
+
+
+
+```
+
+
+
+## Sequencing-depth sensitivity of mutation categories (Fig. S1I)
+```{r}
+# ============================================================
+# Sequencing-depth sensitivity analysis
+# Input: Precomputed downsampling summary datasets
+# ============================================================
+
+# 1. Define input directory
+downsampling_results_dir <- paste0(
+  "./codes_Github_final/data/",
+  "processed_fitness_data/"
+)
+
+# Adjust the directory to the actual location of the RDS files
+
+# 2. Load summary datasets
+downsampling_depth_summary <- readRDS(
+  file.path(
+    downsampling_results_dir,
+    "downsampling_depth_summary.rds"
+  )
+)
+
+downsampling_input_count_summary <- readRDS(
+  file.path(
+    downsampling_results_dir,
+    "downsampling_input_count_summary.rds"
+  )
+)
+
+# 3. Inspect datasets
+dplyr::glimpse(downsampling_depth_summary)
+dplyr::glimpse(downsampling_input_count_summary)
+
+names(downsampling_depth_summary)
+names(downsampling_input_count_summary)
+
+
+
+# ============================================================
+# Sequencing-depth sensitivity plots
+# ============================================================
+
+# 1. Number of retained single-nucleotide variants
+
+plot_downsampling_n1nt <- ggplot2::ggplot(
+  downsampling_depth_summary,
+  ggplot2::aes(
+    x = pct,
+    y = n_1nt
+  )
+) +
+  ggplot2::geom_line(
+    linewidth = 0.8
+  ) +
+  ggplot2::geom_point(
+    size = 2.5
+  ) +
+  ggplot2::scale_x_continuous(
+    breaks = seq(20, 100, by = 5),
+    limits = c(20, 100)
+  ) +
+  ggplot2::labs(
+    title = "Number of 1-nt variants retained",
+    x = "Sequencing depth (%)",
+    y = "1-nt variants retained"
+  ) +
+  ggplot2::theme_classic(
+    base_size = 12
+  ) +
+  ggplot2::theme(
+    axis.title = ggplot2::element_text(
+      face = "bold"
+    ),
+    plot.title = ggplot2::element_text(
+      face = "bold",
+      size = 11,
+      hjust = 0
+    )
+  )
+
+print(plot_downsampling_n1nt)
+
+
+# 2. Percentage of variants with detrimental effects
+
+plot_downsampling_detrimental <- ggplot2::ggplot(
+  downsampling_depth_summary,
+  ggplot2::aes(
+    x = pct,
+    y = percent_detrimental
+  )
+) +
+  ggplot2::geom_line(
+    linewidth = 0.8
+  ) +
+  ggplot2::geom_point(
+    size = 2.5
+  ) +
+  ggplot2::scale_x_continuous(
+    breaks = seq(20, 100, by = 5),
+    limits = c(20, 100)
+  ) +
+  ggplot2::scale_y_continuous(
+    breaks = seq(0, 50, by = 10),
+    expand = c(0, 0)
+  ) +
+  ggplot2::coord_cartesian(
+    ylim = c(0, 55)
+  ) +
+  ggplot2::labs(
+    title = "Percentage of 1-nt variants with detrimental effects",
+    x = "Sequencing depth (%)",
+    y = "Variants with detrimental effects (%)"
+  ) +
+  ggplot2::theme_classic(
+    base_size = 12
+  ) +
+  ggplot2::theme(
+    axis.title = ggplot2::element_text(
+      face = "bold"
+    ),
+    plot.title = ggplot2::element_text(
+      face = "bold",
+      size = 11,
+      hjust = 0
+    )
+  )
+
+print(plot_downsampling_detrimental)
+
+
+
+# ============================================================
+# Combine sequencing-depth sensitivity plots
+# ============================================================
+
+# 1. Upper panel: remove x-axis labels
+plot_downsampling_n1nt_shared <-
+  plot_downsampling_n1nt +
+  ggplot2::labs(
+    x = NULL
+  ) +
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_blank(),
+    axis.ticks.x = ggplot2::element_blank()
+  )
+
+
+# 2. Lower panel: retain x-axis
+plot_downsampling_detrimental_shared <-
+  plot_downsampling_detrimental +
+  ggplot2::labs(
+    x = "Sequencing depth (%)"
+  )
+
+
+# 3. Combine vertically
+plot_downsampling_combined <- ggpubr::ggarrange(
+  plot_downsampling_n1nt_shared,
+  plot_downsampling_detrimental_shared,
+  ncol = 1,
+  nrow = 2,
+  align = "v",
+  heights = c(1, 1)
+)
+
+print(plot_downsampling_combined)
+
+
+# Create output directory if necessary
+#dir.create(
+  #"./plots",
+  #recursive = TRUE,
+  #showWarnings = FALSE
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/plot_downsampling_combined.pdf",
+  #plot = plot_downsampling_combined,
+  #width = 4,
+  #height = 4,
+  #units = "in"
+#)
+
+
+
+```
+
+
+
+## Save checkpoints
+```{r}
+save.image(
+  file = "./codes_Github_final/run_Supplementary_Data.RData",
+  compress = "xz"
+)
+
+
+```
+
+
+
+
+
+
+
+
+

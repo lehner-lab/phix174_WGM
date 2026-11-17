@@ -1,0 +1,1629 @@
+---
+title: "Multiple sequence alignments and variant-effect predictor benchmarking"
+output: html_document
+date: "2026-11-14"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Data S4: Supplementary File 4 Multiple sequence alignments and evaluation of variant-effect predictors.xlsx
+```{r}
+# ============================================================
+# Data S4: Multiple sequence alignments and evaluation of VEPs
+# ============================================================
+
+# 1. Load required packages
+library(readxl)
+library(dplyr)
+library(purrr)
+
+
+# 2. Define supplementary data file
+file_path <- paste0(
+  "./codes_Github_final/Supplementary_Data/",
+  "Supplementary File 4 Multiple sequence alignments and evaluation of variant-effect predictors.xlsx"
+)
+
+# Check file exists
+stopifnot(file.exists(file_path))
+
+
+# 3. Load all worksheets into a named list
+sheet_names <- readxl::excel_sheets(file_path)
+
+data_s4 <- purrr::map(
+  sheet_names,
+  ~ readxl::read_excel(
+    file_path,
+    sheet = .x,
+    guess_max = 10000
+  )
+)
+
+names(data_s4) <- sheet_names
+
+
+# 4. Inspect loaded datasets
+
+# Available worksheets
+names(data_s4)
+#  [1] "Catalog"                    "VEP_predictor_metadata"     "VEP_protein_inputs"         "MSA_statistics"             "EVcouplings_mutations"      "EVcouplings_performance"    "VEP_sequence_scores"       
+#  [8] "VEP_structure_scores"       "Evo2_genome_scores"         "Evo2_genome_performance"    "Evo2_ORF_scores"            "ESMIF1_single_vs_complex"   "ESMIF1_performance"         "VEP_performance_by_protein"
+# [15] "VEP_performance_overall"   
+
+# Dimensions of each worksheet
+purrr::map(data_s4, dim)
+
+# Column names of each worksheet
+purrr::map(data_s4, names)
+
+# Preview first rows
+purrr::map(data_s4, head)
+
+
+# 5. Check for import warnings
+# Inspect column types in each worksheet
+purrr::map(
+  data_s4,
+  ~ vapply(.x, class, character(1))
+)
+
+
+
+
+```
+
+
+
+## Main analyses
+Fig. 4G; Fig. S4D, E, F, G, J, K, L; 
+### 1) VEP Performance summary (Fig. 4G; Fig. S4F)
+```{r}
+# ============================================================
+# Data S4: VEP performance analysis
+# ============================================================
+
+# 1. Extract the two performance datasets
+phix_vep_performance_by_protein <-
+  data_s4[["VEP_performance_by_protein"]]
+
+phix_vep_performance_overall <-
+  data_s4[["VEP_performance_overall"]]
+
+
+# 2. Inspect dimensions
+dim(phix_vep_performance_by_protein)
+dim(phix_vep_performance_overall)
+
+
+# 3. Inspect column names
+names(phix_vep_performance_by_protein)
+names(phix_vep_performance_overall)
+
+
+# 4. Preview
+head(phix_vep_performance_by_protein)
+head(phix_vep_performance_overall)
+
+
+
+# ============================================================
+# Prepare VEP performance plotting data
+# ============================================================
+
+# 1. Check required columns
+required_cols <- c(
+  "predictor_name",
+  "gene_name",
+  "median_rho"
+)
+
+stopifnot(
+  all(required_cols %in%
+        names(phix_vep_performance_by_protein))
+)
+
+
+# 2. Prepare data
+#phix_perf_clean <-
+  #phix_vep_performance_by_protein %>%
+  #dplyr::filter(
+    #!is.na(predictor_name),
+    #!is.na(gene_name),
+    #is.finite(median_rho)
+  #)
+
+# Exclude "TEM-1 (Control)"
+phix_perf_clean <-
+  phix_vep_performance_by_protein %>%
+  dplyr::filter(
+    !is.na(predictor_name),
+    !is.na(gene_name),
+    gene_name != "TEM-1 (Control)",
+    is.finite(median_rho)
+  )
+
+
+# 3. Check observations per predictor and protein
+phix_perf_clean %>%
+  dplyr::count(
+    predictor_name,
+    gene_name
+  ) %>%
+  dplyr::filter(n > 1)
+
+
+# 4. Inspect predictors
+sort(unique(phix_perf_clean$predictor_name))
+
+# 5. Inspect proteins
+sort(unique(phix_perf_clean$gene_name))
+# [1] "A" "B" "C" "D" "E" "F" "G" "H" "J"
+
+
+# ============================================================
+# RSA baseline and predictor performance summary
+# ============================================================
+
+rsa_monomer <- "RSA (monomer)"
+rsa_complex <- "RSA (complex)"
+
+
+# 1. Median monomer RSA baseline
+rsa_median_line <- phix_perf_clean %>%
+  dplyr::filter(
+    predictor_name == rsa_monomer
+  ) %>%
+  dplyr::summarise(
+    rsa_median = median(median_rho, na.rm = TRUE)
+  ) %>%
+  dplyr::pull(rsa_median)
+
+print(rsa_median_line)
+
+
+# 2. Prepare dot plotting data
+phix_dot_plot_df <- phix_perf_clean %>%
+  dplyr::group_by(predictor_name) %>%
+  dplyr::mutate(
+    predictor_median_rho = median(
+      median_rho,
+      na.rm = TRUE
+    ),
+
+    n_proteins = dplyr::n_distinct(gene_name)
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+    predictor_name = forcats::fct_reorder(
+      predictor_name,
+      predictor_median_rho,
+      .desc = TRUE
+    ),
+
+    is_rsa_monomer =
+      as.character(predictor_name) == rsa_monomer,
+
+    is_rsa_complex =
+      as.character(predictor_name) == rsa_complex
+  )
+
+
+# 3. Summary by predictor
+phix_model_median_df <- phix_dot_plot_df %>%
+  dplyr::group_by(predictor_name) %>%
+  dplyr::summarise(
+    model_median_rho = median(
+      median_rho,
+      na.rm = TRUE
+    ),
+
+    n_proteins = dplyr::n_distinct(gene_name),
+
+    .groups = "drop"
+  )
+
+print(phix_model_median_df)
+
+
+# 4. Number-of-proteins labels
+phix_n_label_df <- phix_dot_plot_df %>%
+  dplyr::distinct(
+    predictor_name,
+    n_proteins
+  ) %>%
+  dplyr::mutate(
+    y_pos = max(
+      phix_dot_plot_df$median_rho,
+      na.rm = TRUE
+    ) + 0.04,
+
+    n_label = paste0(
+      "n=", n_proteins
+    )
+  )
+
+
+
+# ============================================================
+# Dot plot 1: VEP performance across proteins
+# ============================================================
+
+dot_plot_VEP_evaluation <- ggplot2::ggplot(
+  #phix_dot_plot_df,
+  phix_dot_plot_df[phix_dot_plot_df$gene_name != "TEM-1 (Control)",],
+  
+  ggplot2::aes(
+    x = predictor_name,
+    y = median_rho
+  )
+) +
+
+  # Monomer RSA baseline
+  ggplot2::geom_hline(
+    yintercept = rsa_median_line,
+    linetype = "dashed",
+    color = "red",
+    linewidth = 0.5
+  ) +
+
+  # Median performance per predictor
+  ggplot2::stat_summary(
+    fun = median,
+    geom = "crossbar",
+    width = 0.45,
+    color = "red",
+    linewidth = 0.35
+  ) +
+
+  # Other predictors
+  ggplot2::geom_jitter(
+    data = phix_dot_plot_df %>%
+      dplyr::filter(
+        !is_rsa_monomer,
+        !is_rsa_complex
+      ),
+    width = 0.15,
+    height = 0,
+    size = 1.4,
+    alpha = 0.75,
+    color = "black"
+  ) +
+
+  # Monomer RSA
+  ggplot2::geom_jitter(
+    data = phix_dot_plot_df %>%
+      dplyr::filter(is_rsa_monomer),
+    width = 0.15,
+    height = 0,
+    size = 1.4,
+    alpha = 0.85,
+    color = "red"
+  ) +
+
+  # Complex RSA
+  ggplot2::geom_jitter(
+    data = phix_dot_plot_df %>%
+      dplyr::filter(is_rsa_complex),
+    width = 0.15,
+    height = 0,
+    size = 1.4,
+    alpha = 0.85,
+    color = "orange"
+  ) +
+
+  # Number of proteins
+  ggplot2::geom_text(
+    data = phix_n_label_df,
+    ggplot2::aes(
+      x = predictor_name,
+      y = y_pos,
+      label = n_label
+    ),
+    inherit.aes = FALSE,
+    size = 3,
+    angle = 90,
+    hjust = 0
+  ) +
+
+  ggplot2::scale_y_continuous(
+    breaks = seq(
+      floor(
+        min(phix_dot_plot_df$median_rho, na.rm = TRUE) * 10
+      ) / 10,
+      ceiling(
+        (max(phix_dot_plot_df$median_rho, na.rm = TRUE) + 0.12) * 10
+      ) / 10,
+      by = 0.2
+    ),
+    labels = function(x) sprintf("%.1f", x)
+  ) +
+
+  ggplot2::coord_cartesian(
+    ylim = c(
+      min(phix_dot_plot_df$median_rho, na.rm = TRUE),
+      max(phix_dot_plot_df$median_rho, na.rm = TRUE) + 0.12
+    ),
+    clip = "off"
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+
+    plot.margin = ggplot2::margin(
+      t = 15,
+      r = 10,
+      b = 10,
+      l = 10
+    )
+  ) +
+
+  ggplot2::labs(
+    x = NULL,
+    y = "Spearman rho",
+    title = "ΦX174 predictor performance by protein",
+    subtitle = paste0(
+      "Each dot is one protein; dashed line = median RSA (monomer), rho = ",
+      round(rsa_median_line, 3)
+    )
+  )
+
+print(dot_plot_VEP_evaluation)
+
+
+
+# ============================================================
+# Dot plot 2: VEP performance colored by protein
+# ============================================================
+
+dot_plot_VEP_evaluation_genes <- ggplot2::ggplot(
+  phix_dot_plot_df,
+  ggplot2::aes(
+    x = predictor_name,
+    y = median_rho
+  )
+) +
+
+  ggplot2::geom_hline(
+    yintercept = rsa_median_line,
+    linetype = "dashed",
+    color = "red",
+    linewidth = 0.5
+  ) +
+
+  ggplot2::stat_summary(
+    fun = median,
+    geom = "crossbar",
+    width = 0.45,
+    color = "red",
+    linewidth = 0.35
+  ) +
+
+  ggplot2::geom_jitter(
+    ggplot2::aes(
+      color = gene_name
+    ),
+    width = 0.15,
+    height = 0,
+    size = 1.8,
+    alpha = 0.85
+  ) +
+
+  ggplot2::geom_text(
+    data = phix_n_label_df,
+    ggplot2::aes(
+      x = predictor_name,
+      y = y_pos,
+      label = n_label
+    ),
+    inherit.aes = FALSE,
+    size = 3,
+    angle = 90,
+    hjust = 0
+  ) +
+
+  ggplot2::coord_cartesian(
+    ylim = c(
+      min(phix_dot_plot_df$median_rho, na.rm = TRUE),
+      max(phix_dot_plot_df$median_rho, na.rm = TRUE) + 0.12
+    ),
+    clip = "off"
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+
+    plot.margin = ggplot2::margin(
+      t = 15,
+      r = 10,
+      b = 10,
+      l = 10
+    )
+  ) +
+
+  ggplot2::labs(
+    x = NULL,
+    y = "Spearman rho",
+    color = "Protein",
+    title = "ΦX174 predictor performance by protein",
+    subtitle = paste0(
+      "Each dot is one protein; dashed line = median RSA (monomer), rho = ",
+      round(rsa_median_line, 3)
+    )
+  )
+
+print(dot_plot_VEP_evaluation_genes)
+
+
+#ggplot2::ggsave(
+  #filename = "./plots/dot_plot_VEP_evaluation.pdf",
+  #plot = dot_plot_VEP_evaluation,
+  #width = 9,
+  #height = 3.5
+#)
+
+
+#ggplot2::ggsave(
+  #filename = "./plots/dot_plot_VEP_evaluation_genes.pdf",
+  #plot = dot_plot_VEP_evaluation_genes,
+  #width = 9,
+  #height = 3.5
+#)
+
+
+
+```
+
+
+### 2) Correlations to single mutant matrics, Frequency and Conservation (Fig. S4G)
+```{r}
+# ============================================================
+# Data S4: EVcouplings performance
+# ============================================================
+
+EVcouplings_performance <-
+  data_s4[["EVcouplings_performance"]]
+
+# Inspect data
+dim(EVcouplings_performance)
+
+names(EVcouplings_performance)
+
+head(EVcouplings_performance)
+
+# Inspect predictor and protein columns
+dplyr::glimpse(EVcouplings_performance)
+
+
+
+# ============================================================
+# Prepare EVcouplings dot-plot dataframe
+# ============================================================
+
+EVcouplings_dot_plot_df <-
+  EVcouplings_performance %>%
+  dplyr::filter(
+    result_type == "Protein",
+    !is.na(protein),
+    is.finite(performance_rho)
+  ) %>%
+  dplyr::mutate(
+    gene_name = protein,
+
+    predictor_name = factor(
+      predictor_name,
+      levels = c(
+        "Frequency",
+        "Conservation",
+        "Independent model",
+        "Epistatic model"
+      )
+    )
+  )
+
+# Inspect
+EVcouplings_dot_plot_df %>%
+  dplyr::select(
+    gene_name,
+    predictor_name,
+    n_mutations,
+    rho_raw,
+    performance_rho
+  )
+
+# Check proteins and predictors
+table(EVcouplings_dot_plot_df$predictor_name)
+#         Frequency      Conservation Independent model   Epistatic model 
+#                 9                 9                 9                 9 
+
+sort(unique(EVcouplings_dot_plot_df$gene_name))
+# [1] "A" "B" "C" "D" "E" "F" "G" "H" "J"
+
+
+
+# ============================================================
+# EVcouplings performance summary
+# ============================================================
+
+# 1. Calculate performance across proteins
+EVcouplings_predictor_summary <-
+  EVcouplings_dot_plot_df %>%
+  dplyr::group_by(predictor_name) %>%
+  dplyr::summarise(
+    n_proteins = dplyr::n_distinct(gene_name),
+
+    median_rho = median(
+      performance_rho,
+      na.rm = TRUE
+    ),
+
+    mean_rho = mean(
+      performance_rho,
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  )
+
+print(EVcouplings_predictor_summary)
+# # A tibble: 4 × 4
+#   predictor_name    n_proteins median_rho mean_rho
+#   <fct>                  <int>      <dbl>    <dbl>
+# 1 Frequency                  9      0.255    0.206
+# 2 Conservation               9      0.132    0.144
+# 3 Independent model          9      0.196    0.204
+# 4 Epistatic model            9      0.238    0.282
+
+
+# 2. Determine plotting range
+rho_min <- min(
+  EVcouplings_dot_plot_df$performance_rho,
+  na.rm = TRUE
+)
+
+rho_max <- max(
+  EVcouplings_dot_plot_df$performance_rho,
+  na.rm = TRUE
+)
+
+
+# 3. Prepare n labels
+EVcouplings_n_label_df <-
+  EVcouplings_predictor_summary %>%
+  dplyr::mutate(
+    n_label = paste0("n = ", n_proteins),
+    y_pos = rho_max + 0.06
+  )
+
+
+# ============================================================
+# Dot plot 2: EVcouplings performance colored by protein
+# ============================================================
+
+dot_plot_EVcouplings_evaluation_genes <-
+  ggplot2::ggplot(
+    EVcouplings_dot_plot_df,
+    ggplot2::aes(
+      x = predictor_name,
+      y = performance_rho
+    )
+  ) +
+
+  # Reference at zero
+  ggplot2::geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+    linewidth = 0.5
+  ) +
+
+  # RSA (monomer) baseline
+  ggplot2::geom_hline(
+    yintercept = rsa_median_line,
+    color = "red",
+    linetype = "dashed",
+    linewidth = 0.5
+  ) +
+
+  # Median performance
+  ggplot2::stat_summary(
+    fun = median,
+    geom = "crossbar",
+    width = 0.45,
+    color = "red",
+    linewidth = 0.35
+  ) +
+
+  # Points colored by protein
+  ggplot2::geom_jitter(
+    ggplot2::aes(
+      color = gene_name
+    ),
+    width = 0.15,
+    height = 0,
+    size = 1.8,
+    alpha = 0.85
+  ) +
+
+  # Number of proteins
+  ggplot2::geom_text(
+    data = EVcouplings_n_label_df,
+    ggplot2::aes(
+      x = predictor_name,
+      y = y_pos,
+      label = n_label
+    ),
+    inherit.aes = FALSE,
+    size = 3,
+    angle = 90,
+    hjust = 0
+  ) +
+
+  ggplot2::coord_cartesian(
+    ylim = c(rho_min, rho_max + 0.12),
+    clip = "off"
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    plot.margin = ggplot2::margin(
+      t = 15, r = 10, b = 10, l = 10
+    )
+  ) +
+
+  ggplot2::labs(
+    x = NULL,
+    y = "Direction-adjusted Spearman rho",
+    color = "Protein",
+    title = expression(
+      Phi*X174~alignment-derived~predictor~performance~(EVcouplings)
+    ),
+    subtitle = paste0(
+      "Each dot is one protein\n",
+      "Red crossbar = median across proteins\n",
+      "Red dashed line = RSA (monomer), rho = ",
+      round(rsa_median_line, 3)
+    )
+  )
+
+print(dot_plot_EVcouplings_evaluation_genes)
+
+#ggplot2::ggsave(
+  #filename = "./plots/dot_plot_EVcouplings_evaluation_genes.pdf",
+  #plot = dot_plot_EVcouplings_evaluation_genes,
+  #width = 5,
+  #height = 3.5
+#)
+
+
+
+```
+
+
+### 3) Multiple sequence alignments, MSA (Fig. S4D, E)
+```{r}
+# ============================================================
+# Data S4: MSA statistics
+# ============================================================
+
+phix_MSA_statistics <- data_s4[["MSA_statistics"]]
+
+# Inspect columns and databases
+names(phix_MSA_statistics)
+#  [1] "protein"                 "database"                "bitscore"                "Meff"                    "Meff_L"                  "quality"                 "num_seqs"                "seqlen"                 
+#  [9] "minimum_column_coverage" "num_cov"                 "perc_cov"                "len_cov"                 "selected_for_analysis"  
+
+dim(phix_MSA_statistics)
+# [1] 297  13
+
+dplyr::glimpse(phix_MSA_statistics)
+
+unique(phix_MSA_statistics$database)
+# [1] "MGnify_UniProt" "UniRef100"      "UniRef90"  
+
+
+# ============================================================
+# Prepare MSA heatmap data
+# ============================================================
+
+msa_heatmap_data <- phix_MSA_statistics %>%
+  dplyr::filter(
+    database %in% c("UniRef100", "MGnify_UniProt")
+  ) %>%
+  dplyr::mutate(
+    bitscore = factor(
+      bitscore,
+      levels = sort(unique(bitscore))
+    )
+  )
+
+# Inspect
+msa_heatmap_data %>%
+  dplyr::count(database, protein)
+
+# Check missing or failed alignment values
+msa_heatmap_data %>%
+  dplyr::filter(is.na(Meff_L))
+
+
+
+# ============================================================
+# Function: Plot MSA depth heatmap
+# ============================================================
+
+plot_MSA_Meff_heatmap <- function(
+    df,
+    database_name,
+    plot_title
+) {
+
+  df_plot <- df %>%
+    dplyr::filter(
+      database == database_name
+    )
+
+  ggplot2::ggplot(
+    df_plot,
+    ggplot2::aes(
+      x = bitscore,
+      y = protein,
+      
+      #fill = log10(Meff + 1)
+      fill = log10(Meff_L + 1)
+      #fill = Meff_L
+    )
+  ) +
+
+    # Heatmap tiles
+    ggplot2::geom_tile(
+      color = "white"
+    ) +
+
+    # Meff/L values
+    ggplot2::geom_text(
+      ggplot2::aes(
+        label = round(Meff_L, 2)
+      ),
+      size = 4,
+      color = "white"
+    ) +
+
+    ggplot2::theme_classic() +
+
+    ggplot2::labs(
+      title = plot_title,
+      x = "Bitscore threshold",
+      y = "Proteins",
+      fill = "Meff/L"
+    )
+}
+
+
+# ============================================================
+# MSA heatmap: UniRef100
+# ============================================================
+
+heatmap_MSA_Meff_UniRef100 <- plot_MSA_Meff_heatmap(
+  df = msa_heatmap_data,
+
+  database_name = "UniRef100",
+
+  plot_title = paste0(
+    "Alignment depth (Meff/L) in MSA using ",
+    "EVcouplings (Database: UniRef100)"
+  )
+)
+
+print(heatmap_MSA_Meff_UniRef100)
+
+
+# ============================================================
+# MSA heatmap: MGnify + UniProt
+# ============================================================
+
+heatmap_MSA_Meff_MGnify <- plot_MSA_Meff_heatmap(
+  df = msa_heatmap_data,
+
+  database_name = "MGnify_UniProt",
+
+  plot_title = paste0(
+    "Alignment depth (Meff/L) in MSA using ",
+    "EVcouplings (Database: MGnify + UniProt)"
+  )
+)
+
+print(heatmap_MSA_Meff_MGnify)
+
+
+# ============================================================
+# Save MSA heatmaps
+# ============================================================
+
+#ggplot2::ggsave(
+  #filename = "./plots/heatmap_MSA_Meff_UniRef100.pdf",
+  #plot = heatmap_MSA_Meff_UniRef100,
+  #width = 6,
+  #height = 4
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/heatmap_MSA_Meff_MGnify_UniProt.pdf",
+  #plot = heatmap_MSA_Meff_MGnify,
+  #width = 6,
+  #height = 4
+#)
+
+
+
+
+```
+
+
+### 4) Evo2 variant scoring (Fig. S4J, K, L)
+```{r}
+# ============================================================
+# Data S4: Evo2 genome variant scoring
+# ============================================================
+
+# 1. Extract supplementary datasets
+Evo2_genome_performance <-
+  data_s4[["Evo2_genome_performance"]]
+
+Evo2_genome_scores <-
+  data_s4[["Evo2_genome_scores"]]
+
+
+# 2. Inspect dimensions
+dim(Evo2_genome_performance)
+dim(Evo2_genome_scores)
+
+
+# 3. Inspect column names
+names(Evo2_genome_performance)
+names(Evo2_genome_scores)
+
+
+# 4. Preview datasets
+head(Evo2_genome_performance)
+head(Evo2_genome_scores)
+
+
+# 5. Inspect data types
+dplyr::glimpse(Evo2_genome_performance)
+dplyr::glimpse(Evo2_genome_scores)
+
+
+
+# ============================================================
+# Prepare Evo2 genome correlation bar-plot data
+# ============================================================
+
+# Check required columns
+required_performance_cols <- c(
+  "group",
+  "base_pearson",
+  "base_spearman",
+  "micro_pearson",
+  "micro_spearman"
+)
+
+stopifnot(
+  all(required_performance_cols %in%
+        names(Evo2_genome_performance))
+)
+
+
+# Convert wide-format performance results to long format
+correlation_plot_data <-
+  Evo2_genome_performance %>%
+  dplyr::select(
+    group,
+    base_pearson,
+    base_spearman,
+    micro_pearson,
+    micro_spearman
+  ) %>%
+  tidyr::pivot_longer(
+    cols = -group,
+    names_to = c("model", "method"),
+    names_sep = "_",
+    values_to = "correlation"
+  ) %>%
+  dplyr::mutate(
+    group = factor(
+      group,
+      levels = c(
+        "All variants",
+        "1-nt",
+        "2-nt",
+        "3-nt"
+      )
+    ),
+
+    model = dplyr::recode(
+      model,
+      base = "Evo2 (7B Base)",
+      micro = "Evo2 (7B Microviridae)"
+    ),
+
+    method = factor(
+      method,
+      levels = c("spearman", "pearson"),
+      labels = c("Spearman", "Pearson")
+    )
+  )
+
+print(correlation_plot_data)
+
+
+
+# ============================================================
+# Function: Evo2 genome correlation bar plot
+# ============================================================
+
+plot_evo2_correlations <- function(
+    data,
+    correlation_method = "Spearman"
+) {
+
+  plot_data <- data %>%
+    dplyr::filter(
+      method == correlation_method
+    )
+
+  ggplot2::ggplot(
+    plot_data,
+    ggplot2::aes(
+      x = group,
+      y = correlation,
+      fill = model
+    )
+  ) +
+
+    ggplot2::geom_col(
+      position = ggplot2::position_dodge(width = 0.75),
+      width = 0.65,
+      color = NA
+    ) +
+
+    ggplot2::geom_text(
+      ggplot2::aes(
+        label = sprintf("%.3f", correlation)
+      ),
+      position = ggplot2::position_dodge(width = 0.75),
+      vjust = -0.5,
+      size = 3.5
+    ) +
+
+    ggplot2::scale_fill_manual(
+      values = c(
+        "Evo2 (7B Base)" = "#0081D1",
+        "Evo2 (7B Microviridae)" = "#F1BB3E"
+      )
+    ) +
+
+    ggplot2::scale_y_continuous(
+      limits = c(0, 0.65),
+      breaks = seq(0, 0.6, 0.1),
+      expand = ggplot2::expansion(mult = c(0, 0))
+    ) +
+
+    ggplot2::labs(
+      x = NULL,
+      y = paste0(correlation_method, " correlation"),
+      fill = NULL
+    ) +
+
+    ggplot2::theme_classic(base_size = 12) +
+
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        size = 11,
+        color = "black"
+      ),
+      axis.text.y = ggplot2::element_text(
+        color = "black"
+      ),
+      legend.position = "top",
+      legend.justification = "center",
+      legend.text = ggplot2::element_text(size = 10),
+      axis.title.y = ggplot2::element_text(size = 12)
+    )
+}
+
+
+# ============================================================
+# Plot 1: Spearman correlations (presented)
+# ============================================================
+
+p_evo2_spearman <- plot_evo2_correlations(
+  correlation_plot_data,
+  correlation_method = "Spearman"
+)
+
+print(p_evo2_spearman)
+
+
+# ============================================================
+# Plot 2: Pearson correlations
+# ============================================================
+
+#p_evo2_pearson <- plot_evo2_correlations(
+  #correlation_plot_data,
+  #correlation_method = "Pearson"
+#)
+
+#print(p_evo2_pearson)
+
+
+# Save plots
+#ggplot2::ggsave(
+  #filename = "./plots/p_evo2_genomes_spearman.pdf",
+  #plot = p_evo2_spearman,
+  #width = 4.5,
+  #height = 2.5
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/p_evo2_genomes_pearson.pdf",
+  #plot = p_evo2_pearson,
+  #width = 4.5,
+  #height = 2.5
+#)
+
+
+
+# ============================================================
+# Prepare Evo2 genome variant scatter-plot data
+# ============================================================
+
+# Check required columns
+required_score_cols <- c(
+  "genome_nt_mut_ham",
+  "dms_replication_score",
+  "evo2_7b_base",
+  "evo2_7b_microviridae"
+)
+
+stopifnot(
+  all(required_score_cols %in%
+        names(Evo2_genome_scores))
+)
+
+
+# Convert Evo2 scores to long format
+evo2_plot_data <-
+  Evo2_genome_scores %>%
+  dplyr::select(
+    dplyr::any_of("genome_mut_ID_nt"),
+    genome_nt_mut_ham,
+    dms_replication_score,
+    evo2_7b_base,
+    evo2_7b_microviridae
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(
+      evo2_7b_base,
+      evo2_7b_microviridae
+    ),
+    names_to = "model",
+    values_to = "evo2_score"
+  ) %>%
+  dplyr::mutate(
+    model = dplyr::recode(
+      model,
+      evo2_7b_base = "Evo2 (7B Base)",
+      evo2_7b_microviridae = "Evo2 (7B Microviridae)"
+    )
+  ) %>%
+  dplyr::filter(
+    is.finite(evo2_score),
+    is.finite(dms_replication_score)
+  )
+
+
+# Inspect data
+dplyr::count(evo2_plot_data, model)
+# # A tibble: 2 × 2
+#   model                      n
+#   <chr>                  <int>
+# 1 Evo2 (7B Base)         44195
+# 2 Evo2 (7B Microviridae) 44195
+
+dplyr::count(
+  evo2_plot_data,
+  genome_nt_mut_ham,
+  model
+)
+# # A tibble: 6 × 3
+#   genome_nt_mut_ham model                      n
+#               <dbl> <chr>                  <int>
+# 1                 1 Evo2 (7B Base)         16098
+# 2                 1 Evo2 (7B Microviridae) 16098
+# 3                 2 Evo2 (7B Base)         10781
+# 4                 2 Evo2 (7B Microviridae) 10781
+# 5                 3 Evo2 (7B Base)         17316
+# 6                 3 Evo2 (7B Microviridae) 17316
+
+
+
+# ============================================================
+# Evo2 correlation summary for scatter plots
+# ============================================================
+
+evo2_cor_by_model <-
+  evo2_plot_data %>%
+  dplyr::group_by(model) %>%
+  dplyr::summarise(
+    rho = stats::cor(
+      evo2_score,
+      dms_replication_score,
+      method = "spearman"
+    ),
+
+    n = dplyr::n(),
+
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    cor_label = sprintf(
+      "\u03c1 = %.2f\nn = %d",
+      rho,
+      n
+    )
+  )
+
+print(evo2_cor_by_model)
+# # A tibble: 2 × 4
+#   model                    rho     n cor_label            
+#   <chr>                  <dbl> <int> <chr>                
+# 1 Evo2 (7B Base)         0.495 44195 "ρ = 0.50\nn = 44195"
+# 2 Evo2 (7B Microviridae) 0.461 44195 "ρ = 0.46\nn = 44195"
+
+
+# Prepare n labels
+evo2_n_by_model <-
+  evo2_cor_by_model %>%
+  dplyr::mutate(
+    n_label = paste0(
+      "n = ",
+      format(
+        n,
+        big.mark = ",",
+        scientific = FALSE
+      )
+    )
+  )
+
+
+# ============================================================
+# Plot 3: Evo2 variant scores vs replication scores
+# ============================================================
+
+p_evo2_fitness <-
+  ggplot2::ggplot(
+    evo2_plot_data,
+    ggplot2::aes(
+      x = evo2_score,
+      y = dms_replication_score
+    )
+  ) +
+
+  ggplot2::geom_point(
+    alpha = 0.20,
+    size = 0.25,
+    color = "grey44"
+  ) +
+
+  ggplot2::geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    se = FALSE,
+    color = "#2C7FB8",
+    linewidth = 0.7
+  ) +
+
+  ggplot2::geom_text(
+    data = evo2_n_by_model,
+    ggplot2::aes(
+      x = -Inf,
+      y = Inf,
+      label = n_label
+    ),
+    inherit.aes = FALSE,
+    hjust = -0.12,
+    vjust = 1.2,
+    size = 3.8
+  ) +
+
+  ggplot2::facet_wrap(
+    ~ model,
+    scales = "free_x"
+  ) +
+
+  ggplot2::labs(
+    x = "Evo2 variant score (Δ log-likelihood)",
+    y = "Measured replication score"
+  ) +
+
+  ggplot2::theme_classic(base_size = 12) +
+
+  ggplot2::theme(
+    strip.background = ggplot2::element_blank(),
+    strip.text = ggplot2::element_text(
+      face = "bold",
+      size = 12
+    ),
+    axis.title = ggplot2::element_text(size = 12),
+    axis.text = ggplot2::element_text(size = 10),
+    panel.spacing = grid::unit(0.8, "lines")
+  )
+
+print(p_evo2_fitness)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/p_evo2_genomes_scatter.pdf",
+  #plot = p_evo2_fitness,
+  #width = 3.5,
+  #height = 2
+#)
+
+
+
+# ============================================================
+# Prepare Hamming-distance plotting data
+# ============================================================
+
+evo2_plot_data_hamming <-
+  evo2_plot_data %>%
+  dplyr::mutate(
+    genome_nt_mut_ham = factor(
+      genome_nt_mut_ham,
+      levels = c(1, 2, 3),
+      labels = c(
+        "1-nt",
+        "2-nt",
+        "3-nt"
+      )
+    )
+  ) %>%
+  dplyr::filter(
+    !is.na(genome_nt_mut_ham)
+  )
+
+
+# Count variants by Hamming distance and model
+evo2_n_by_hamming <-
+  evo2_plot_data_hamming %>%
+  dplyr::group_by(
+    genome_nt_mut_ham,
+    model
+  ) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    n_label = paste0(
+      "n = ",
+      format(
+        n,
+        big.mark = ",",
+        scientific = FALSE
+      )
+    )
+  )
+
+print(evo2_n_by_hamming)
+# # A tibble: 6 × 4
+#   genome_nt_mut_ham model                      n n_label   
+#   <fct>             <chr>                  <int> <chr>     
+# 1 1-nt              Evo2 (7B Base)         16098 n = 16,098
+# 2 1-nt              Evo2 (7B Microviridae) 16098 n = 16,098
+# 3 2-nt              Evo2 (7B Base)         10781 n = 10,781
+# 4 2-nt              Evo2 (7B Microviridae) 10781 n = 10,781
+# 5 3-nt              Evo2 (7B Base)         17316 n = 17,316
+# 6 3-nt              Evo2 (7B Microviridae) 17316 n = 17,316
+
+
+
+# ============================================================
+# Plot 4: Evo2 variant scores by Hamming distance
+# ============================================================
+
+p_evo2_by_hamming <-
+  ggplot2::ggplot(
+    evo2_plot_data_hamming,
+    ggplot2::aes(
+      x = evo2_score,
+      y = dms_replication_score
+    )
+  ) +
+
+  ggplot2::geom_point(
+    alpha = 0.20,
+    size = 0.22,
+    color = "grey44"
+  ) +
+
+  ggplot2::geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    se = FALSE,
+    color = "#2C7FB8",
+    linewidth = 0.65
+  ) +
+
+  ggplot2::geom_text(
+    data = evo2_n_by_hamming,
+    ggplot2::aes(
+      x = -Inf,
+      y = Inf,
+      label = n_label
+    ),
+    inherit.aes = FALSE,
+    hjust = -0.12,
+    vjust = 1.15,
+    size = 3.2
+  ) +
+
+  ggplot2::facet_grid(
+    genome_nt_mut_ham ~ model,
+    scales = "free_x"
+  ) +
+
+  ggplot2::labs(
+    x = "Evo2 variant score (Δ log-likelihood)",
+    y = "Measured replication score"
+  ) +
+
+  ggplot2::theme_classic(base_size = 12) +
+
+  ggplot2::theme(
+    strip.background = ggplot2::element_blank(),
+
+    strip.text = ggplot2::element_text(
+      face = "bold",
+      size = 11
+    ),
+
+    axis.title = ggplot2::element_text(size = 12),
+    axis.text = ggplot2::element_text(size = 10),
+
+    panel.spacing = grid::unit(0.6, "lines")
+  )
+
+print(p_evo2_by_hamming)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/p_evo2_genomes_by_hamming.pdf",
+  #plot = p_evo2_by_hamming,
+  #width = 4.5,
+  #height = 5
+#)
+
+
+
+
+```
+
+
+
+## Additional analyses
+### ESM-IF1, single-chain mode vs. complex mode
+```{r}
+# ============================================================
+# Data S4: ESM-IF1 single-chain vs complex-aware performance
+# ============================================================
+
+ESMIF1_performance <- data_s4[["ESMIF1_performance"]]
+
+# Inspect data
+dim(ESMIF1_performance)
+# [1] 13  8
+
+names(ESMIF1_performance)
+# [1] "structure"          "protein"            "structure_copy"     "structure_instance" "n"                  "rho_single"         "rho_complex"        "delta_rho"         
+
+head(ESMIF1_performance)
+
+dplyr::glimpse(ESMIF1_performance)
+
+
+
+# ============================================================
+# Prepare ESM-IF1 performance plotting data
+# ============================================================
+
+esm_if1_dms_correlations_long <-
+  ESMIF1_performance %>%
+  tidyr::pivot_longer(
+    cols = c(rho_single, rho_complex),
+    names_to = "context",
+    values_to = "rho"
+  ) %>%
+  dplyr::mutate(
+    context = dplyr::recode(
+      context,
+      rho_single  = "Single-chain",
+      rho_complex = "Complex-aware"
+    ),
+    context = factor(
+      context,
+      levels = c("Single-chain", "Complex-aware")
+    )
+  ) %>%
+  dplyr::filter(
+    !is.na(structure_instance),
+    is.finite(rho)
+  )
+
+# Check contexts and number of measurements
+unique(esm_if1_dms_correlations_long$context)
+# [1] Single-chain  Complex-aware
+# Levels: Single-chain Complex-aware
+
+esm_if1_dms_correlations_long %>%
+  dplyr::count(structure_instance, context)
+
+
+
+# ============================================================
+# ESM-IF1 structure-instance colors
+# ============================================================
+
+# Color pattern
+esm_if1_instance_colors <- c(
+  "1CD3_B"  = "#D95F9F",
+
+  "1CD3_D1" = "#C6DBEF",
+  "1CD3_D2" = "#9ECAE1",
+  "1CD3_D3" = "#6BAED6",
+  "1CD3_D4" = "#2171B5",
+
+  "1CD3_F"  = "#A1D99B",
+  "2BPA_F"  = "#31A354",
+
+  "1CD3_G"  = "#FCBBA1",
+  "2BPA_G"  = "#E34A33",
+
+  "4JPP_H3" = "#FDAE6B",
+
+  "2BPA_J"  = "#756BB1",
+
+  "8G02_E1" = "#BDBDBD",
+  "8G02_E2" = "#636363"
+)
+
+
+# Legend labels
+esm_if1_instance_labels <- c(
+  "1CD3_B"  = "B — 1CD3",
+
+  "1CD3_D1" = "D1 — 1CD3",
+  "1CD3_D2" = "D2 — 1CD3",
+  "1CD3_D3" = "D3 — 1CD3",
+  "1CD3_D4" = "D4 — 1CD3",
+
+  "1CD3_F"  = "F — 1CD3",
+  "2BPA_F"  = "F — 2BPA",
+
+  "1CD3_G"  = "G — 1CD3",
+  "2BPA_G"  = "G — 2BPA",
+
+  "4JPP_H3" = "H — 4JPP",
+
+  "2BPA_J"  = "J — 2BPA",
+
+  "8G02_E1" = "E1 — 8G02",
+  "8G02_E2" = "E2 — 8G02"
+)
+
+
+# ============================================================
+# Plot: ESM-IF1 single-chain vs complex-aware performance
+# ============================================================
+
+p_esm_if1_dms_correlations <-
+  ggplot2::ggplot(
+    esm_if1_dms_correlations_long,
+    ggplot2::aes(
+      x = context,
+      y = rho,
+      group = structure_instance,
+      color = structure_instance
+    )
+  ) +
+
+  # Connect performance of the same structure instance
+  ggplot2::geom_line(
+    linewidth = 0.7,
+    alpha = 0.75
+  ) +
+
+  # Correlation values
+  ggplot2::geom_point(
+    size = 3.2
+  ) +
+
+  # Original color palette and labels
+  ggplot2::scale_color_manual(
+    values = esm_if1_instance_colors,
+    labels = esm_if1_instance_labels
+  ) +
+
+  # Preserve original y-axis range
+  ggplot2::coord_cartesian(
+    ylim = c(0, 0.6)
+  ) +
+
+  ggplot2::labs(
+    x = NULL,
+    y = "Spearman correlation",
+    title = "Single-chain and complex-aware ESM-IF1",
+    color = NULL
+  ) +
+
+  ggplot2::theme_classic(
+    base_size = 12
+  ) +
+
+  ggplot2::theme(
+    legend.position = "right"
+  )
+
+print(p_esm_if1_dms_correlations)
+
+#ggplot2::ggsave(
+  #filename = "./plots/p_esm_if1_single_vs_complex.pdf",
+  #plot = p_esm_if1_dms_correlations,
+  #width = 6,
+  #height = 3.5
+#)
+
+
+
+
+```
+
+
+
+## Save checkpoints
+```{r}
+save.image(
+  file = "./codes_Github_final/run_Supplementary_Data.RData",
+  compress = "xz"
+)
+
+
+```
+
+
+
+
+
+
+
+

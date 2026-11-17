@@ -145,152 +145,297 @@ nt_position_cols <- c(
 
 
 # Function to summarise 1nt mut data to positions
-collapse_nt_to_position <- function(df,
-                                    pos_col = "genome_nt_mut_pos",
-                                    fitness_col = "fitness_final",
-                                    sigma_col = "sigma_final",
-                                    wt_reference) {
-  
-  # ---- Safety check ----
+collapse_nt_to_position <- function(
+  df,
+  pos_col = "genome_nt_mut_pos",
+  replication_col = "fitness_final",
+  sigma_col = "sigma_final",
+  wt_reference
+) {
+
+  # ============================================================
+  # Safety checks
+  # ============================================================
+
   if (missing(wt_reference) || !is.numeric(wt_reference)) {
     stop("You must supply a numeric wt_reference value.")
   }
-  
+
+  required_cols <- c(
+    pos_col,
+    replication_col,
+    sigma_col,
+    "genome_nt_mut_sub",
+    "mutation_category_FDR_1nt",
+    "mutation_category_FDR_lethal_1nt"
+  )
+
+  missing_cols <-
+    setdiff(
+      required_cols,
+      names(df)
+    )
+
+  if (length(missing_cols) > 0) {
+    stop(
+      "Missing required columns: ",
+      paste(
+        missing_cols,
+        collapse = ", "
+      )
+    )
+  }
+
+
+  # ============================================================
+  # Collapse nucleotide substitutions to genomic positions
+  # ============================================================
+
   df %>%
-    dplyr::group_by(.data[[pos_col]]) %>%
+
+    dplyr::group_by(
+      .data[[pos_col]]
+    ) %>%
+
     dplyr::summarise(
-      
-      # ------------------------
+
+      # --------------------------------------------------------
       # Sampling
-      # ------------------------
-      
-      n_mutations_nt_pos = dplyr::n(),
-      
+      # --------------------------------------------------------
+
+      n_mutations_nt_pos =
+        dplyr::n(),
+
       n_unique_substitutions =
-        dplyr::n_distinct(genome_nt_mut_sub),
-      
+        dplyr::n_distinct(
+          genome_nt_mut_sub
+        ),
+
       n_valid_substitutions =
-        sum(!is.na(mutation_category_FDR_1nt)),
-      
-      n_possible_substitutions = 3,
-      
+        sum(
+          !is.na(
+            mutation_category_FDR_1nt
+          )
+        ),
+
+      n_possible_substitutions =
+        3,
+
       is_fully_sampled =
         n_unique_substitutions == 3 &
         n_valid_substitutions == 3,
-      
-      # ------------------------
-      # Fitness summaries
-      # ------------------------
-      
-      min_fitness_nt_pos = min(.data[[fitness_col]], na.rm = TRUE),
-      max_fitness_nt_pos = max(.data[[fitness_col]], na.rm = TRUE),
-      median_fitness_nt_pos = median(.data[[fitness_col]], na.rm = TRUE),
-      mean_fitness_nt_pos = mean(.data[[fitness_col]], na.rm = TRUE),
-      sd_fitness_nt_pos = sd(.data[[fitness_col]], na.rm = TRUE),
-      
+
+
+      # --------------------------------------------------------
+      # Replication-score summaries
+      # --------------------------------------------------------
+
+      min_replication_nt_pos =
+        min(
+          .data[[replication_col]],
+          na.rm = TRUE
+        ),
+
+      max_replication_nt_pos =
+        max(
+          .data[[replication_col]],
+          na.rm = TRUE
+        ),
+
+      median_replication_nt_pos =
+        median(
+          .data[[replication_col]],
+          na.rm = TRUE
+        ),
+
+      mean_replication_nt_pos =
+        mean(
+          .data[[replication_col]],
+          na.rm = TRUE
+        ),
+
+      sd_replication_nt_pos =
+        sd(
+          .data[[replication_col]],
+          na.rm = TRUE
+        ),
+
       median_sigma_nt_pos =
-        if (sigma_col %in% names(df))
-          median(.data[[sigma_col]], na.rm = TRUE)
-        else NA_real_,
-      
-      # ------------------------
-      # Category counts
-      # ------------------------
-      
-      genome_nt_pos_num_beneficial =
-        sum(mutation_category_FDR_lethal_1nt == "Beneficial", na.rm = TRUE),
-      
-      genome_nt_pos_num_neutral =
-        sum(mutation_category_FDR_lethal_1nt == "Neutral", na.rm = TRUE),
-      
+        median(
+          .data[[sigma_col]],
+          na.rm = TRUE
+        ),
+
+
+      # --------------------------------------------------------
+      # Replication-category counts
+      # --------------------------------------------------------
+
+      genome_nt_pos_num_increased =
+        sum(
+          mutation_category_FDR_lethal_1nt ==
+            #"Increased replication",
+            "Increased",
+          na.rm = TRUE
+        ),
+
+      genome_nt_pos_num_no_effect =
+        sum(
+          mutation_category_FDR_lethal_1nt ==
+            #"No measurable effect",
+            "No effect",
+          na.rm = TRUE
+        ),
+
       genome_nt_pos_num_detrimental =
-        sum(mutation_category_FDR_lethal_1nt == "Detrimental", na.rm = TRUE),
-      
-      genome_nt_pos_num_lethal =
-        sum(mutation_category_FDR_lethal_1nt == "Lethal", na.rm = TRUE),
-      
-      # ------------------------
-      # Category fractions
-      # ------------------------
-      
-      genome_nt_pos_frac_beneficial =
-        genome_nt_pos_num_beneficial / n_mutations_nt_pos,
-      
-      genome_nt_pos_frac_neutral =
-        genome_nt_pos_num_neutral / n_mutations_nt_pos,
-      
+        sum(
+          mutation_category_FDR_lethal_1nt ==
+            #"Reduced replication",
+            "Detrimental",
+          na.rm = TRUE
+        ),
+
+      genome_nt_pos_num_strongly_detrimental =
+        sum(
+          mutation_category_FDR_lethal_1nt ==
+            "Strongly detrimental",
+          na.rm = TRUE
+        ),
+
+
+      # --------------------------------------------------------
+      # Replication-category fractions
+      # --------------------------------------------------------
+
+      genome_nt_pos_frac_increased =
+        genome_nt_pos_num_increased /
+        n_mutations_nt_pos,
+
+      genome_nt_pos_frac_no_effect =
+        genome_nt_pos_num_no_effect /
+        n_mutations_nt_pos,
+
       genome_nt_pos_frac_detrimental =
-        genome_nt_pos_num_detrimental / n_mutations_nt_pos,
-      
-      genome_nt_pos_frac_lethal =
-        genome_nt_pos_num_lethal / n_mutations_nt_pos,
-      
-      # ------------------------
-      # Essential logic (original)
-      # ------------------------
-      
-      genome_nt_pos_essential_FDR = ifelse(
-        any(mutation_category_FDR_1nt == "Detrimental", na.rm = TRUE),
-        "Essential", "Non-essential"
-      ),
-      
-      genome_nt_pos_essential_FDR_lethal = ifelse(
-        any(mutation_category_FDR_lethal_1nt == "Lethal", na.rm = TRUE),
-        "Essential", "Non-essential"
-      ),
-      
-      genome_nt_pos_essential_FDR_deleterious = ifelse(
-        any(mutation_category_FDR_cutoff_1nt_combined == "Deleterious", na.rm = TRUE),
-        "Essential", "Non-essential"
-      ),
-      
-      # ------------------------
-      # Median fitness rule
-      # ------------------------
-      
-      genome_nt_pos_essential_median_fitness = {
-        med_fit <- median(.data[[fitness_col]], na.rm = TRUE)
-        if (!is.na(med_fit) && med_fit < 0.5 * wt_reference) {
+        genome_nt_pos_num_detrimental /
+        n_mutations_nt_pos,
+
+      genome_nt_pos_frac_strongly_detrimental =
+        genome_nt_pos_num_strongly_detrimental /
+        n_mutations_nt_pos,
+
+
+      # --------------------------------------------------------
+      # Position-level constraint indicators
+      # --------------------------------------------------------
+
+      # At least one substitution significantly reduces replication
+      genome_nt_pos_essential_FDR =
+        ifelse(
+          any(
+            mutation_category_FDR_1nt ==
+              #"Reduced replication",
+              "Detrimental",
+            na.rm = TRUE
+          ),
+          "Essential",
+          "Non-essential"
+        ),
+
+      # At least one strongly detrimental substitution
+      genome_nt_pos_essential_FDR_strongly_detrimental =
+        ifelse(
+          any(
+            mutation_category_FDR_lethal_1nt ==
+              "Strongly detrimental",
+            na.rm = TRUE
+          ),
+          "Essential",
+          "Non-essential"
+        ),
+
+
+      # --------------------------------------------------------
+      # Median replication rule
+      # --------------------------------------------------------
+
+      genome_nt_pos_essential_median_replication = {
+
+        med_rep <-
+          median(
+            .data[[replication_col]],
+            na.rm = TRUE
+          )
+
+        if (
+          !is.na(med_rep) &&
+          med_rep < 0.5 * wt_reference
+        ) {
           "Essential"
         } else {
           "Non-essential"
         }
       },
-      
-      # ------------------------
-      # FINAL classification (UPDATED)
-      # ------------------------
-      
-      genome_nt_pos_nucleotide_category = dplyr::case_when(
-        
-        # strongest signal
-        any(mutation_category_FDR_lethal_1nt == "Lethal", na.rm = TRUE) ~ "Essential",
-        
-        # sub-lethal constraint
-        any(mutation_category_FDR_1nt == "Detrimental", na.rm = TRUE) ~ "Sensitive",
-        
-        # only safe tolerance call
-        is_fully_sampled ~ "Tolerant",
-        
-        # incomplete sampling
-        TRUE ~ "Unable to define"
-      ),
-      
-      # ------------------------
-      # Preserve invariant columns
-      # ------------------------
-      
+
+
+      # --------------------------------------------------------
+      # Final nucleotide-position classification
+      # --------------------------------------------------------
+
+      genome_nt_pos_nucleotide_category =
+        dplyr::case_when(
+
+          # Strongest observed constraint
+          any(
+            mutation_category_FDR_lethal_1nt ==
+              "Strongly detrimental",
+            na.rm = TRUE
+          ) ~
+            "Essential",
+
+          # At least one significantly reduced-replication variant
+          any(
+            mutation_category_FDR_1nt ==
+              #"Reduced replication",
+              "Detrimental",
+            na.rm = TRUE
+          ) ~
+            "Sensitive",
+
+          # All three possible substitutions measured,
+          # with no reduced-replication variant
+          is_fully_sampled ~
+            "Tolerant",
+
+          # Incomplete sampling
+          TRUE ~
+            "Unable to define"
+        ),
+
+
+      # --------------------------------------------------------
+      # Preserve invariant annotation columns
+      # --------------------------------------------------------
+
       dplyr::across(
         -c(
-          dplyr::any_of(c(pos_col, fitness_col, sigma_col)),
-          dplyr::starts_with("mutation_category_")
+          dplyr::any_of(
+            c(
+              pos_col,
+              replication_col,
+              sigma_col
+            )
+          ),
+          dplyr::starts_with(
+            "mutation_category_"
+          )
         ),
         dplyr::first
       ),
-      
+
       .groups = "drop"
     )
 }
+
 
 
 # Function to do Chi-square Test (with Cramér’s V)
@@ -358,6 +503,7 @@ run_chisq_test <- function(df,
 }
 
 
+
 # Function to generate summary table
 generate_mutation_category_summary <- function(
     df, 
@@ -384,6 +530,7 @@ generate_mutation_category_summary <- function(
     ) %>%
     dplyr::ungroup()
 }
+
 
 
 # Function to generate statistics results
@@ -484,41 +631,352 @@ run_fisher_from_summary <- function(summary_df,
 
 ### 2) Data plotting
 ```{r}
-# Function to plot volcano plots
-plot_volcano <- function(data,
-                         x_col = "fitness_final",
-                         y_col = "p_adj_two_samples_syn",
-                         color_col = "mutation_category_FDR_cutoff",
-                         x_lim = c(-1, 1.5),
-                         y_lim = c(0, 2.7),
-                         plot_title = "Volcano Plot") {
+# ============================================================
+# Updated volcano plots
+# ============================================================
+replication_category_colors <- c(
+  "Increased" = "#A1A9D0",
+  "No effect"  = "#D9D9D9",
+  "Detrimental"   = "#F4A6A6",
+  "Strongly detrimental"  = "#F0988C"
+)
 
-  x_sym <- rlang::sym(x_col)
-  y_sym <- rlang::sym(y_col)
-  color_sym <- rlang::sym(color_col)
+replication_category_levels <- c(
+  "Increased",
+  "No effect",
+  "Detrimental",
+  "Strongly detrimental"
+)
 
-  ggplot(data, aes(x = !!x_sym, y = -log10(!!y_sym), color = !!color_sym)) +
-    geom_point(alpha = 0.6, size = 1) +
-    scale_color_manual(values = c(
-      "Beneficial"  = "#A1A9D0",  # soft blue
-      "Neutral"     = "#D9D9D9",  # light gray
-      "Detrimental" = "#F4A6A6",  # light red
-      "Lethal"      = "#F0988C"   # muted dark red
-    )) +
-    xlim(x_lim) +
-    ylim(y_lim) +
-    labs(
-      x = "Fitness",
-      y = expression(-log[10](FDR)),
-      title = plot_title,
-      color = "Mutation Category"
+plot_volcano <- function(
+  data,
+  x_col = "fitness_final",
+  y_col = "p_adj_two_samples_syn",
+  color_col = "mutation_category_FDR_cutoff",
+  x_lim = c(-1, 1.5),
+  y_lim = c(0, 2.7),
+  reference_value = 1,
+  strong_effect_cutoff = 0.5,
+  fdr_cutoff = 0.05,
+  plot_title = "Volcano plot"
+) {
+
+  library(dplyr)
+  library(ggplot2)
+
+  # ----------------------------------------------------------
+  # Thresholds
+  # ----------------------------------------------------------
+
+  strong_threshold <-
+    reference_value -
+    strong_effect_cutoff
+
+  fdr_y <-
+    -log10(
+      fdr_cutoff
+    )
+
+
+  # ----------------------------------------------------------
+  # Prepare plotting data
+  # ----------------------------------------------------------
+
+  plot_data <-
+    data %>%
+    mutate(
+
+      .x =
+        as.numeric(
+          .data[[x_col]]
+        ),
+
+      .p =
+        as.numeric(
+          .data[[y_col]]
+        ),
+
+      .y =
+        -log10(
+          pmax(
+            .p,
+            .Machine$double.xmin
+          )
+        ),
+
+      .category =
+        as.character(
+          .data[[color_col]]
+        ),
+
+      # Convert historical terminology if still present
+      .category =
+        recode(
+          .category,
+
+          "Beneficial" =
+            "Increased",
+
+          "Increased replication" =
+            "Increased",
+
+          "Neutral" =
+            "No effect",
+
+          "No measurable effect" =
+            "No effect",
+
+          "Reduced replication" =
+            "Detrimental",
+
+          "Lethal" =
+            "Strongly detrimental",
+
+          "Strongly reduced replication" =
+            "Strongly detrimental"
+        ),
+
+      .category =
+        factor(
+          .category,
+          levels =
+            replication_category_levels
+        )
+    )
+
+
+  # ----------------------------------------------------------
+  # Percentage of variants in each category
+  # ----------------------------------------------------------
+
+  percentage_data <-
+    plot_data %>%
+
+    filter(
+      !is.na(
+        .category
+      )
+    ) %>%
+
+    dplyr::count(
+      .category,
+      .drop = FALSE
+    ) %>%
+
+    mutate(
+      percentage =
+        100 *
+        n /
+        sum(n),
+
+      label =
+        sprintf(
+          "%.1f%%",
+          percentage
+        )
+    )
+
+
+  # ----------------------------------------------------------
+  # Positions of percentage labels
+  #
+  # Strongly detrimental : upper left
+  # Detrimental          : upper middle
+  # Increased            : upper right
+  # No effect            : below FDR threshold
+  # ----------------------------------------------------------
+
+  percentage_positions <-
+    tibble::tibble(
+
+      .category =
+        factor(
+          replication_category_levels,
+          levels =
+            replication_category_levels
+        ),
+
+      label_x =
+        c(
+
+          # Increased
+          (
+            reference_value +
+              x_lim[2]
+          ) / 2,
+
+          # No effect
+          x_lim[1] +
+            0.12 *
+            diff(
+              x_lim
+            ),
+
+          # Detrimental
+          (
+            strong_threshold +
+              reference_value
+          ) / 2,
+
+          # Strongly detrimental
+          (
+            x_lim[1] +
+              strong_threshold
+          ) / 2
+        ),
+
+      label_y =
+        c(
+
+          # Increased
+          y_lim[2] -
+            0.18,
+
+          # No effect
+          fdr_y *
+            0.35,
+
+          # Detrimental
+          y_lim[2] -
+            0.18,
+
+          # Strongly detrimental
+          y_lim[2] -
+            0.18
+        )
+    )
+
+
+  percentage_data <-
+    percentage_data %>%
+
+    left_join(
+      percentage_positions,
+      by = ".category"
+    )
+
+
+  # ----------------------------------------------------------
+  # Plot
+  # ----------------------------------------------------------
+
+  ggplot(
+    plot_data,
+    aes(
+      x = .x,
+      y = .y,
+      color = .category
+    )
+  ) +
+
+    # Variants
+    geom_point(
+      alpha = 0.6,
+      size = 1
     ) +
+
+    # FDR threshold
+    geom_hline(
+      yintercept =
+        fdr_y,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # Strongly detrimental threshold
+    geom_vline(
+      xintercept =
+        strong_threshold,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # WT/reference replication score
+    geom_vline(
+      xintercept =
+        reference_value,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # Percentages
+    geom_text(
+      data =
+        percentage_data,
+
+      aes(
+        x = label_x,
+        y = label_y,
+        label = label
+      ),
+
+      inherit.aes =
+        FALSE,
+
+      color =
+        "black",
+
+      fontface =
+        "bold",
+
+      size =
+        3
+    ) +
+
+    scale_color_manual(
+      values =
+        replication_category_colors,
+
+      limits =
+        replication_category_levels,
+
+      drop =
+        FALSE
+    ) +
+
+    coord_cartesian(
+      xlim =
+        x_lim,
+
+      ylim =
+        y_lim
+    ) +
+
+    labs(
+      x =
+        "Normalized replication score",
+
+      y =
+        expression(
+          -log[10](FDR)
+        ),
+
+      title =
+        plot_title,
+
+      color =
+        "Mutational effect"
+    ) +
+
     theme_classic() +
+
     theme(
-      plot.title = element_text(),
-      legend.position = "none"
+      plot.title =
+        element_text(),
+
+      legend.title =
+        element_text(
+          face = "bold"
+        )
     )
 }
+
 
 
 # Function to make Donut plot 
@@ -608,10 +1066,15 @@ bar_percent_stacked_genome <- function(
   # ---- Default colors ----
   if (is.null(custom_colors)) {
     custom_colors <- c(
-      "Beneficial"  = "#A1A9D0",
-      "Neutral"     = "#D9D9D9",
+      #"Beneficial"  = "#A1A9D0",
+      #"Neutral"     = "#D9D9D9",
+      #"Detrimental" = "#F4A6A6",
+      #"Lethal"      = "#F0988C"
+      
+      "Increased"  = "#A1A9D0",
+      "No effect"     = "#D9D9D9",
       "Detrimental" = "#F4A6A6",
-      "Lethal"      = "#F0988C"
+      "Strongly detrimental"      = "#F0988C"
     )
   }
 
@@ -676,7 +1139,7 @@ bar_percent_stacked_genome <- function(
       dplyr::summarise(
         order_val = sum(
           ifelse(
-            .data[[category_name]] %in% c("Detrimental", "Lethal"),
+            .data[[category_name]] %in% c("Detrimental", "Strongly detrimental"),
             .data[[percent_name]],
             0
           ),
@@ -1132,7 +1595,7 @@ plot_heatmap_noncoding_colored_wt <- function(data,
 ### 1) load all and 1nt variants
 ```{r}
 ## all variants
-load("./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat.RData")
+#load("./codes_Github_final/data/processed_fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat.RData")
 head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat), 0)
 nrow(phix_all_dms_sub_libraries_normalized_unique_stat)
 # [1] 44195
@@ -1140,7 +1603,7 @@ nrow(phix_all_dms_sub_libraries_normalized_unique_stat)
 
 ## 1nt Data
 ## Load 1nt DMS data after Statistic tests
-load("./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_1nt.RData")
+#load("./codes_Github_final/data/processed_fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_1nt.RData")
 head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_1nt), 0)
 nrow(phix_all_dms_sub_libraries_normalized_unique_stat_1nt)
 # [1] 16098
@@ -1196,8 +1659,8 @@ nrow(phix_1aa_syn_genome_nt_look_up_unique)
 
 
 ## Saving the advanced proteome data.frame
-#save(phix_1aa_syn_genome_nt_look_up_unique, file = "./data/proteins_data/plotting_data/phix_1aa_syn_genome_nt_look_up_unique.RData")
-write_tsv(phix_1aa_syn_genome_nt_look_up_unique, file = "./data/proteins_data/plotting_data/phix_1aa_syn_genome_nt_look_up_unique.tsv")
+save(phix_1aa_syn_genome_nt_look_up_unique, file = "./codes_Github_final/data/processed_fitness_data/phix_1aa_syn_genome_nt_look_up_unique.RData")
+write_tsv(phix_1aa_syn_genome_nt_look_up_unique, file = "./codes_Github_final/data/processed_fitness_data/phix_1aa_syn_genome_nt_look_up_unique.tsv")
 
 
 
@@ -1215,23 +1678,24 @@ write_tsv(phix_1aa_syn_genome_nt_look_up_unique, file = "./data/proteins_data/pl
 # Check data
 head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_1nt), 0)
 table(phix_all_dms_sub_libraries_normalized_unique_stat_1nt$mutation_category_FDR_lethal_1nt)
+#            Increased            No effect          Detrimental Strongly detrimental 
+#                  176                 7693                 3164                 5065 
 
 
 # 1) updated 1nt variants data 
 phix_all_dms_sub_unique_1nt_annotated <- annotate_1nt_mutations(phix_all_dms_sub_libraries_normalized_unique_stat_1nt)
-
 
 table(phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_nucleotide_class)
 #            Coding          Noncoding Overlapping Coding 
 #             13021                636               2441 
 
 table(phix_all_dms_sub_unique_1nt_annotated$mutation_category_FDR_1nt)
-# Beneficial     Neutral Detrimental 
-#        176        7693        8229 
+#   Increased   No effect Detrimental 
+#         176        7693        8229 
 
 table(phix_all_dms_sub_unique_1nt_annotated$mutation_category_FDR_1nt[!is.na(phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_noncoding_regions)])
-# Beneficial     Neutral Detrimental 
-#         41         473         122 
+#   Increased   No effect Detrimental 
+#          41         473         122 
 
 table(phix_all_dms_sub_unique_1nt_annotated$genome_nt_pos_annotation)
 #       Ori (+)           Promoter                RBS       RBS,Promoter     RBS,Terminator         Terminator Terminator,Ori (-)  Unknown Noncoding 
@@ -1253,8 +1717,6 @@ table(phix_all_dms_sub_unique_1nt_pos_annotated$genome_nt_pos_nucleotide_categor
 #       Essential        Sensitive         Tolerant Unable to define 
 #            2588             1102             1664               32 
 
-write_tsv(phix_all_dms_sub_unique_1nt_pos_annotated, file = "./data/fitness_data/phix_all_dms_sub_unique_1nt_pos_annotated.tsv")
-# renamed 'Supplementary_file_phix_1nt_residues.tsv'
 
 
 
@@ -1327,8 +1789,8 @@ Summary 1nt mutation and residue data
 head(as.data.frame(phix_all_dms_sub_unique_1nt_annotated), 0)
 #head(as.data.frame(phix_all_dms_sub_unique_1nt_pos_annotated), 0)
 table(phix_all_dms_sub_unique_1nt_annotated$mutation_category_FDR_1nt)
-# Beneficial     Neutral Detrimental 
-#        176        7693        8229 
+#   Increased   No effect Detrimental 
+#         176        7693        8229 
 
 # Run the Summary Function 
 # 1) all 1nt mut
@@ -1348,7 +1810,7 @@ summary_1nt_mut <- generate_mutation_category_summary(
   #category_col = "mutation_category_FDR_cutoff_1nt_combined"
 )
 
-#write_tsv(summary_1nt_mut, file = "./data/summary_tables/summary_1nt_mut.tsv")
+write_tsv(summary_1nt_mut, file = "./codes_Github_final/data/summary_tables/summary_1nt_mut.tsv")
 
 fisher_random <- run_fisher_from_summary(
   summary_df = summary_1nt_mut,
@@ -1439,7 +1901,7 @@ summary_1nt_noncoding_mut <- generate_mutation_category_summary(
   #category_col = "mutation_category_FDR_cutoff_1nt_combined"
 )
 
-#write_tsv(summary_1nt_noncoding_mut, file = "./data/summary_tables/summary_1nt_noncoding_mut.tsv")
+#write_tsv(summary_1nt_noncoding_mut, file = "./codes_Github_final/data/summary_tables/summary_1nt_noncoding_mut.tsv")
 
 
 # 3) detrimental noncoding 1nt mut
@@ -1492,7 +1954,7 @@ summary_1nt_pos_essential_category <- generate_mutation_category_summary(
   category_col = "genome_nt_pos_nucleotide_category"
 )
 
-#write_tsv(summary_1nt_pos_essential_category, file = "./data/summary_tables/summary_1nt_pos_essential_category.tsv")
+write_tsv(summary_1nt_pos_essential_category, file = "./codes_Github_final/data/summary_tables/summary_1nt_pos_essential_category.tsv")
 
 
 # 2) noncoding 1nt nucleotide 
@@ -1521,40 +1983,44 @@ Fitness effects and statistical significance
 head(as.data.frame(phix_all_dms_sub_unique_1nt_plotting), 0)
 table(phix_all_dms_sub_unique_1nt_plotting$mutation_category_FDR_1nt)
 
-head(as.data.frame(phix_all_dms_sub_unique_AA_plotting), 0)
+# Volcano plot - 1nt variants 
+volcano_plot_1nt <-
+  plot_volcano(
+    data =
+      #phix_all_dms_sub_libraries_normalized_unique_stat_1nt,
+      phix_all_dms_sub_unique_1nt_annotated,
+    
 
+    x_col =
+      "fitness_final",
 
-## Volcano plot - All Nucleotide Substitution Vatiants
-volcano_sub <- plot_volcano(
-  phix_all_dms_sub_unique_1nt_annotated,
-  
-  x_col = "fitness_final", 
-  
-  y_col = "p_value_1nt_two_sample_ttest_syn_FDR", 
-  
-  #color_col = "mutation_category_FDR",
-  #color_col = "mutation_category_FDR_lethal",
-  
-  #color_col = "mutation_category_FDR_1nt",
-  color_col = "mutation_category_FDR_lethal_1nt",
-  
-  x_lim = c(-1, 1.5), 
-  y_lim = c(0, 2.7), 
-  
-  #plot_title = "All Substitutions (n=44195)"
-  #plot_title = "Nonoverlapping AA Substitutions (AA ham < 2) (n=35227)"
-  plot_title = "Single Nucleotide Variants (n=16098)"
-  #plot_title = "Amino Acid Variants (n=40358)"
-  ) + 
-  geom_vline(xintercept = phix_1nt_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
-  geom_vline(xintercept = 0.5*phix_1nt_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")  # FDR threshold line
-print(volcano_sub)
+    y_col =
+      "p_value_1nt_two_sample_ttest_syn_FDR",
 
+    color_col =
+      "mutation_category_FDR_lethal_1nt",
+
+    x_lim =
+      c(-1, 1.5),
+
+    y_lim =
+      c(0, 2.7),
+
+    reference_value =
+      1,
+
+    strong_effect_cutoff =
+      0.5,
+
+    plot_title =
+      "Single-nucleotide (1nt) variants, n=16,098"
+  )
+
+volcano_plot_1nt
 
 
 # Saving
-#ggsave(volcano_sub, filename = "./plots/volcano_1nt.pdf", width = 3, height = 3)
+#ggsave(volcano_plot_1nt, filename = "./plots/volcano_plot_1nt.pdf", width = 5, height = 3)
 
 
 
@@ -1578,17 +2044,22 @@ donut_plot_phix_mut <- plot_donut_percent(
   count_col = count,
   title = NULL,
   palette = c(
-    "Beneficial"="#A1A9D0",
-    "Neutral"="#D9D9D9",
-    "Detrimental"="#F4A6A6",
-    "Lethal"="#F0988C"
+    #"Beneficial"="#A1A9D0",
+    #"Neutral"="#D9D9D9",
+    #"Detrimental"="#F4A6A6",
+    #"Lethal"="#F0988C"
+    
+    "Increased"="#A1A9D0", 
+    "No effect"="#D9D9D9", 
+    "Detrimental"="#F4A6A6", 
+    "Strongly detrimental"="#F0988C"
     )
   )
 print(donut_plot_phix_mut)
 
 
 ## Saving
-ggsave(donut_plot_phix_mut, filename = "./plots/donut_plot_phix_mut_1nt.pdf", width = 3, height = 3)
+#ggsave(donut_plot_phix_mut, filename = "./plots/donut_plot_phix_mut_1nt.pdf", width = 3, height = 3)
 
 
 ```
@@ -1612,13 +2083,6 @@ donut_plot_genome_nt <- plot_donut_percent(
   count_col = count,
   
   #title = "Amino Acid Mutations Category",
-  
-  #palette = c(
-    #"Beneficial"="#A1A9D0",
-    #"Neutral"="#D9D9D9",
-    #"Detrimental"="#F4A6A6",
-    #"Lethal"="#F0988C"
-    #)
   
   palette = c(
     "Unable to define" = "#2B82AC",  

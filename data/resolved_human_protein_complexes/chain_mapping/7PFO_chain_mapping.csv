@@ -1,0 +1,34 @@
+complex,pdb_id,label_chain,auth_chain,entity_id,component_type,polymer_type,entity_description
+replisome,7PFO,A,2,1,protein,polypeptide(L),DNA replication licensing factor MCM2
+replisome,7PFO,B,3,2,protein,polypeptide(L),DNA replication licensing factor MCM3
+replisome,7PFO,C,4,3,protein,polypeptide(L),DNA replication licensing factor MCM4
+replisome,7PFO,D,5,4,protein,polypeptide(L),DNA replication licensing factor MCM5
+replisome,7PFO,E,6,5,protein,polypeptide(L),DNA replication licensing factor MCM6
+replisome,7PFO,F,7,6,protein,polypeptide(L),DNA replication licensing factor MCM7
+replisome,7PFO,G,A,7,protein,polypeptide(L),DNA polymerase epsilon subunit 2
+replisome,7PFO,H,B,8,protein,polypeptide(L),DNA polymerase epsilon catalytic subunit A
+replisome,7PFO,I,C,9,protein,polypeptide(L),Cell division control protein 45 homolog
+replisome,7PFO,J,D,10,protein,polypeptide(L),DNA replication complex GINS protein PSF1
+replisome,7PFO,K,E,11,protein,polypeptide(L),DNA replication complex GINS protein PSF2
+replisome,7PFO,L,F,12,protein,polypeptide(L),DNA replication complex GINS protein PSF3
+replisome,7PFO,M,G,13,protein,polypeptide(L),DNA replication complex GINS protein SLD5
+replisome,7PFO,N,H,14,protein,polypeptide(L),WD repeat and HMG-box DNA-binding protein 1
+replisome,7PFO,O,I,14,protein,polypeptide(L),WD repeat and HMG-box DNA-binding protein 1
+replisome,7PFO,P,J,14,protein,polypeptide(L),WD repeat and HMG-box DNA-binding protein 1
+replisome,7PFO,Q,K,15,protein,polypeptide(L),Protein timeless homolog
+replisome,7PFO,R,L,16,protein,polypeptide(L),TIMELESS-interacting protein
+replisome,7PFO,S,M,17,DNA,polydeoxyribonucleotide,Leading strand DNA
+replisome,7PFO,T,N,18,DNA,polydeoxyribonucleotide,Lagging Strand DNA
+replisome,7PFO,U,Q,19,protein,polypeptide(L),Claspin
+replisome,7PFO,V,2,20,ligand,NA,ZINC ION
+replisome,7PFO,W,2,21,ligand,NA,MAGNESIUM ION
+replisome,7PFO,X,2,22,ligand,NA,PHOSPHOAMINOPHOSPHONIC ACID-ADENYLATE ESTER
+replisome,7PFO,Y,3,22,ligand,NA,PHOSPHOAMINOPHOSPHONIC ACID-ADENYLATE ESTER
+replisome,7PFO,Z,3,21,ligand,NA,MAGNESIUM ION
+replisome,7PFO,AA,4,20,ligand,NA,ZINC ION
+replisome,7PFO,BA,5,20,ligand,NA,ZINC ION
+replisome,7PFO,CA,5,22,ligand,NA,PHOSPHOAMINOPHOSPHONIC ACID-ADENYLATE ESTER
+replisome,7PFO,DA,5,21,ligand,NA,MAGNESIUM ION
+replisome,7PFO,EA,6,20,ligand,NA,ZINC ION
+replisome,7PFO,FA,7,20,ligand,NA,ZINC ION
+replisome,7PFO,GA,A,23,ligand,NA,SULFATE ION

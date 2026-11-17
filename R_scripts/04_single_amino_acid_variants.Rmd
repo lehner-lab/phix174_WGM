@@ -19,29 +19,25 @@ here::here()
 ```{r}
 # Function to select all the columns of all aa mut annotations
 select_mutation_fitness_cols <- function(df, prefix = "gene_sub_aa_mut_") {
-  # Define columns to keep in addition to the prefix ones
+  
   extra_cols <- c(
-    # Global test 
     "p_value_two_sample_ttest_syn",
     "p_value_two_sample_ttest_syn_FDR",
     "effect_size_vs_syn",
     "effect_size_std_vs_syn",
     "effect_size_bin",
     
-    # Global mutation category
     "mutation_category_FDR",
     "mutation_category_FDR_lethal",
     "mutation_category_FDR_cutoff",
     "mutation_category_FDR_cutoff_combined",
     
-    # Variants subset test
     "p_value_AA_two_sample_ttest_syn",
     "p_value_AA_two_sample_ttest_syn_FDR",
     "effect_size_vs_AA_syn",
     "effect_size_std_vs_AA_syn",
     "effect_size_bin_AA",
     
-    # Variants subset mutation category
     "mutation_category_FDR_AA",
     "mutation_category_FDR_lethal_AA",
     "mutation_category_FDR_cutoff_AA",
@@ -54,31 +50,43 @@ select_mutation_fitness_cols <- function(df, prefix = "gene_sub_aa_mut_") {
     "phix_aa_mut_class_all"
   )
   
+  # Keep only extra columns that exist in df
+  extra_cols_existing <- intersect(extra_cols, names(df))
+  
   # Select prefixed + extra columns
   selected_df <- df %>%
-    select(
-      starts_with(prefix),
-      all_of(extra_cols)
+    dplyr::select(
+      dplyr::starts_with(prefix),
+      dplyr::all_of(extra_cols_existing)
     )
   
-  # Rename prefixed columns
-  rename_map <- setNames(
-    nm = paste0("aa_mut_", sub(prefix, "", grep(paste0("^", prefix), names(selected_df), value = TRUE))),
-    object = grep(paste0("^", prefix), names(selected_df), value = TRUE)
+  # Identify prefixed columns
+  prefixed_cols <- grep(
+    paste0("^", prefix),
+    names(selected_df),
+    value = TRUE
+  )
+  
+  # Rename prefixed columns safely
+  rename_map <- stats::setNames(
+    prefixed_cols,
+    paste0("aa_mut_", sub(prefix, "", prefixed_cols))
   )
   
   selected_df <- selected_df %>%
-    rename(!!!rename_map)
+    dplyr::rename(
+      !!!rename_map
+    )
   
   # Add ORF category based on phix_aa_mut_ham
   selected_df <- selected_df %>%
-    mutate(
-      phix_aa_mut_orf_class = case_when(
+    dplyr::mutate(
+      phix_aa_mut_orf_class = dplyr::case_when(
         phix_aa_mut_ham > 1 ~ "multi_orf",
         phix_aa_mut_ham == 1 ~ "single_orf",
         TRUE ~ NA_character_
       ),
-      phix_aa_mut_combined = NA_character_  # Placeholder column
+      phix_aa_mut_combined = NA_character_
     )
   
   return(selected_df)
@@ -506,100 +514,280 @@ assign_mutation_categories_fdr <- function(
   direction_lethal_col
 ) {
 
-  # ---- Checks ----
-  required_cols <- c(pval_col, effect_raw_col)
-  missing_cols <- setdiff(required_cols, names(df))
+  # ============================================================
+  # Checks
+  # ============================================================
+
+  required_cols <- c(
+    pval_col,
+    effect_raw_col
+  )
+
+  missing_cols <-
+    setdiff(
+      required_cols,
+      names(df)
+    )
 
   if (length(missing_cols) > 0) {
-    stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
+    stop(
+      "Missing required columns: ",
+      paste(
+        missing_cols,
+        collapse = ", "
+      )
+    )
   }
 
   if (!is.numeric(effect_breaks)) {
-    stop("effect_breaks must be numeric.")
+    stop(
+      "effect_breaks must be numeric."
+    )
   }
 
   if (length(effect_breaks) != 3) {
-    stop("effect_breaks should contain three values, e.g. c(0.10, 0.15, 0.50).")
+    stop(
+      "effect_breaks should contain three values, ",
+      "e.g. c(0.10, 0.15, 0.50)."
+    )
   }
 
-  effect_breaks <- sort(effect_breaks)
+  effect_breaks <-
+    sort(
+      effect_breaks
+    )
 
-  # ---- Extract clean numeric vectors ----
-  p <- as.numeric(df[[pval_col]])
-  e <- as.numeric(df[[effect_raw_col]])
 
-  # ---- Significance ----
-  sig_flag <- !is.na(p) & (p < alpha)
+  # ============================================================
+  # Extract numeric vectors
+  # ============================================================
 
-  # ---- Base classification ----
-  # Original category labels are kept:
-  # Beneficial / Neutral / Detrimental
-  category_fdr <- dplyr::case_when(
-    is.na(p) | is.na(e) ~ NA_character_,
-    !sig_flag ~ "Neutral",
-    e > 0 ~ "Beneficial",
-    e < 0 ~ "Detrimental",
-    TRUE ~ "Neutral"
-  )
+  p <-
+    as.numeric(
+      df[[pval_col]]
+    )
 
-  # ---- Effect bins ----
-  effect_bin_num <- dplyr::case_when(
-    is.na(e) ~ NA_real_,
-    !sig_flag ~ 0,
-    abs(e) >= effect_breaks[3] ~ effect_breaks[3],
-    abs(e) >= effect_breaks[2] ~ effect_breaks[2],
-    abs(e) >= effect_breaks[1] ~ effect_breaks[1],
-    TRUE ~ 0
-  )
+  e <-
+    as.numeric(
+      df[[effect_raw_col]]
+    )
 
-  # ---- Lethal override ----
-  category_fdr_lethal <- dplyr::case_when(
-    is.na(category_fdr) ~ NA_character_,
-    category_fdr == "Detrimental" &
-      effect_bin_num >= effect_breaks[3] ~ "Lethal",
-    TRUE ~ category_fdr
-  )
 
-  # ---- Cutoff refinement ----
-  # Original 0.15 cutoff refinement is kept.
-  category_cutoff <- dplyr::case_when(
-    is.na(category_fdr) ~ NA_character_,
-    category_fdr %in% c("Beneficial", "Detrimental") &
-      effect_bin_num < effect_breaks[2] ~ "Neutral",
-    category_fdr == "Detrimental" &
-      effect_bin_num >= effect_breaks[3] ~ "Lethal",
-    TRUE ~ category_fdr
-  )
+  # ============================================================
+  # Statistical significance
+  # ============================================================
 
-  # ---- Combined ----
-  category_combined <- dplyr::case_when(
-    category_cutoff %in% c("Beneficial", "Neutral") ~ "Tolerated",
-    category_cutoff %in% c("Detrimental", "Lethal") ~ "Deleterious",
-    TRUE ~ NA_character_
-  )
+  sig_flag <-
+    !is.na(p) &
+    p < alpha
 
-  # ---- Direction column without lethal ----
-  # Same logic as category_fdr, but with less interpretive labels.
-  direction <- dplyr::case_when(
-    is.na(category_fdr) ~ NA_character_,
-    category_fdr == "Beneficial" ~ "Fitness-increasing",
-    category_fdr == "Neutral" ~ "Neutral",
-    category_fdr == "Detrimental" ~ "Fitness-decreasing",
-    TRUE ~ NA_character_
-  )
 
-  # ---- Direction column with lethal ----
-  # Same logic as category_fdr_lethal, but with less interpretive labels.
-  direction_lethal <- dplyr::case_when(
-    is.na(category_fdr_lethal) ~ NA_character_,
-    category_fdr_lethal == "Beneficial" ~ "Fitness-increasing",
-    category_fdr_lethal == "Neutral" ~ "Neutral",
-    category_fdr_lethal == "Detrimental" ~ "Fitness-decreasing",
-    category_fdr_lethal == "Lethal" ~ "Lethal",
-    TRUE ~ NA_character_
-  )
+  # ============================================================
+  # Primary FDR-based classification
+  #
+  # Revised terminology:
+  # Increased
+  # No effect
+  # Detrimental
+  # ============================================================
 
-  # ---- Safe overwrite ----
+  category_fdr <-
+    dplyr::case_when(
+
+      is.na(p) |
+        is.na(e) ~
+        NA_character_,
+
+      !sig_flag ~
+        "No effect",
+
+      e > 0 ~
+        "Increased",
+
+      e < 0 ~
+        "Detrimental",
+
+      TRUE ~
+        "No effect"
+    )
+
+
+  # ============================================================
+  # Effect-size bins
+  #
+  # Only statistically significant variants are assigned
+  # non-zero effect-size bins.
+  # ============================================================
+
+  effect_bin_num <-
+    dplyr::case_when(
+
+      is.na(e) ~
+        NA_real_,
+
+      !sig_flag ~
+        0,
+
+      abs(e) >= effect_breaks[3] ~
+        effect_breaks[3],
+
+      abs(e) >= effect_breaks[2] ~
+        effect_breaks[2],
+
+      abs(e) >= effect_breaks[1] ~
+        effect_breaks[1],
+
+      TRUE ~
+        0
+    )
+
+
+  # ============================================================
+  # Strongly detrimental refinement
+  #
+  # Historical output column name is retained for compatibility,
+  # but "Lethal" is no longer used as a category.
+  # ============================================================
+
+  category_fdr_lethal <-
+    dplyr::case_when(
+
+      is.na(category_fdr) ~
+        NA_character_,
+
+      category_fdr ==
+        "Detrimental" &
+        effect_bin_num >= effect_breaks[3] ~
+        "Strongly detrimental",
+
+      TRUE ~
+        category_fdr
+    )
+
+
+  # ============================================================
+  # Effect-size cutoff refinement
+  #
+  # Statistically significant effects smaller than the middle
+  # cutoff are reassigned to "No measurable effect".
+  # ============================================================
+
+  category_cutoff <-
+    dplyr::case_when(
+
+      is.na(category_fdr) ~
+        NA_character_,
+
+      category_fdr %in%
+        c(
+          "Increased",
+          "Detrimental"
+        ) &
+        effect_bin_num < effect_breaks[2] ~
+        "No effect",
+
+      category_fdr ==
+        "Detrimental" &
+        effect_bin_num >= effect_breaks[3] ~
+        "Strongly detrimental",
+
+      TRUE ~
+        category_fdr
+    )
+
+
+  # ============================================================
+  # Two-class combined classification
+  # ============================================================
+
+  category_combined <-
+    dplyr::case_when(
+
+      category_cutoff %in%
+        c(
+          "Increased",
+          "No effect"
+        ) ~
+        "No reduced replication",
+
+      category_cutoff %in%
+        c(
+          "Detrimental",
+          "Strongly detrimental"
+        ) ~
+        "Reduced replication",
+
+      TRUE ~
+        NA_character_
+    )
+
+
+  # ============================================================
+  # Direction without strong-effect subdivision
+  #
+  # Column name is retained, but terminology is replication-based.
+  # ============================================================
+
+  direction <-
+    dplyr::case_when(
+
+      is.na(category_fdr) ~
+        NA_character_,
+
+      category_fdr ==
+        "Increased" ~
+        "Increased replication",
+
+      category_fdr ==
+        "No effect" ~
+        "No measurable effect",
+
+      category_fdr ==
+        "Detrimental" ~
+        "Reduced replication",
+
+      TRUE ~
+        NA_character_
+    )
+
+
+  # ============================================================
+  # Direction including strongly detrimental category
+  #
+  # Historical output column name is retained for compatibility.
+  # ============================================================
+
+  direction_lethal <-
+    dplyr::case_when(
+
+      is.na(category_fdr_lethal) ~
+        NA_character_,
+
+      category_fdr_lethal ==
+        "Increased" ~
+        "Increased replication",
+
+      category_fdr_lethal ==
+        "No effect" ~
+        "No measurable effect",
+
+      category_fdr_lethal ==
+        "Detrimental" ~
+        "Reduced replication",
+
+      category_fdr_lethal ==
+        "Strongly detrimental" ~
+        "Strongly reduced replication",
+
+      TRUE ~
+        NA_character_
+    )
+
+
+  # ============================================================
+  # Safe overwrite of existing output columns
+  # ============================================================
+
   output_cols <- c(
     effect_bin_col,
     category_fdr_col,
@@ -614,46 +802,88 @@ assign_mutation_categories_fdr <- function(
     df[[col]] <- NULL
   }
 
-  # ---- Assign outputs explicitly ----
-  df[[effect_bin_col]] <- factor(
-    effect_bin_num,
-    levels = c(0, effect_breaks)
-  )
 
-  df[[category_fdr_col]] <- factor(
-    category_fdr,
-    levels = c("Beneficial", "Neutral", "Detrimental")
-  )
+  # ============================================================
+  # Assign outputs
+  # ============================================================
 
-  df[[category_fdr_lethal_col]] <- factor(
-    category_fdr_lethal,
-    levels = c("Beneficial", "Neutral", "Detrimental", "Lethal")
-  )
-
-  df[[category_cutoff_col]] <- factor(
-    category_cutoff,
-    levels = c("Beneficial", "Neutral", "Detrimental", "Lethal")
-  )
-
-  df[[category_combined_col]] <- factor(
-    category_combined,
-    levels = c("Tolerated", "Deleterious")
-  )
-
-  df[[direction_col]] <- factor(
-    direction,
-    levels = c("Fitness-increasing", "Neutral", "Fitness-decreasing")
-  )
-
-  df[[direction_lethal_col]] <- factor(
-    direction_lethal,
-    levels = c(
-      "Fitness-increasing",
-      "Neutral",
-      "Fitness-decreasing",
-      "Lethal"
+  df[[effect_bin_col]] <-
+    factor(
+      effect_bin_num,
+      levels = c(
+        0,
+        effect_breaks
+      )
     )
-  )
+
+
+  df[[category_fdr_col]] <-
+    factor(
+      category_fdr,
+      levels = c(
+        "Increased",
+        "No effect",
+        "Detrimental"
+      )
+    )
+
+
+  df[[category_fdr_lethal_col]] <-
+    factor(
+      category_fdr_lethal,
+      levels = c(
+        "Increased",
+        "No effect",
+        "Detrimental",
+        "Strongly detrimental"
+      )
+    )
+
+
+  df[[category_cutoff_col]] <-
+    factor(
+      category_cutoff,
+      levels = c(
+        "Increased",
+        "No effect",
+        "Detrimental",
+        "Strongly detrimental"
+      )
+    )
+
+
+  df[[category_combined_col]] <-
+    factor(
+      category_combined,
+      levels = c(
+        "No reduced replication",
+        "Reduced replication"
+      )
+    )
+
+
+  df[[direction_col]] <-
+    factor(
+      direction,
+      levels = c(
+        "Increased replication",
+        "No measurable effect",
+        "Reduced replication"
+      )
+    )
+
+
+  df[[direction_lethal_col]] <-
+    factor(
+      direction_lethal,
+      levels = c(
+        "Increased replication",
+        "No measurable effect",
+        "Reduced replication",
+        "Strongly reduced replication"
+      )
+    )
+
 
   return(df)
 }
@@ -661,383 +891,908 @@ assign_mutation_categories_fdr <- function(
 
 
 # Function to process aa mut data to residues data and a summary table about the @@ and %% of essential residues under different definitions
-process_dms_fitness_data_list <- function(df) {
-  
+process_dms_fitness_data_list <- function(
+  df,
+  replication_col = "fitness_aa_mut"
+) {
+
+  # ============================================================
   # Detect gene name safely
-  gene_label <- unique(df$aa_mut_gene)
+  # ============================================================
+
+  gene_label <-
+    unique(
+      df$aa_mut_gene
+    )
+
   if (length(gene_label) != 1) {
-    gene_label <- paste(gene_label, collapse = "_")
+    gene_label <-
+      paste(
+        gene_label,
+        collapse = "_"
+      )
   }
-  
-  df_final <- df %>%
-    
-    dplyr::filter(!stringr::str_detect(aa_mut_wt, ",")) %>%
-    dplyr::filter(aa_mut_wt != "*", aa_mut_sub != "*") %>%
-    
+
+
+  # ============================================================
+  # Safety check
+  # ============================================================
+
+  required_cols <- c(
+    replication_col,
+    "aa_mut_pos",
+    "aa_mut_gene",
+    "aa_mut_structure",
+    "aa_mut_wt",
+    "aa_mut_sub",
+    "aa_mut_class",
+    "phix_aa_mut_orf_class",
+    "mutation_category_FDR_1aa",
+    "mutation_category_FDR_lethal_1aa"
+  )
+
+  missing_cols <-
+    setdiff(
+      required_cols,
+      names(df)
+    )
+
+  if (length(missing_cols) > 0) {
+    stop(
+      "Missing required columns: ",
+      paste(
+        missing_cols,
+        collapse = ", "
+      )
+    )
+  }
+
+
+  # ============================================================
+  # Collapse amino-acid substitutions to residues
+  # ============================================================
+
+  df_final <-
+    df %>%
+
+    dplyr::filter(
+      !stringr::str_detect(
+        aa_mut_wt,
+        ","
+      )
+    ) %>%
+
+    dplyr::filter(
+      aa_mut_wt != "*",
+      aa_mut_sub != "*"
+    ) %>%
+
     dplyr::group_by(
       aa_mut_pos,
       aa_mut_gene,
       aa_mut_structure,
       aa_mut_wt
     ) %>%
-    
+
     dplyr::summarise(
-      
-      # ------------------------
+
+      # --------------------------------------------------------
       # Mutation counts
-      # ------------------------
-      
+      # --------------------------------------------------------
+
       n_mutations_tested_single_orf =
-        sum(aa_mut_class == "Missense" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
+        sum(
+          aa_mut_class == "Missense" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
 
       n_mutations_tested_multi_orf =
-        sum(aa_mut_class == "Missense" &
-              phix_aa_mut_orf_class == "multi_orf", na.rm = TRUE),
-      
-      n_mutations_tested =
-        sum(aa_mut_class == "Missense", na.rm = TRUE),
+        sum(
+          aa_mut_class == "Missense" &
+            phix_aa_mut_orf_class == "multi_orf",
+          na.rm = TRUE
+        ),
 
-      # --- category counts (all) ---
-      n_mutations_lethal =
-        sum(mutation_category_FDR_lethal_1aa == "Lethal" &
-              aa_mut_class == "Missense", na.rm = TRUE),
+      n_mutations_tested =
+        sum(
+          aa_mut_class == "Missense",
+          na.rm = TRUE
+        ),
+
+
+      # --------------------------------------------------------
+      # Mutational-effect category counts
+      # All mutations
+      # --------------------------------------------------------
+
+      n_mutations_strongly_detrimental =
+        sum(
+          mutation_category_FDR_lethal_1aa ==
+            "Strongly detrimental" &
+            aa_mut_class == "Missense",
+          na.rm = TRUE
+        ),
 
       n_mutations_detrimental =
-        sum(mutation_category_FDR_lethal_1aa == "Detrimental" &
-              aa_mut_class == "Missense", na.rm = TRUE),
+        sum(
+          mutation_category_FDR_lethal_1aa ==
+            "Detrimental" &
+            aa_mut_class == "Missense",
+          na.rm = TRUE
+        ),
 
-      n_mutations_neutral =
-        sum(mutation_category_FDR_lethal_1aa == "Neutral" &
-              aa_mut_class == "Missense", na.rm = TRUE),
+      n_mutations_no_effect =
+        sum(
+          mutation_category_FDR_lethal_1aa ==
+            "No effect" &
+            aa_mut_class == "Missense",
+          na.rm = TRUE
+        ),
 
-      n_mutations_beneficial =
-        sum(mutation_category_FDR_lethal_1aa == "Beneficial" &
-              aa_mut_class == "Missense", na.rm = TRUE),
+      n_mutations_increased =
+        sum(
+          mutation_category_FDR_lethal_1aa ==
+            "Increased" &
+            aa_mut_class == "Missense",
+          na.rm = TRUE
+        ),
 
-      # --- category counts (single_orf) ---
-      n_mutations_lethal_single_orf =
-        sum(mutation_category_FDR_lethal_1aa == "Lethal" &
-              aa_mut_class == "Missense" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
+
+      # --------------------------------------------------------
+      # Mutational-effect category counts
+      # Single-ORF mutations only
+      # --------------------------------------------------------
+
+      n_mutations_strongly_detrimental_single_orf =
+        sum(
+          mutation_category_FDR_lethal_1aa ==
+            "Strongly detrimental" &
+            aa_mut_class == "Missense" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
 
       n_mutations_detrimental_single_orf =
-        sum(mutation_category_FDR_lethal_1aa == "Detrimental" &
-              aa_mut_class == "Missense" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
+        sum(
+          mutation_category_FDR_lethal_1aa ==
+            "Detrimental" &
+            aa_mut_class == "Missense" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
 
-      n_mutations_neutral_single_orf =
-        sum(mutation_category_FDR_lethal_1aa == "Neutral" &
-              aa_mut_class == "Missense" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
+      n_mutations_no_effect_single_orf =
+        sum(
+          mutation_category_FDR_lethal_1aa ==
+            "No effect" &
+            aa_mut_class == "Missense" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
 
-      n_mutations_beneficial_single_orf =
-        sum(mutation_category_FDR_lethal_1aa == "Beneficial" &
-              aa_mut_class == "Missense" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
+      n_mutations_increased_single_orf =
+        sum(
+          mutation_category_FDR_lethal_1aa ==
+            "Increased" &
+            aa_mut_class == "Missense" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
 
-      # ------------------------
-      # Fitness summaries
-      # ------------------------
-      
-      Fitness_mean =
-        mean(fitness_aa_mut[aa_mut_class == "Missense"], na.rm = TRUE),
-      
-      Fitness_median =
-        median(fitness_aa_mut[aa_mut_class == "Missense"], na.rm = TRUE),
-      
-      Fitness_mut_min =
-        min(fitness_aa_mut[aa_mut_class == "Missense"], na.rm = TRUE),
-      
-      Fitness_mut_max =
-        max(fitness_aa_mut[aa_mut_class == "Missense"], na.rm = TRUE),
-      
-      Fitness_mut_sd =
-        sd(fitness_aa_mut[aa_mut_class == "Missense"], na.rm = TRUE),
-      
-      Fitness_mut_range =
-        Fitness_mut_max - Fitness_mut_min,
-      
-      Fitness_mut_cv =
-        ifelse(is.na(Fitness_mean) | Fitness_mean == 0,
-               NA_real_,
-               Fitness_mut_sd / Fitness_mean),
 
-      # ------------------------
-      # ORF logic
-      # ------------------------
-      
+      # --------------------------------------------------------
+      # Replication-score summaries
+      # --------------------------------------------------------
+
+      Replication_mean =
+        mean(
+          .data[[replication_col]][
+            aa_mut_class == "Missense"
+          ],
+          na.rm = TRUE
+        ),
+
+      Replication_median =
+        median(
+          .data[[replication_col]][
+            aa_mut_class == "Missense"
+          ],
+          na.rm = TRUE
+        ),
+
+      Replication_mut_min =
+        min(
+          .data[[replication_col]][
+            aa_mut_class == "Missense"
+          ],
+          na.rm = TRUE
+        ),
+
+      Replication_mut_max =
+        max(
+          .data[[replication_col]][
+            aa_mut_class == "Missense"
+          ],
+          na.rm = TRUE
+        ),
+
+      Replication_mut_sd =
+        sd(
+          .data[[replication_col]][
+            aa_mut_class == "Missense"
+          ],
+          na.rm = TRUE
+        ),
+
+      Replication_mut_range =
+        Replication_mut_max -
+        Replication_mut_min,
+
+      Replication_mut_cv =
+        ifelse(
+          is.na(Replication_mean) |
+            Replication_mean == 0,
+          NA_real_,
+          Replication_mut_sd /
+            Replication_mean
+        ),
+
+
+      # --------------------------------------------------------
+      # Single-ORF availability
+      # --------------------------------------------------------
+
       has_single_orf =
-        any(phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
-      
-      residue_essential_FDR = dplyr::case_when(
-        !has_single_orf ~ "Unable to define",
-        any(mutation_category_FDR_1aa == "Detrimental" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE) ~ "Essential",
-        TRUE ~ "Non-essential"
-      ),
-      
-      residue_essential_FDR_lethal = dplyr::case_when(
-        !has_single_orf ~ "Unable to define",
-        any(mutation_category_FDR_lethal_1aa == "Lethal" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE) ~ "Essential",
-        TRUE ~ "Non-essential"
-      ),
-      
-      residue_essential_FDR_deleterious = dplyr::case_when(
-        !has_single_orf ~ "Unable to define",
-        any(mutation_category_FDR_cutoff_1aa_combined == "Deleterious" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE) ~ "Essential",
-        TRUE ~ "Non-essential"
-      ),
-      
-      
-      # ------------------------
-      # ORF logic (UPDATED)
-      # ------------------------
-      
-      #has_single_orf =
-        #any(phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
-      
-      has_lethal_single_orf =
-        any(mutation_category_FDR_lethal_1aa == "Lethal" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
-      
+        any(
+          aa_mut_class == "Missense" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
+
+
+      # --------------------------------------------------------
+      # Position-level classifications
+      # --------------------------------------------------------
+
+      # At least one detrimental mutation
+      residue_essential_FDR =
+        dplyr::case_when(
+
+          !has_single_orf ~
+            "Unable to define",
+
+          any(
+            mutation_category_FDR_1aa ==
+              "Detrimental" &
+              phix_aa_mut_orf_class == "single_orf",
+            na.rm = TRUE
+          ) ~
+            "Essential",
+
+          TRUE ~
+            "Non-essential"
+        ),
+
+
+      # At least one strongly detrimental mutation
+      residue_essential_FDR_strongly_detrimental =
+        dplyr::case_when(
+
+          !has_single_orf ~
+            "Unable to define",
+
+          any(
+            mutation_category_FDR_lethal_1aa ==
+              "Strongly detrimental" &
+              phix_aa_mut_orf_class == "single_orf",
+            na.rm = TRUE
+          ) ~
+            "Essential",
+
+          TRUE ~
+            "Non-essential"
+        ),
+
+
+      # --------------------------------------------------------
+      # Final residue-category logic
+      # --------------------------------------------------------
+
+      has_strongly_detrimental_single_orf =
+        any(
+          mutation_category_FDR_lethal_1aa ==
+            "Strongly detrimental" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
+
       has_detrimental_single_orf =
-        any(mutation_category_FDR_lethal_1aa == "Detrimental" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
-      
+        any(
+          mutation_category_FDR_lethal_1aa ==
+            "Detrimental" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
+
       n_single_orf_mut =
-        sum(aa_mut_class == "Missense" &
-              phix_aa_mut_orf_class == "single_orf", na.rm = TRUE),
-      
+        sum(
+          aa_mut_class == "Missense" &
+            phix_aa_mut_orf_class == "single_orf",
+          na.rm = TRUE
+        ),
+
       is_fully_sampled =
         n_single_orf_mut == 19,
-      
+
       coverage_fraction =
         n_single_orf_mut / 19,
-      
-      # ------------------------
-      # Final residue classification (NEW)
-      # ------------------------
-      
-      residue_category = dplyr::case_when(
-        
-        # no usable mutations
-        !has_single_orf ~ "Unable to define",
-        
-        # strongest signal
-        has_lethal_single_orf ~ "Essential",
-        
-        # sub-lethal signal
-        !has_lethal_single_orf & has_detrimental_single_orf ~ "Sensitive",
-        
-        # only safe tolerance call
-        !has_lethal_single_orf & 
-          !has_detrimental_single_orf & 
-          is_fully_sampled ~ "Tolerant",
-        
-        # everything else = incomplete information
-        TRUE ~ "Unable to define"
-      ),
-           
+
+
+      # --------------------------------------------------------
+      # Final residue classification
+      # --------------------------------------------------------
+
+      residue_category =
+        dplyr::case_when(
+
+          # No usable single-ORF mutations
+          !has_single_orf ~
+            "Unable to define",
+
+          # Strongest constraint
+          has_strongly_detrimental_single_orf ~
+            "Essential",
+
+          # At least one detrimental mutation
+          !has_strongly_detrimental_single_orf &
+            has_detrimental_single_orf ~
+            "Sensitive",
+
+          # All 19 substitutions sampled without detrimental effects
+          !has_strongly_detrimental_single_orf &
+            !has_detrimental_single_orf &
+            is_fully_sampled ~
+            "Tolerant",
+
+          # Incomplete information
+          TRUE ~
+            "Unable to define"
+        ),
+
       .groups = "drop"
     ) %>%
-    
-    # ------------------------
-    # Ratios (derived from counts)
-    # ------------------------
-    
+
+
+    # ============================================================
+    # Fractions derived from mutation counts
+    # ============================================================
+
     dplyr::mutate(
-      
-      ratio_lethal =
-        ifelse(n_mutations_tested == 0, NA_real_,
-               n_mutations_lethal / n_mutations_tested),
-      
+
+      ratio_strongly_detrimental =
+        ifelse(
+          n_mutations_tested == 0,
+          NA_real_,
+          n_mutations_strongly_detrimental /
+            n_mutations_tested
+        ),
+
       ratio_detrimental =
-        ifelse(n_mutations_tested == 0, NA_real_,
-               n_mutations_detrimental / n_mutations_tested),
-      
-      ratio_neutral =
-        ifelse(n_mutations_tested == 0, NA_real_,
-               n_mutations_neutral / n_mutations_tested),
-      
-      ratio_beneficial =
-        ifelse(n_mutations_tested == 0, NA_real_,
-               n_mutations_beneficial / n_mutations_tested),
-      
-      ratio_loss_total =
-        ifelse(n_mutations_tested == 0, NA_real_,
-               (n_mutations_lethal + n_mutations_detrimental) / n_mutations_tested),
-      
-      ratio_lethal_single_orf =
-        ifelse(n_mutations_tested_single_orf == 0, NA_real_,
-               n_mutations_lethal_single_orf / n_mutations_tested_single_orf),
-      
+        ifelse(
+          n_mutations_tested == 0,
+          NA_real_,
+          n_mutations_detrimental /
+            n_mutations_tested
+        ),
+
+      ratio_no_effect =
+        ifelse(
+          n_mutations_tested == 0,
+          NA_real_,
+          n_mutations_no_effect /
+            n_mutations_tested
+        ),
+
+      ratio_increased =
+        ifelse(
+          n_mutations_tested == 0,
+          NA_real_,
+          n_mutations_increased /
+            n_mutations_tested
+        ),
+
+
+      # Total detrimental fraction,
+      # including strongly detrimental mutations
+      ratio_detrimental_total =
+        ifelse(
+          n_mutations_tested == 0,
+          NA_real_,
+          (
+            n_mutations_strongly_detrimental +
+              n_mutations_detrimental
+          ) /
+            n_mutations_tested
+        ),
+
+
+      # --------------------------------------------------------
+      # Single-ORF fractions
+      # --------------------------------------------------------
+
+      ratio_strongly_detrimental_single_orf =
+        ifelse(
+          n_mutations_tested_single_orf == 0,
+          NA_real_,
+          n_mutations_strongly_detrimental_single_orf /
+            n_mutations_tested_single_orf
+        ),
+
       ratio_detrimental_single_orf =
-        ifelse(n_mutations_tested_single_orf == 0, NA_real_,
-               n_mutations_detrimental_single_orf / n_mutations_tested_single_orf),
-      
-      ratio_neutral_single_orf =
-        ifelse(n_mutations_tested_single_orf == 0, NA_real_,
-               n_mutations_neutral_single_orf / n_mutations_tested_single_orf),
-      
-      ratio_beneficial_single_orf =
-        ifelse(n_mutations_tested_single_orf == 0, NA_real_,
-               n_mutations_beneficial_single_orf / n_mutations_tested_single_orf),
-      
-      ratio_loss_total_single_orf =
-        ifelse(n_mutations_tested_single_orf == 0, NA_real_,
-               (n_mutations_lethal_single_orf + n_mutations_detrimental_single_orf) /
-               n_mutations_tested_single_orf)
+        ifelse(
+          n_mutations_tested_single_orf == 0,
+          NA_real_,
+          n_mutations_detrimental_single_orf /
+            n_mutations_tested_single_orf
+        ),
+
+      ratio_no_effect_single_orf =
+        ifelse(
+          n_mutations_tested_single_orf == 0,
+          NA_real_,
+          n_mutations_no_effect_single_orf /
+            n_mutations_tested_single_orf
+        ),
+
+      ratio_increased_single_orf =
+        ifelse(
+          n_mutations_tested_single_orf == 0,
+          NA_real_,
+          n_mutations_increased_single_orf /
+            n_mutations_tested_single_orf
+        ),
+
+      ratio_detrimental_total_single_orf =
+        ifelse(
+          n_mutations_tested_single_orf == 0,
+          NA_real_,
+          (
+            n_mutations_strongly_detrimental_single_orf +
+              n_mutations_detrimental_single_orf
+          ) /
+            n_mutations_tested_single_orf
+        )
     ) %>%
-    
+
+
+    # ============================================================
+    # Additional residue-level metrics
+    # ============================================================
+
     dplyr::mutate(
-      
-      residue_essential_median_fitness =
-        ifelse(Fitness_median < 0.5, "Essential", "Non-essential"),
-      
-      evolving_potential = ratio_neutral + ratio_beneficial,
-      
-      # ------------------------
-      # Hotspot classification (NEW)
-      # ------------------------
-      
-      hotspot_category_num_lethal = dplyr::case_when(
-        is.na(n_mutations_lethal) ~ NA_character_,
-        n_mutations_lethal <= 11  ~ "Low (< median)",
-        n_mutations_lethal <= 16  ~ "Moderate (median–Q3)",
-        n_mutations_lethal > 16   ~ "Hotspot (≥ Q3)"
-      ),
-      
-      hotspot_category_num_lethal = factor(
-        hotspot_category_num_lethal,
-        levels = c(
-          "Low (< median)",
-          "Moderate (median–Q3)",
-          "Hotspot (≥ Q3)"
+
+      residue_essential_median_replication =
+        ifelse(
+          Replication_median < 0.5,
+          "Essential",
+          "Non-essential"
+        ),
+
+
+      # Historical concept retained, but based on revised categories
+      evolving_potential =
+        ratio_no_effect +
+        ratio_increased,
+
+
+      # --------------------------------------------------------
+      # Hotspot classification based on strongly detrimental
+      # mutations
+      # --------------------------------------------------------
+
+      hotspot_category_num_strongly_detrimental =
+        dplyr::case_when(
+
+          is.na(
+            n_mutations_strongly_detrimental
+          ) ~
+            NA_character_,
+
+          n_mutations_strongly_detrimental <= 11 ~
+            "Low (< median)",
+
+          n_mutations_strongly_detrimental <= 16 ~
+            "Moderate (median–Q3)",
+
+          n_mutations_strongly_detrimental > 16 ~
+            "Hotspot (≥ Q3)"
+        ),
+
+      hotspot_category_num_strongly_detrimental =
+        factor(
+          hotspot_category_num_strongly_detrimental,
+          levels = c(
+            "Low (< median)",
+            "Moderate (median–Q3)",
+            "Hotspot (≥ Q3)"
+          )
+        ),
+
+
+      hotspot_category_num_strongly_detrimental_single_orf =
+        dplyr::case_when(
+
+          is.na(
+            n_mutations_strongly_detrimental_single_orf
+          ) ~
+            NA_character_,
+
+          n_mutations_strongly_detrimental_single_orf <= 11 ~
+            "Low (< median)",
+
+          n_mutations_strongly_detrimental_single_orf <= 16 ~
+            "Moderate (median–Q3)",
+
+          n_mutations_strongly_detrimental_single_orf > 16 ~
+            "Hotspot (≥ Q3)"
+        ),
+
+      hotspot_category_num_strongly_detrimental_single_orf =
+        factor(
+          hotspot_category_num_strongly_detrimental_single_orf,
+          levels = c(
+            "Low (< median)",
+            "Moderate (median–Q3)",
+            "Hotspot (≥ Q3)"
+          )
+        ),
+
+
+      # --------------------------------------------------------
+      # Hotspot classification based on median replication
+      # --------------------------------------------------------
+
+      hotspot_category_quartile_replication_median =
+        dplyr::case_when(
+
+          Replication_median >
+            0.42751458 ~
+            "Non-hotspot",
+
+          Replication_median <=
+            0.42751458 ~
+            "Hotspot"
+        ),
+
+      hotspot_category_quartile_replication_median =
+        factor(
+          hotspot_category_quartile_replication_median,
+          levels = c(
+            "Non-hotspot",
+            "Hotspot"
+          )
         )
-      ),
-      
-      hotspot_category_num_lethal_single_orf = dplyr::case_when(
-        is.na(n_mutations_lethal_single_orf) ~ NA_character_,
-        n_mutations_lethal_single_orf <= 11  ~ "Low (< median)",
-        n_mutations_lethal_single_orf <= 16  ~ "Moderate (median–Q3)",
-        n_mutations_lethal_single_orf > 16   ~ "Hotspot (≥ Q3)"
-      ),
-      
-      hotspot_category_num_lethal_single_orf = factor(
-        hotspot_category_num_lethal_single_orf,
-        levels = c(
-          "Low (< median)",
-          "Moderate (median–Q3)",
-          "Hotspot (≥ Q3)"
-        )
-      ),
-      
-      hotspot_category_quartile_fitness_median = dplyr::case_when(
-        Fitness_median > 0.42751458   ~ "Non-hotspot",
-        Fitness_median <= 0.42751458  ~ "Hotspot"
-      ),
-      
-      hotspot_category_quartile_fitness_median = factor(
-        hotspot_category_quartile_fitness_median,
-        levels = c(
-          "Non-hotspot",
-          "Hotspot"
-        )
-      )
     ) %>%
-    
-    dplyr::select(-has_single_orf)
-  
-  # ----------------------------
-  # Summary table (UNCHANGED)
-  # ----------------------------
-  
-  total_residues <- nrow(df_final)
-  
+
+    dplyr::select(
+      -has_single_orf
+    )
+
+
+  # ============================================================
+  # Summary table
+  # ============================================================
+
+  total_residues <-
+    nrow(
+      df_final
+    )
+
+
   make_summary_block <- function(col) {
+
     c(
-      essential_n = sum(df_final[[col]] == "Essential", na.rm = TRUE),
-      nonessential_n = sum(df_final[[col]] == "Non-essential", na.rm = TRUE),
-      undefined_n = sum(df_final[[col]] == "Unable to define", na.rm = TRUE),
-      essential_prop = mean(df_final[[col]] == "Essential", na.rm = TRUE),
-      nonessential_prop = mean(df_final[[col]] == "Non-essential", na.rm = TRUE),
-      undefined_prop = mean(df_final[[col]] == "Unable to define", na.rm = TRUE)
+      essential_n =
+        sum(
+          df_final[[col]] ==
+            "Essential",
+          na.rm = TRUE
+        ),
+
+      nonessential_n =
+        sum(
+          df_final[[col]] ==
+            "Non-essential",
+          na.rm = TRUE
+        ),
+
+      undefined_n =
+        sum(
+          df_final[[col]] ==
+            "Unable to define",
+          na.rm = TRUE
+        ),
+
+      essential_prop =
+        mean(
+          df_final[[col]] ==
+            "Essential",
+          na.rm = TRUE
+        ),
+
+      nonessential_prop =
+        mean(
+          df_final[[col]] ==
+            "Non-essential",
+          na.rm = TRUE
+        ),
+
+      undefined_prop =
+        mean(
+          df_final[[col]] ==
+            "Unable to define",
+          na.rm = TRUE
+        )
     )
   }
-  
-  summary_FDR    <- make_summary_block("residue_essential_FDR")
-  summary_lethal <- make_summary_block("residue_essential_FDR_lethal")
-  summary_del    <- make_summary_block("residue_essential_FDR_deleterious")
-  
-  summary_median <- c(
-    essential_n = sum(df_final$residue_essential_median_fitness == "Essential"),
-    nonessential_n = sum(df_final$residue_essential_median_fitness == "Non-essential"),
-    undefined_n = NA,
-    essential_prop = mean(df_final$residue_essential_median_fitness == "Essential"),
-    nonessential_prop = mean(df_final$residue_essential_median_fitness == "Non-essential"),
-    undefined_prop = NA
-  )
-  
-  summary_category <- c(
-    essential_n = sum(df_final$residue_category == "Essential", na.rm = TRUE),
-    sensitive_n = sum(df_final$residue_category == "Sensitive", na.rm = TRUE),
-    tolerant_n = sum(df_final$residue_category == "Tolerant", na.rm = TRUE),
-    undefined_n = sum(df_final$residue_category == "Unable to define", na.rm = TRUE),
-    
-    essential_prop = mean(df_final$residue_category == "Essential", na.rm = TRUE),
-    sensitive_prop = mean(df_final$residue_category == "Sensitive", na.rm = TRUE),
-    tolerant_prop = mean(df_final$residue_category == "Tolerant", na.rm = TRUE),
-    undefined_prop = mean(df_final$residue_category == "Unable to define", na.rm = TRUE)
-  )
 
-  summary_df <- dplyr::tibble(
-    gene = gene_label,
-    total_residues = total_residues,
-    
-    FDR_essential_n = summary_FDR["essential_n"],
-    FDR_nonessential_n = summary_FDR["nonessential_n"],
-    FDR_undefined_n = summary_FDR["undefined_n"],
-    FDR_essential_prop = summary_FDR["essential_prop"],
-    FDR_nonessential_prop = summary_FDR["nonessential_prop"],
-    FDR_undefined_prop = summary_FDR["undefined_prop"],
-    
-    lethal_essential_n = summary_lethal["essential_n"],
-    lethal_nonessential_n = summary_lethal["nonessential_n"],
-    lethal_undefined_n = summary_lethal["undefined_n"],
-    lethal_essential_prop = summary_lethal["essential_prop"],
-    lethal_nonessential_prop = summary_lethal["nonessential_prop"],
-    lethal_undefined_prop = summary_lethal["undefined_prop"],
-    
-    deleterious_essential_n = summary_del["essential_n"],
-    deleterious_nonessential_n = summary_del["nonessential_n"],
-    deleterious_undefined_n = summary_del["undefined_n"],
-    deleterious_essential_prop = summary_del["essential_prop"],
-    deleterious_nonessential_prop = summary_del["nonessential_prop"],
-    deleterious_undefined_prop = summary_del["undefined_prop"],
-    
-    category_essential_n = summary_category["essential_n"],
-    category_sensitive_n = summary_category["sensitive_n"],
-    category_tolerant_n = summary_category["tolerant_n"],
-    category_undefined_n = summary_category["undefined_n"],
-    
-    category_essential_prop = summary_category["essential_prop"],
-    category_sensitive_prop = summary_category["sensitive_prop"],
-    category_tolerant_prop = summary_category["tolerant_prop"],
-    category_undefined_prop = summary_category["undefined_prop"],
 
-    median_essential_n = summary_median["essential_n"],
-    median_nonessential_n = summary_median["nonessential_n"],
-    median_essential_prop = summary_median["essential_prop"],
-    median_nonessential_prop = summary_median["nonessential_prop"]
+  summary_FDR <-
+    make_summary_block(
+      "residue_essential_FDR"
+    )
+
+  summary_strongly_detrimental <-
+    make_summary_block(
+      "residue_essential_FDR_strongly_detrimental"
+    )
+
+
+  summary_median <-
+    c(
+
+      essential_n =
+        sum(
+          df_final$
+            residue_essential_median_replication ==
+            "Essential",
+          na.rm = TRUE
+        ),
+
+      nonessential_n =
+        sum(
+          df_final$
+            residue_essential_median_replication ==
+            "Non-essential",
+          na.rm = TRUE
+        ),
+
+      undefined_n =
+        NA,
+
+      essential_prop =
+        mean(
+          df_final$
+            residue_essential_median_replication ==
+            "Essential",
+          na.rm = TRUE
+        ),
+
+      nonessential_prop =
+        mean(
+          df_final$
+            residue_essential_median_replication ==
+            "Non-essential",
+          na.rm = TRUE
+        ),
+
+      undefined_prop =
+        NA
+    )
+
+
+  summary_category <-
+    c(
+
+      essential_n =
+        sum(
+          df_final$residue_category ==
+            "Essential",
+          na.rm = TRUE
+        ),
+
+      sensitive_n =
+        sum(
+          df_final$residue_category ==
+            "Sensitive",
+          na.rm = TRUE
+        ),
+
+      tolerant_n =
+        sum(
+          df_final$residue_category ==
+            "Tolerant",
+          na.rm = TRUE
+        ),
+
+      undefined_n =
+        sum(
+          df_final$residue_category ==
+            "Unable to define",
+          na.rm = TRUE
+        ),
+
+      essential_prop =
+        mean(
+          df_final$residue_category ==
+            "Essential",
+          na.rm = TRUE
+        ),
+
+      sensitive_prop =
+        mean(
+          df_final$residue_category ==
+            "Sensitive",
+          na.rm = TRUE
+        ),
+
+      tolerant_prop =
+        mean(
+          df_final$residue_category ==
+            "Tolerant",
+          na.rm = TRUE
+        ),
+
+      undefined_prop =
+        mean(
+          df_final$residue_category ==
+            "Unable to define",
+          na.rm = TRUE
+        )
+    )
+
+
+  # ============================================================
+  # Final gene-level summary
+  # ============================================================
+
+  summary_df <-
+    dplyr::tibble(
+
+      gene =
+        gene_label,
+
+      total_residues =
+        total_residues,
+
+
+      # FDR-defined detrimental mutations
+      FDR_essential_n =
+        summary_FDR["essential_n"],
+
+      FDR_nonessential_n =
+        summary_FDR["nonessential_n"],
+
+      FDR_undefined_n =
+        summary_FDR["undefined_n"],
+
+      FDR_essential_prop =
+        summary_FDR["essential_prop"],
+
+      FDR_nonessential_prop =
+        summary_FDR["nonessential_prop"],
+
+      FDR_undefined_prop =
+        summary_FDR["undefined_prop"],
+
+
+      # Strongly detrimental
+      strongly_detrimental_essential_n =
+        summary_strongly_detrimental[
+          "essential_n"
+        ],
+
+      strongly_detrimental_nonessential_n =
+        summary_strongly_detrimental[
+          "nonessential_n"
+        ],
+
+      strongly_detrimental_undefined_n =
+        summary_strongly_detrimental[
+          "undefined_n"
+        ],
+
+      strongly_detrimental_essential_prop =
+        summary_strongly_detrimental[
+          "essential_prop"
+        ],
+
+      strongly_detrimental_nonessential_prop =
+        summary_strongly_detrimental[
+          "nonessential_prop"
+        ],
+
+      strongly_detrimental_undefined_prop =
+        summary_strongly_detrimental[
+          "undefined_prop"
+        ],
+
+
+      # Final residue classification
+      category_essential_n =
+        summary_category[
+          "essential_n"
+        ],
+
+      category_sensitive_n =
+        summary_category[
+          "sensitive_n"
+        ],
+
+      category_tolerant_n =
+        summary_category[
+          "tolerant_n"
+        ],
+
+      category_undefined_n =
+        summary_category[
+          "undefined_n"
+        ],
+
+      category_essential_prop =
+        summary_category[
+          "essential_prop"
+        ],
+
+      category_sensitive_prop =
+        summary_category[
+          "sensitive_prop"
+        ],
+
+      category_tolerant_prop =
+        summary_category[
+          "tolerant_prop"
+        ],
+
+      category_undefined_prop =
+        summary_category[
+          "undefined_prop"
+        ],
+
+
+      # Median replication criterion
+      median_essential_n =
+        summary_median[
+          "essential_n"
+        ],
+
+      median_nonessential_n =
+        summary_median[
+          "nonessential_n"
+        ],
+
+      median_essential_prop =
+        summary_median[
+          "essential_prop"
+        ],
+
+      median_nonessential_prop =
+        summary_median[
+          "nonessential_prop"
+        ]
+    )
+
+
+  return(
+    list(
+      residue_table =
+        df_final,
+
+      summary_table =
+        summary_df
+    )
   )
-  
-  return(list(
-    residue_table = df_final,
-    summary_table = summary_df
-  ))
 }
 
 
@@ -1590,35 +2345,57 @@ assign_surface_class <- function(df) {
 ```{r}
 ## Columns to preserve
 base_columns_mut <- c(
+
+  # ----------------------------------------------------------
   # Mutation identity
+  # ----------------------------------------------------------
+
   "aa_mut_ID",
   "aa_mut_background_count",
-  
-  # Mutation-level fitness (mean-based collapse)
+
+
+  # ----------------------------------------------------------
+  # Mutation-level replication measurement
+  #
+  # Source column name is retained for compatibility.
+  # ----------------------------------------------------------
+
   "fitness_aa_mut",
   #"sd_aa_mut",
   "SD_background",
   "SEM_background",
   "sem_aa_mut",
-  
+
+
+  # ----------------------------------------------------------
   # Statistical test (1aa level)
+  # ----------------------------------------------------------
+
   "p_value_1aa_two_sample_ttest_syn",
   "p_value_1aa_two_sample_ttest_syn_FDR",
   "effect_size_vs_1aa_syn",
   "effect_size_std_vs_1aa_syn",
-  "effect_size_bin_1aa",
-  
-  # Mutation categories (1aa level)
+
+
+  # ----------------------------------------------------------
+  # Final mutation categories (1aa level)
+  #
+  # Contents now use:
+  # Increased
+  # No effect
+  # Detrimental
+  # Strongly detrimental
+  # ----------------------------------------------------------
+
   "mutation_category_FDR_1aa",
   "mutation_category_FDR_lethal_1aa",
-  "mutation_category_FDR_cutoff_1aa",
-  "mutation_category_FDR_cutoff_1aa_combined",
-  
-  # Mutation directions (1aa level)
+
   "mutation_direction_1aa",
-  "mutation_direction_lethal_1aa",
-  
+
+  # ----------------------------------------------------------
   # Mutation annotation
+  # ----------------------------------------------------------
+
   "aa_mut_seq",
   "aa_mut_gene",
   "aa_mut_structure",
@@ -1629,41 +2406,65 @@ base_columns_mut <- c(
   "aa_mut_ham",
   "phix_aa_mut_ham",
   "phix_aa_mut_orf_class",
-  
+
+
+  # ----------------------------------------------------------
   # WT properties
+  # ----------------------------------------------------------
+
   "wt_hydro_property",
   "wt_polarity_property",
   "wt_charge_property",
   "wt_side_chain_property",
   "wt_AA_group_class",
 
+
+  # ----------------------------------------------------------
   # SUB properties
+  # ----------------------------------------------------------
+
   "sub_hydro_property",
   "sub_polarity_property",
   "sub_charge_property",
   "sub_side_chain_property",
   "sub_AA_group_class",
 
-  # ---- Combined aa mutation features ----
+
+  # ----------------------------------------------------------
+  # Combined amino-acid mutation features
+  # ----------------------------------------------------------
+
   "aa_mutation_hydro",
   "aa_mutation_polarity",
   "aa_mutation_charge",
   "aa_mutation_class",
   "aa_mutation_type",
 
-  # ---- Special structural flags ----
+
+  # ----------------------------------------------------------
+  # Special structural flags
+  # ----------------------------------------------------------
+
   "is_aromatic",
   "is_glycine",
   "is_proline",
   "is_cysteine",
-  
-  # Structure annotation
+
+
+  # ----------------------------------------------------------
+  # Secondary-structure annotation
+  # ----------------------------------------------------------
+
   "secondary_structure_ss",
   "ss_segment_index",
   "ss_serial",
   "ss_label",
-  
+
+
+  # ----------------------------------------------------------
   # Binding / structural context
+  # ----------------------------------------------------------
+
   "binder_genes",
   "binder_classes",
   "binder_complexes",
@@ -1678,77 +2479,138 @@ base_columns_mut <- c(
 
 
 base_columns_aa <- c(
+
+  # ----------------------------------------------------------
   # Identity
+  # ----------------------------------------------------------
+
   "aa_mut_pos",
   "aa_mut_gene",
   "aa_mut_structure",
   "aa_mut_wt",
-  
-  # Mutation count info
+
+
+  # ----------------------------------------------------------
+  # Mutation count / coverage information
+  # ----------------------------------------------------------
+
   "n_mutations_tested",
   "n_mutations_tested_single_orf",
   "n_mutations_tested_multi_orf",
-  
-  # Mutation category counts (ALL)
-  "n_mutations_lethal",
+
+  "n_single_orf_mut",
+  "is_fully_sampled",
+  "coverage_fraction",
+
+
+  # ----------------------------------------------------------
+  # Mutation category counts
+  # All mutations
+  # ----------------------------------------------------------
+
+  "n_mutations_strongly_detrimental",
   "n_mutations_detrimental",
-  "n_mutations_neutral",
-  "n_mutations_beneficial",
-  
-  # Mutation category counts (single ORF)
-  "n_mutations_lethal_single_orf",
+  "n_mutations_no_effect",
+  "n_mutations_increased",
+
+
+  # ----------------------------------------------------------
+  # Mutation category counts
+  # Single-ORF mutations
+  # ----------------------------------------------------------
+
+  "n_mutations_strongly_detrimental_single_orf",
   "n_mutations_detrimental_single_orf",
-  "n_mutations_neutral_single_orf",
-  "n_mutations_beneficial_single_orf",
-  
-  # Residue Category
+  "n_mutations_no_effect_single_orf",
+  "n_mutations_increased_single_orf",
+
+
+  # ----------------------------------------------------------
+  # Residue / ORF annotation
+  # ----------------------------------------------------------
+
   "phix_aa_res_orf_class",
-  
-  # Fitness distribution metrics
-  "Fitness_mean",
-  "Fitness_median",
-  "Fitness_mut_min",
-  "Fitness_mut_max",
-  "Fitness_mut_sd",
-  "Fitness_mut_range",
-  "Fitness_mut_cv",
-  
-  # Global ratios
-  "ratio_lethal",
+
+
+  # ----------------------------------------------------------
+  # Replication-score distribution metrics
+  # ----------------------------------------------------------
+
+  "Replication_mean",
+  "Replication_median",
+  "Replication_mut_min",
+  "Replication_mut_max",
+  "Replication_mut_sd",
+  "Replication_mut_range",
+  "Replication_mut_cv",
+
+
+  # ----------------------------------------------------------
+  # Global mutation-category fractions
+  # ----------------------------------------------------------
+
+  "ratio_strongly_detrimental",
   "ratio_detrimental",
-  "ratio_neutral",
-  "ratio_beneficial",
-  "ratio_loss_total",
-  
-  # Single ORF ratios
-  "ratio_lethal_single_orf",
+  "ratio_no_effect",
+  "ratio_increased",
+
+  # Detrimental + strongly detrimental
+  "ratio_detrimental_total",
+
+
+  # ----------------------------------------------------------
+  # Single-ORF mutation-category fractions
+  # ----------------------------------------------------------
+
+  "ratio_strongly_detrimental_single_orf",
   "ratio_detrimental_single_orf",
-  "ratio_neutral_single_orf",
-  "ratio_beneficial_single_orf",
-  "ratio_loss_total_single_orf",
-  
-  # Essential definitions
+  "ratio_no_effect_single_orf",
+  "ratio_increased_single_orf",
+
+  # Detrimental + strongly detrimental
+  "ratio_detrimental_total_single_orf",
+
+
+  # ----------------------------------------------------------
+  # Residue-level classifications
+  # ----------------------------------------------------------
+
   "residue_essential_FDR",
-  "residue_essential_FDR_lethal",
-  "residue_essential_FDR_deleterious",
-  "residue_essential_median_fitness",
+  "residue_essential_FDR_strongly_detrimental",
+  "residue_essential_median_replication",
   "residue_category",
-  
+
+
+  # ----------------------------------------------------------
   # Evolvability
+  # ----------------------------------------------------------
+
   "evolving_potential",
-  
-  # Hotspots
-  "hotspot_category_num_lethal",
-  "hotspot_category_num_lethal_single_orf",
-  "hotspot_category_quartile_fitness_median",
-  
-  # Structure context
+
+
+  # ----------------------------------------------------------
+  # Hotspot classifications
+  # ----------------------------------------------------------
+
+  "hotspot_category_num_strongly_detrimental",
+  "hotspot_category_num_strongly_detrimental_single_orf",
+  "hotspot_category_quartile_replication_median",
+
+
+  # ----------------------------------------------------------
+  # Secondary-structure context
+  # ----------------------------------------------------------
+
   "secondary_structure_ss",
   "ss_segment_index",
   "ss_serial",
   "ss_label",
-  
-  # Binding context
+
+
+  # ----------------------------------------------------------
+  # Binding / structural context
+  # ----------------------------------------------------------
+
   "binder_genes",
   "binder_classes",
   "binder_complexes",
@@ -2308,43 +3170,6 @@ prepare_scatter_from_summary <- function(
 
 ### 3) Data plotting
 ```{r}
-# Function to plot volcano plots
-plot_volcano <- function(data,
-                         x_col = "fitness_final",
-                         y_col = "p_adj_two_samples_syn",
-                         color_col = "mutation_category_FDR_cutoff",
-                         x_lim = c(-1, 1.5),
-                         y_lim = c(0, 2.7),
-                         plot_title = "Volcano Plot") {
-
-  x_sym <- rlang::sym(x_col)
-  y_sym <- rlang::sym(y_col)
-  color_sym <- rlang::sym(color_col)
-
-  ggplot(data, aes(x = !!x_sym, y = -log10(!!y_sym), color = !!color_sym)) +
-    geom_point(alpha = 0.6, size = 1) +
-    scale_color_manual(values = c(
-      "Beneficial"  = "#A1A9D0",  # soft blue
-      "Neutral"     = "#D9D9D9",  # light gray
-      "Detrimental" = "#F4A6A6",  # light red
-      "Lethal"      = "#F0988C"   # muted dark red
-    )) +
-    xlim(x_lim) +
-    ylim(y_lim) +
-    labs(
-      x = "Fitness",
-      y = expression(-log[10](FDR)),
-      title = plot_title,
-      color = "Mutation Category"
-    ) +
-    theme_classic() +
-    theme(
-      plot.title = element_text(),
-      legend.position = "none"
-    )
-}
-
-
 ## Functions for the fitness heatmaps
 # Define AA properties
 stop <- "*"
@@ -2760,7 +3585,8 @@ bar_percent_stacked_proteome <- function(
   # ---- Category order ----
   summary_df[[category_name]] <- factor(
     summary_df[[category_name]],
-    levels = c("Beneficial", "Neutral", "Detrimental", "Lethal"),
+    #levels = c("Beneficial", "Neutral", "Detrimental", "Lethal"),
+    levels = c("Increased", "No effect", "Detrimental", "Strongly detrimental"),
     ordered = TRUE
   )
 
@@ -2782,7 +3608,7 @@ bar_percent_stacked_proteome <- function(
       dplyr::summarise(
         order_val = sum(
           ifelse(
-            .data[[category_name]] %in% c("Detrimental", "Lethal"),
+            .data[[category_name]] %in% c("Detrimental", "Strongly detrimental"),
             .data[[percent_name]],
             0
           ),
@@ -2819,10 +3645,15 @@ bar_percent_stacked_proteome <- function(
     ) +
     ggplot2::scale_fill_manual(
       values = c(
-        "Beneficial"  = "#A1A9D0",
-        "Neutral"     = "#D9D9D9",
+        #"Beneficial"  = "#A1A9D0",
+        #"Neutral"     = "#D9D9D9",
+        #"Detrimental" = "#F4A6A6",
+        #"Lethal"      = "#F0988C"
+        
+        "Increased"  = "#A1A9D0",
+        "No effect"     = "#D9D9D9",
         "Detrimental" = "#F4A6A6",
-        "Lethal"      = "#F0988C"
+        "Strongly detrimental"      = "#F0988C"
       ),
       name = fill_legend_title,
       drop = FALSE
@@ -2905,6 +3736,7 @@ bar_percent_stacked_proteome <- function(
 
   return(p)
 }
+
 
 ## Counts
 bar_count_stacked_proteome <- function(
@@ -3063,10 +3895,15 @@ bar_count_stacked_proteome <- function(
     ) +
     ggplot2::scale_fill_manual(
       values = c(
-        "Beneficial"  = "#A1A9D0",
-        "Neutral"     = "#D9D9D9",
+        #"Beneficial"  = "#A1A9D0",
+        #"Neutral"     = "#D9D9D9",
+        #"Detrimental" = "#F4A6A6",
+        #"Lethal"      = "#F0988C"
+        
+        "Increased"  = "#A1A9D0",
+        "No effect"     = "#D9D9D9",
         "Detrimental" = "#F4A6A6",
-        "Lethal"      = "#F0988C"
+        "Strongly detrimental"      = "#F0988C"
       ),
       name = fill_legend_title,
       drop = FALSE
@@ -3702,6 +4539,66 @@ plot_heatmap_subset_colored_wt <- function(
 
 
 
+# Function to plot the correlation of proportions
+plot_core_vs_surface <- function(
+  df,
+  x_col,
+  y_col,
+  label_col = "gene",
+  x_label = NULL,
+  y_label = NULL,
+  point_size = 1.5,
+  label_vjust = -0.5
+) {
+
+  library(ggplot2)
+  library(rlang)
+
+  x_sym <- rlang::sym(x_col)
+  y_sym <- rlang::sym(y_col)
+  label_sym <- rlang::sym(label_col)
+
+  p <- ggplot(df, aes(x = !!x_sym, y = !!y_sym)) +
+    
+    geom_point(size = point_size) +
+    
+    geom_abline(
+      slope = 1,
+      intercept = 0,
+      linetype = "dashed"
+    ) +
+    
+    geom_text(
+      aes(label = !!label_sym),
+      vjust = label_vjust
+    ) +
+    
+    # ---- FIX AXES ----
+    scale_x_continuous(
+      limits = c(0, 100),
+      expand = c(0, 0)
+    ) +
+    
+    scale_y_continuous(
+      limits = c(0, 100),
+      expand = c(0, 0)
+    ) +
+    
+    # ---- TRUE 1:1 COMPARISON ----
+    coord_fixed(ratio = 1) +
+    
+    theme_classic() +
+    
+    labs(
+      x = x_label %||% x_col,
+      y = y_label %||% y_col
+    )
+
+  return(p)
+}
+
+
+
 
 
 ```
@@ -3712,7 +4609,7 @@ plot_heatmap_subset_colored_wt <- function(
 To update the aa mut annotations at protein level data.frames;
 ```{r}
 # Load the WT phiX174 genome sequence (Promega RFI, WT is acquired through SDM of am3 on Gene E)
-phix_wt <- read.table("./data/mutant_library_data/phix_wt_genome_seq_promega.txt")
+phix_wt <- read.table("./codes_Github_final/data/phix_wt_genome_seq_promega.txt")
 str_length(phix_wt$x) # 5386bp, matching genome map on Benchling;
 phix_wt_seq <- phix_wt$x
 
@@ -3829,10 +4726,10 @@ target_seq_phix174_noncoding_04_invert_3 <- str_sub(phix_wt_seq, 3981, 5386)
 ### 1) AA-level Unique Substitutions
 ```{r}
 ## Load AA level Data
-load("./data/fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_AA.RData")
+load("./codes_Github_final/data/processed_fitness_data/phix_all_dms100_sub_libraries_normalized_unique_stat_AA.RData")
 head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_AA), 0)
 nrow(phix_all_dms_sub_libraries_normalized_unique_stat_AA) 
-# [1] 40358
+# [1] 40357
 
 
 # This step change the mutants with multiple positions information to NA, for downstream decoupling;
@@ -3852,7 +4749,7 @@ phix_all_dms_sub_libraries_normalized_unique_stat_AA$gene_sub_aa_mut3_pos <- as.
 ssdraw, secondary structures
 ```{r}
 # Define path to the folder where all files are saved
-structural_data_path <- "./data/proteins_data/ssdraw_structural_data/"
+structural_data_path <- "./codes_Github_final/data/proteins_structural_data/ssdraw_structural_data/"
 
 # List all .RData files
 rdata_files <- list.files(path = structural_data_path, pattern = "\\.RData$", full.names = TRUE)
@@ -3872,7 +4769,7 @@ Define interface by atom distance matrix and RSASA data.frames
 2) Interface: Heavy atom distance < 5A
 ```{r}
 # Define folder path
-ppi_data_path <- "./data/proteins_data/PPI_data/"
+ppi_data_path <- "./codes_Github_final/data/proteins_structural_data/PPI_data/"
 
 
 # List all .RData files
@@ -4125,10 +5022,10 @@ head(as.data.frame(phix_all_dms_sub_libraries_normalized_unique_stat_AA), 0)
 
 table(phix_all_dms_sub_libraries_normalized_unique_stat_AA$gene_sub_aa_mut_gene)
 # Gene   D    F    H    K
-# Mut  4707 8958 6833 2194 
+# Mut  4707 8958 6833 2193 
 table(phix_all_dms_sub_libraries_normalized_unique_stat_AA$gene_sub_aa_mut2_gene)
 # Gene   B    C    E 
-# Mut 4492 2388 3404
+# Mut 4492 2387 3404
 table(phix_all_dms_sub_libraries_normalized_unique_stat_AA$gene_sub_aa_mut3_gene)
 # Gene    A     G     J 
 # Mut  13195  3635   831
@@ -4155,7 +5052,7 @@ nrow(phix_protein_H_dms_sub_libraries_normalized_unique_stat_AA)
 phix_protein_K_dms_sub_libraries_normalized_unique_stat_AA <- phix_all_dms_sub_libraries_normalized_unique_stat_AA %>%
   filter(gene_sub_aa_mut_gene == "K", gene_sub_aa_mut_ham == 1) 
 nrow(phix_protein_K_dms_sub_libraries_normalized_unique_stat_AA) 
-# [1] 1553x 
+# [1] 1560x 
 
 
 ## Mut2: B, C, E
@@ -4167,7 +5064,7 @@ nrow(phix_protein_B_dms_sub_libraries_normalized_unique_stat_AA)
 phix_protein_C_dms_sub_libraries_normalized_unique_stat_AA <- phix_all_dms_sub_libraries_normalized_unique_stat_AA %>%
   filter(gene_sub_aa_mut2_gene == "C", gene_sub_aa_mut2_ham == 1) 
 nrow(phix_protein_C_dms_sub_libraries_normalized_unique_stat_AA) 
-# [1] 2092x 
+# [1] 2091x 
 
 phix_protein_E_dms_sub_libraries_normalized_unique_stat_AA <- phix_all_dms_sub_libraries_normalized_unique_stat_AA %>%
   filter(gene_sub_aa_mut2_gene == "E", gene_sub_aa_mut2_ham == 1) 
@@ -4355,7 +5252,7 @@ save(
   phix_restored_mut_aa_seq_H,
   phix_restored_mut_aa_seq_J,
   phix_restored_mut_aa_seq_K,
-  file = "./data/mutant_library_data/Restored/restored_all_1AA_substitutions.RData"
+  file = "./codes_Github_final/data/variant_genome_sequences/restored_all_1AA_substitutions.RData"
 )
 
 
@@ -4501,7 +5398,7 @@ nrow(phix_pre_proteome_dms_syn_mut_Fitness_unique)
 # 4) get weighted.mean of all 1nt synonymous mutations
 phix_1aa_synonymous_combined_weights <- 1 / (phix_pre_proteome_dms_syn_mut_Fitness_unique$sem_aa_mut^2)  # Weights are the inverse of variance
 phix_1aa_synonymous_combined_fitness_final <- sum(phix_pre_proteome_dms_syn_mut_Fitness_unique$fitness_aa_mut * phix_1aa_synonymous_combined_weights) / sum(phix_1aa_synonymous_combined_weights) 
-# [1] 0.9780762
+# [1] 0.9780726
 phix_1aa_synonymous_combined_sigma_final <- sqrt(1/sum(phix_1aa_synonymous_combined_weights)) 
 # [1] 0.0002403682
 
@@ -4538,6 +5435,10 @@ phix_protein_D_dms_sub_mut_Fitness <- rbind(phix_protein_D_dms_sub_mut_Fitness_p
 head(as.data.frame(phix_protein_D_dms_sub_mut_Fitness), 0)
 #names(phix_protein_D_dms_sub_mut_Fitness)
 phix_protein_D_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_D_dms_sub_mut_Fitness) 
+# Mutation-level processing complete:
+#   Total mutations: 3034
+#   n = 1 mutations: 2825
+#   n > 1 mutations: 209
 nrow(phix_protein_D_dms_sub_mut_Fitness_unique) 
 # [1] 3034x
 
@@ -4546,6 +5447,10 @@ nrow(phix_protein_D_dms_sub_mut_Fitness_unique)
 phix_protein_F_dms_sub_mut_Fitness <- select_mutation_fitness_cols(phix_protein_F_dms_sub_libraries_normalized_unique_stat_AA,
                                                                    prefix = "gene_sub_aa_mut_") # 8548x
 phix_protein_F_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_F_dms_sub_mut_Fitness) 
+# Mutation-level processing complete:
+#   Total mutations: 8548
+#   n = 1 mutations: 8548
+#   n > 1 mutations: 0
 nrow(phix_protein_F_dms_sub_mut_Fitness_unique) 
 # [1] 8548x
 
@@ -4554,6 +5459,10 @@ nrow(phix_protein_F_dms_sub_mut_Fitness_unique)
 phix_protein_H_dms_sub_mut_Fitness <- select_mutation_fitness_cols(phix_protein_H_dms_sub_libraries_normalized_unique_stat_AA,
                                                                    prefix = "gene_sub_aa_mut_") # 6519x
 phix_protein_H_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_H_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 6519
+#   n = 1 mutations: 6519
+#   n > 1 mutations: 0
 nrow(phix_protein_H_dms_sub_mut_Fitness_unique) 
 # [1] 6519x
 
@@ -4573,6 +5482,10 @@ phix_protein_K_dms_sub_mut_Fitness <- rbind(phix_protein_K_dms_sub_mut_Fitness_p
                                             phix_protein_K_dms_sub_mut_Fitness_pos_na)
 head(as.data.frame(phix_protein_K_dms_sub_mut_Fitness), 0)
 phix_protein_K_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_K_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 1140
+#   n = 1 mutations: 886
+#   n > 1 mutations: 254
 nrow(phix_protein_K_dms_sub_mut_Fitness_unique)
 # [1] 1140x
 
@@ -4594,6 +5507,10 @@ phix_protein_B_dms_sub_mut_Fitness <- rbind(phix_protein_B_dms_sub_mut_Fitness_p
                                             phix_protein_B_dms_sub_mut_Fitness_pos_na)
 head(as.data.frame(phix_protein_B_dms_sub_mut_Fitness), 0)
 phix_protein_B_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_B_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 2415
+#   n = 1 mutations: 2113
+#   n > 1 mutations: 302
 nrow(phix_protein_B_dms_sub_mut_Fitness_unique)
 # [1] 2415x
 
@@ -4612,6 +5529,10 @@ phix_protein_C_dms_sub_mut_Fitness <- rbind(phix_protein_C_dms_sub_mut_Fitness_p
                                             phix_protein_C_dms_sub_mut_Fitness_pos_na)
 head(as.data.frame(phix_protein_C_dms_sub_mut_Fitness), 0)
 phix_protein_C_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_C_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 1740
+#   n = 1 mutations: 1534
+#   n > 1 mutations: 206
 nrow(phix_protein_C_dms_sub_mut_Fitness_unique) 
 # [1] 1740x 
 
@@ -4631,6 +5552,10 @@ phix_protein_E_dms_sub_mut_Fitness <- rbind(phix_protein_E_dms_sub_mut_Fitness_p
                                             phix_protein_E_dms_sub_mut_Fitness_pos_na)
 head(as.data.frame(phix_protein_E_dms_sub_mut_Fitness), 0)
 phix_protein_E_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_E_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 1821
+#   n = 1 mutations: 1272
+#   n > 1 mutations: 549
 nrow(phix_protein_E_dms_sub_mut_Fitness_unique) 
 # [1] 1821x 
 
@@ -4652,6 +5577,10 @@ phix_protein_A_dms_sub_mut_Fitness <- rbind(phix_protein_A_dms_sub_mut_Fitness_p
                                             phix_protein_A_dms_sub_mut_Fitness_pos_na)
 head(as.data.frame(phix_protein_A_dms_sub_mut_Fitness), 0)
 phix_protein_A_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_A_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 10258
+#   n = 1 mutations: 9477
+#   n > 1 mutations: 781
 nrow(phix_protein_A_dms_sub_mut_Fitness_unique)
 # 10258x 
 
@@ -4677,6 +5606,10 @@ phix_protein_Astar_dms_sub_mut_Fitness <- rbind(phix_protein_Astar_dms_sub_mut_F
                                             phix_protein_Astar_dms_sub_mut_Fitness_pos_na)
 head(as.data.frame(phix_protein_Astar_dms_sub_mut_Fitness), 0)
 phix_protein_Astar_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_Astar_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 6829
+#   n = 1 mutations: 6048
+#   n > 1 mutations: 781
 nrow(phix_protein_Astar_dms_sub_mut_Fitness_unique) 
 # [1] 6829x 
 
@@ -4685,6 +5618,10 @@ nrow(phix_protein_Astar_dms_sub_mut_Fitness_unique)
 phix_protein_G_dms_sub_mut_Fitness <- select_mutation_fitness_cols(phix_protein_G_dms_sub_libraries_normalized_unique_stat_AA,
                                                                    prefix = "gene_sub_aa_mut3_")
 phix_protein_G_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_G_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 3464
+#   n = 1 mutations: 3464
+#   n > 1 mutations: 0
 nrow(phix_protein_G_dms_sub_mut_Fitness_unique)
 # [1] 3464x
 
@@ -4693,6 +5630,10 @@ nrow(phix_protein_G_dms_sub_mut_Fitness_unique)
 phix_protein_J_dms_sub_mut_Fitness <- select_mutation_fitness_cols(phix_protein_J_dms_sub_libraries_normalized_unique_stat_AA,
                                                                    prefix = "gene_sub_aa_mut3_") # 794x 770x
 phix_protein_J_dms_sub_mut_Fitness_unique <- unique_aa_mut_ID_protein_fitness(phix_protein_J_dms_sub_mut_Fitness)  
+# Mutation-level processing complete:
+#   Total mutations: 780
+#   n = 1 mutations: 779
+#   n > 1 mutations: 1
 nrow(phix_protein_J_dms_sub_mut_Fitness_unique) 
 # [1] 780x
 
@@ -4708,7 +5649,6 @@ phix_protein_F_dms_sub_mut_Fitness_unique$aa_mut_pos <- phix_protein_F_dms_sub_m
 # J, mut3
 phix_protein_J_dms_sub_mut_Fitness$aa_mut_pos <- as.numeric(phix_protein_J_dms_sub_mut_Fitness$aa_mut_pos) - 1
 phix_protein_J_dms_sub_mut_Fitness_unique$aa_mut_pos <- phix_protein_J_dms_sub_mut_Fitness_unique$aa_mut_pos - 1
-
 
 
 
@@ -4820,16 +5760,16 @@ table(phix_pre_proteome_dms_mut_Fitness_unique_stat$aa_mut_class)
 #     44010       2319        219       1588 
 
 table(phix_pre_proteome_dms_mut_Fitness_unique_stat$mutation_category_FDR_1aa) 
-# Beneficial     Neutral Detrimental 
-#        720       13369       34047 
+#   Increased   No effect Detrimental 
+#         720       13365       34051 
 
 table(phix_pre_proteome_dms_mut_Fitness_unique_stat$mutation_category_FDR_1aa[phix_pre_proteome_dms_mut_Fitness_unique_stat$phix_aa_mut_orf_class == "Synonymous"]) 
-# Beneficial     Neutral Detrimental 
-#         96        1337         155 
+#   Increased   No effect Detrimental 
+#          96        1337         155 
 
 table(phix_pre_proteome_dms_mut_Fitness_unique_stat$mutation_category_FDR_1aa[phix_pre_proteome_dms_mut_Fitness_unique_stat$phix_aa_mut_orf_class == "single_orf" & phix_pre_proteome_dms_mut_Fitness_unique_stat$aa_mut_class == "Missense" & phix_pre_proteome_dms_mut_Fitness_unique_stat$aa_mut_gene != "Astar"])
-# Beneficial     Neutral Detrimental 
-#        403        8069       19908 
+#   Increased   No effect Detrimental 
+#         403        8068       19910 
 
 
 # 4) subset protein datasets
@@ -4869,38 +5809,404 @@ phix_protein_J_dms_mut_Fitness_unique_stat <- phix_pre_proteome_dms_mut_Fitness_
 
 - FUNCTION: plot_volcano; 
 ```{r}
+# ============================================================
+# Updated volcano plots
+# ============================================================
+replication_category_colors <- c(
+  "Increased" = "#A1A9D0",
+  "No effect"  = "#D9D9D9",
+  "Detrimental"   = "#F4A6A6",
+  "Strongly detrimental"  = "#F0988C"
+)
+
+replication_category_levels <- c(
+  "Increased",
+  "No effect",
+  "Detrimental",
+  "Strongly detrimental"
+)
+
+plot_volcano <- function(
+  data,
+  x_col = "fitness_final",
+  y_col = "p_adj_two_samples_syn",
+  color_col = "mutation_category_FDR_cutoff",
+  x_lim = c(-1, 1.5),
+  y_lim = c(0, 2.7),
+  reference_value = 1,
+  strong_effect_cutoff = 0.5,
+  fdr_cutoff = 0.05,
+  plot_title = "Volcano plot"
+) {
+
+  library(dplyr)
+  library(ggplot2)
+
+  # ----------------------------------------------------------
+  # Thresholds
+  # ----------------------------------------------------------
+
+  strong_threshold <-
+    reference_value -
+    strong_effect_cutoff
+
+  fdr_y <-
+    -log10(
+      fdr_cutoff
+    )
+
+
+  # ----------------------------------------------------------
+  # Prepare plotting data
+  # ----------------------------------------------------------
+
+  plot_data <-
+    data %>%
+    mutate(
+
+      .x =
+        as.numeric(
+          .data[[x_col]]
+        ),
+
+      .p =
+        as.numeric(
+          .data[[y_col]]
+        ),
+
+      .y =
+        -log10(
+          pmax(
+            .p,
+            .Machine$double.xmin
+          )
+        ),
+
+      .category =
+        as.character(
+          .data[[color_col]]
+        ),
+
+      # Convert historical terminology if still present
+      .category =
+        recode(
+          .category,
+
+          "Beneficial" =
+            "Increased",
+
+          "Increased replication" =
+            "Increased",
+
+          "Neutral" =
+            "No effect",
+
+          "No measurable effect" =
+            "No effect",
+
+          "Reduced replication" =
+            "Detrimental",
+
+          "Lethal" =
+            "Strongly detrimental",
+
+          "Strongly reduced replication" =
+            "Strongly detrimental"
+        ),
+
+      .category =
+        factor(
+          .category,
+          levels =
+            replication_category_levels
+        )
+    )
+
+
+  # ----------------------------------------------------------
+  # Percentage of variants in each category
+  # ----------------------------------------------------------
+
+  percentage_data <-
+    plot_data %>%
+
+    filter(
+      !is.na(
+        .category
+      )
+    ) %>%
+
+    dplyr::count(
+      .category,
+      .drop = FALSE
+    ) %>%
+
+    mutate(
+      percentage =
+        100 *
+        n /
+        sum(n),
+
+      label =
+        sprintf(
+          "%.1f%%",
+          percentage
+        )
+    )
+
+
+  # ----------------------------------------------------------
+  # Positions of percentage labels
+  #
+  # Strongly detrimental : upper left
+  # Detrimental          : upper middle
+  # Increased            : upper right
+  # No effect            : below FDR threshold
+  # ----------------------------------------------------------
+
+  percentage_positions <-
+    tibble::tibble(
+
+      .category =
+        factor(
+          replication_category_levels,
+          levels =
+            replication_category_levels
+        ),
+
+      label_x =
+        c(
+
+          # Increased
+          (
+            reference_value +
+              x_lim[2]
+          ) / 2,
+
+          # No effect
+          x_lim[1] +
+            0.12 *
+            diff(
+              x_lim
+            ),
+
+          # Detrimental
+          (
+            strong_threshold +
+              reference_value
+          ) / 2,
+
+          # Strongly detrimental
+          (
+            x_lim[1] +
+              strong_threshold
+          ) / 2
+        ),
+
+      label_y =
+        c(
+
+          # Increased
+          y_lim[2] -
+            0.18,
+
+          # No effect
+          fdr_y *
+            0.35,
+
+          # Detrimental
+          y_lim[2] -
+            0.18,
+
+          # Strongly detrimental
+          y_lim[2] -
+            0.18
+        )
+    )
+
+
+  percentage_data <-
+    percentage_data %>%
+
+    left_join(
+      percentage_positions,
+      by = ".category"
+    )
+
+
+  # ----------------------------------------------------------
+  # Plot
+  # ----------------------------------------------------------
+
+  ggplot(
+    plot_data,
+    aes(
+      x = .x,
+      y = .y,
+      color = .category
+    )
+  ) +
+
+    # Variants
+    geom_point(
+      alpha = 0.6,
+      size = 1
+    ) +
+
+    # FDR threshold
+    geom_hline(
+      yintercept =
+        fdr_y,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # Strongly detrimental threshold
+    geom_vline(
+      xintercept =
+        strong_threshold,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # WT/reference replication score
+    geom_vline(
+      xintercept =
+        reference_value,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # Percentages
+    geom_text(
+      data =
+        percentage_data,
+
+      aes(
+        x = label_x,
+        y = label_y,
+        label = label
+      ),
+
+      inherit.aes =
+        FALSE,
+
+      color =
+        "black",
+
+      fontface =
+        "bold",
+
+      size =
+        3
+    ) +
+
+    scale_color_manual(
+      values =
+        replication_category_colors,
+
+      limits =
+        replication_category_levels,
+
+      drop =
+        FALSE
+    ) +
+
+    coord_cartesian(
+      xlim =
+        x_lim,
+
+      ylim =
+        y_lim
+    ) +
+
+    labs(
+      x =
+        "Normalized replication score",
+
+      y =
+        expression(
+          -log[10](FDR)
+        ),
+
+      title =
+        plot_title,
+
+      color =
+        "Mutational effect"
+    ) +
+
+    theme_classic() +
+
+    theme(
+      plot.title =
+        element_text(),
+
+      legend.title =
+        element_text(
+          face = "bold"
+        )
+    )
+}
+
+
 # check data
 head(as.data.frame(phix_pre_proteome_dms_mut_Fitness_unique_stat), 0)
 nrow(phix_pre_proteome_dms_mut_Fitness_unique_stat)
 # [1] 48136
+table(phix_pre_proteome_dms_mut_Fitness_unique_stat$mutation_category_FDR_lethal_1aa)
+#            Increased            No effect          Detrimental Strongly detrimental 
+#                  720                13365                11068                22983 
 
 
 # plotting 
-volcano_1aa <- plot_volcano(
-  phix_pre_proteome_dms_mut_Fitness_unique_stat,
-  
-  x_col = "fitness_aa_mut", 
-  
-  #y_col = "p_value_1aa_two_sample_ttest_syn", 
-  y_col = "p_value_1aa_two_sample_ttest_syn_FDR", 
-  
-  #color_col = "mutation_category_FDR_1aa",
-  color_col = "mutation_category_FDR_lethal_1aa",
-  
-  x_lim = c(-1, 1.5), 
-  y_lim = c(0, 2.7), 
-  
-  plot_title = "Single amino-acid variants (n=48136)"
-  ) + 
-  geom_vline(xintercept = phix_1aa_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
-  geom_vline(xintercept = 0.5*phix_1aa_synonymous_combined_fitness_final, linetype = "dashed", color = "black") + # Lethal - Detrimental
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")  # FDR threshold line
+volcano_plot_1aa <-
+  plot_volcano(
+    data =
+      phix_pre_proteome_dms_mut_Fitness_unique_stat,
+      #phix_pre_proteome_dms_mut_Fitness_unique_stat[phix_pre_proteome_dms_mut_Fitness_unique_stat$phix_aa_mut_orf_class == "single_orf" & phix_pre_proteome_dms_mut_Fitness_unique_stat$aa_mut_class == "Missense" & phix_pre_proteome_dms_mut_Fitness_unique_stat$aa_mut_gene != "Astar",],
 
-print(volcano_1aa)
+    x_col =
+      #"fitness_final",
+      "fitness_aa_mut",
+
+    y_col =
+      #"p_value_two_sample_ttest_syn_FDR",
+      "p_value_1aa_two_sample_ttest_syn_FDR",
+
+    color_col =
+      #"mutation_category_FDR_lethal",
+      "mutation_category_FDR_lethal_1aa",
+
+    x_lim =
+      c(-1, 1.5),
+
+    y_lim =
+      c(0, 2.7),
+
+    reference_value =
+      1,
+
+    strong_effect_cutoff =
+      0.5,
+
+    plot_title =
+      "1aa variants, n=48,136"
+      #"1aa variants (single-orf, no Astar), n=28,380"
+  )
+
+volcano_plot_1aa
 
 
 # Saving
-ggsave(volcano_1aa, filename = "./plots/volcano_1aa.pdf", width = 3, height = 3)
+#ggsave(volcano_plot_1aa, filename = "./plots/volcano_plot_1aa.pdf", width = 5, height = 3)
+#ggsave(volcano_plot_1aa, filename = "./plots/volcano_plot_1aa_single_orf.pdf", width = 5, height = 3)
 
 
 
@@ -4932,6 +6238,7 @@ phix_protein_F_dms_aa_pos_Fitness_list <-
 phix_protein_F_dms_aa_pos_Fitness <- 
   phix_protein_F_dms_aa_pos_Fitness_list$residue_table %>%
   mutate(phix_aa_res_orf_class = "Unique_ORF") 
+nrow(phix_protein_F_dms_aa_pos_Fitness)
 # [1] 427x
 
 phix_protein_H_dms_aa_pos_Fitness_list <- 
@@ -4939,6 +6246,7 @@ phix_protein_H_dms_aa_pos_Fitness_list <-
 phix_protein_H_dms_aa_pos_Fitness <- 
   phix_protein_H_dms_aa_pos_Fitness_list$residue_table %>%
   mutate(phix_aa_res_orf_class = "Unique_ORF") 
+nrow(phix_protein_H_dms_aa_pos_Fitness)
 # [1] 328x
 
 phix_protein_K_dms_aa_pos_Fitness_list <- 
@@ -4946,6 +6254,7 @@ phix_protein_K_dms_aa_pos_Fitness_list <-
 phix_protein_K_dms_aa_pos_Fitness <- 
   phix_protein_K_dms_aa_pos_Fitness_list$residue_table %>%
   mutate(phix_aa_res_orf_class = "Overlapping_ORF") 
+nrow(phix_protein_K_dms_aa_pos_Fitness)
 # [1] 56x
 
 
@@ -4955,6 +6264,7 @@ phix_protein_B_dms_aa_pos_Fitness_list <-
 phix_protein_B_dms_aa_pos_Fitness <- 
   phix_protein_B_dms_aa_pos_Fitness_list$residue_table %>%
   mutate(phix_aa_res_orf_class = "Overlapping_ORF") 
+nrow(phix_protein_B_dms_aa_pos_Fitness)
 # [1] 120x
 
 phix_protein_C_dms_aa_pos_Fitness_list <- 
@@ -4967,6 +6277,7 @@ phix_protein_C_dms_aa_pos_Fitness <-
       TRUE ~ "Unique_ORF"
     )
   ) 
+nrow(phix_protein_C_dms_aa_pos_Fitness)
 # [1] 86x
 
 phix_protein_E_dms_aa_pos_Fitness_list <- 
@@ -4974,6 +6285,7 @@ phix_protein_E_dms_aa_pos_Fitness_list <-
 phix_protein_E_dms_aa_pos_Fitness <- 
   phix_protein_E_dms_aa_pos_Fitness_list$residue_table %>%
   mutate(phix_aa_res_orf_class = "Overlapping_ORF") 
+nrow(phix_protein_E_dms_aa_pos_Fitness)
 # [1] 91x
 
 
@@ -4988,6 +6300,7 @@ phix_protein_A_dms_aa_pos_Fitness <-
       TRUE ~ "Unique_ORF"
     )
   ) 
+nrow(phix_protein_A_dms_aa_pos_Fitness)
 # [1] 513x
 
 phix_protein_Astar_dms_aa_pos_Fitness_list <- 
@@ -5000,6 +6313,7 @@ phix_protein_Astar_dms_aa_pos_Fitness <-
       TRUE ~ "Unique_ORF"
     )
   ) 
+nrow(phix_protein_Astar_dms_aa_pos_Fitness)
 # [1] 341x
 
 phix_protein_G_dms_aa_pos_Fitness_list <- 
@@ -5007,6 +6321,7 @@ phix_protein_G_dms_aa_pos_Fitness_list <-
 phix_protein_G_dms_aa_pos_Fitness <- 
   phix_protein_G_dms_aa_pos_Fitness_list$residue_table %>%
   mutate(phix_aa_res_orf_class = "Unique_ORF") 
+nrow(phix_protein_G_dms_aa_pos_Fitness)
 # [1] 175x
 
 phix_protein_J_dms_aa_pos_Fitness_list <- 
@@ -5019,6 +6334,7 @@ phix_protein_J_dms_aa_pos_Fitness <-
       TRUE ~ "Unique_ORF"
     )
   ) 
+nrow(phix_protein_J_dms_aa_pos_Fitness)
 # [1] 38x
 
 
@@ -5038,9 +6354,9 @@ phix_pre_proteome_dms_aa_pos_Fitness <- bind_rows(
   phix_protein_G_dms_aa_pos_Fitness,
   phix_protein_J_dms_aa_pos_Fitness
   )
-table(phix_pre_proteome_dms_aa_pos_Fitness$residue_category)
-#       Essential        Sensitive         Tolerant Unable to define 
-#            1598              224              60               445 
+table(phix_pre_proteome_dms_aa_pos_Fitness$residue_category[phix_pre_proteome_dms_aa_pos_Fitness$aa_mut_gene != "Astar"])
+#        Essential        Sensitive         Tolerant Unable to define 
+#             1598              327               24              378 
 
 
 ## Residues Tables are Ready for Merging Structural Data 
@@ -5603,7 +6919,7 @@ phix_proteins_dms_mut_level <- c(
   "phix_protein_G_dms_mut_Fitness_m4",
   "phix_protein_J_dms_mut_Fitness_m4"
 )
-save(list = phix_proteins_dms_mut_level, file = "./data/proteins_data/plotting_data/phix_proteins_dms_mut_level.RData")
+save(list = phix_proteins_dms_mut_level, file = "./codes_Github_final/data/processed_fitness_data/phix_proteins_dms_mut_level.RData")
 
 
 ## 2) Residue Level
@@ -5620,7 +6936,7 @@ phix_proteins_dms_res_level <- c(
   "phix_protein_G_dms_aa_pos_Fitness_m4",
   "phix_protein_J_dms_aa_pos_Fitness_m4"
 )
-save(list = phix_proteins_dms_res_level, file = "./data/proteins_data/plotting_data/phix_proteins_dms_res_level.RData")
+save(list = phix_proteins_dms_res_level, file = "./codes_Github_final/data/processed_fitness_data/phix_proteins_dms_res_level.RData")
 
 
 
@@ -5649,21 +6965,21 @@ prepare_chimerax_scoring_file <- function(df, output_file, fitness_col = "Fitnes
 
 
 # mut
-prepare_chimerax_scoring_file(phix_protein_D_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_D_chimeraX_fitness.defattr")
-prepare_chimerax_scoring_file(phix_protein_F_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_F_chimeraX_fitness.defattr")
-prepare_chimerax_scoring_file(phix_protein_H_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_H_chimeraX_fitness.defattr")
-prepare_chimerax_scoring_file(phix_protein_K_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_K_chimeraX_fitness.defattr")
+prepare_chimerax_scoring_file(phix_protein_D_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_D_chimeraX_fitness.defattr", fitness_col = "Replication_median")
+prepare_chimerax_scoring_file(phix_protein_F_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_F_chimeraX_fitness.defattr", fitness_col = "Replication_median")
+prepare_chimerax_scoring_file(phix_protein_H_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_H_chimeraX_fitness.defattr", fitness_col = "Replication_median")
+prepare_chimerax_scoring_file(phix_protein_K_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_K_chimeraX_fitness.defattr", fitness_col = "Replication_median")
 
 # mut2
-prepare_chimerax_scoring_file(phix_protein_B_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_B_chimeraX_fitness.defattr")
-prepare_chimerax_scoring_file(phix_protein_C_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_C_chimeraX_fitness.defattr")
-prepare_chimerax_scoring_file(phix_protein_E_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_E_chimeraX_fitness.defattr")
+prepare_chimerax_scoring_file(phix_protein_B_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_B_chimeraX_fitness.defattr", fitness_col = "Replication_median")
+prepare_chimerax_scoring_file(phix_protein_C_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_C_chimeraX_fitness.defattr", fitness_col = "Replication_median")
+prepare_chimerax_scoring_file(phix_protein_E_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_E_chimeraX_fitness.defattr", fitness_col = "Replication_median")
 
 # mut3
-prepare_chimerax_scoring_file(phix_protein_A_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_A_chimeraX_fitness.defattr")
-prepare_chimerax_scoring_file(phix_protein_Astar_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_Astar_chimeraX_fitness.defattr")
-prepare_chimerax_scoring_file(phix_protein_G_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_G_chimeraX_fitness.defattr")
-prepare_chimerax_scoring_file(phix_protein_J_dms_aa_pos_Fitness, output_file = "./data/scoring_files/ChimeraX_Fitness/phix_protein_J_chimeraX_fitness.defattr")
+prepare_chimerax_scoring_file(phix_protein_A_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_A_chimeraX_fitness.defattr", fitness_col = "Replication_median")
+prepare_chimerax_scoring_file(phix_protein_Astar_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_Astar_chimeraX_fitness.defattr", fitness_col = "Replication_median")
+prepare_chimerax_scoring_file(phix_protein_G_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_G_chimeraX_fitness.defattr", fitness_col = "Replication_median")
+prepare_chimerax_scoring_file(phix_protein_J_dms_aa_pos_Fitness, output_file = "./codes_Github_final/data/scoring_files/ChimeraX_Fitness/phix_protein_J_chimeraX_fitness.defattr", fitness_col = "Replication_median")
 
 
 
@@ -5750,7 +7066,7 @@ table(duplicated(phix_proteome_dms_mut_Fitness_unique$residue_mut_id))
 # 48136 
 
 ## Saving
-#save(phix_proteome_dms_mut_Fitness_unique, file = "./data/proteins_data/plotting_data/phix_proteome_dms_mut_Fitness_unique.RData")
+#save(phix_proteome_dms_mut_Fitness_unique, file = "./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_mut_Fitness_unique.RData")
 
 
 ```
@@ -5785,7 +7101,7 @@ table(duplicated(phix_proteome_dms_aa_pos_Fitness$residue_id))
 #  2327 
 
 ## Saving
-#save(phix_proteome_dms_aa_pos_Fitness, file = "./data/proteins_data/plotting_data/phix_proteome_dms_aa_pos_Fitness.RData")
+#save(phix_proteome_dms_aa_pos_Fitness, file = "./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_aa_pos_Fitness.RData")
 
 
 
@@ -5856,53 +7172,123 @@ make_af3_interface_lookup_expanded <- function(
   
   library(dplyr)
   
-  Astar_interface_lookup <- af3_interface_lookup_table %>%
-    filter(aa_mut_gene == "A") %>%
+  # Check once whether the optional column exists
+  has_binder_complexes <-
+    "binder_complexes" %in%
+    names(af3_interface_lookup_table)
+  
+  
+  # Create A* residue mapping from protein A
+  Astar_interface_lookup <-
+    af3_interface_lookup_table %>%
+    filter(
+      aa_mut_gene == "A"
+    ) %>%
     mutate(
       aa_mut_gene = "Astar",
       aa_mut_pos = aa_mut_pos - astar_offset
     ) %>%
-    filter(aa_mut_pos > 0)
+    filter(
+      aa_mut_pos > 0
+    )
   
+  
+  # Combine original and A* annotations
   bind_rows(
     af3_interface_lookup_table,
     Astar_interface_lookup
   ) %>%
-    group_by(aa_mut_gene, aa_mut_pos) %>%
+    
+    group_by(
+      aa_mut_gene,
+      aa_mut_pos
+    ) %>%
+    
     summarise(
+      
       af3_interaction_partner = paste(
-        sort(unique(unlist(strsplit(interaction_partner, ",")))),
+        sort(
+          unique(
+            unlist(
+              strsplit(
+                interaction_partner,
+                ","
+              )
+            )
+          )
+        ),
         collapse = ","
       ),
       
       af3_n_interaction_partners = n_distinct(
-        unlist(strsplit(interaction_partner, ","))
+        unlist(
+          strsplit(
+            interaction_partner,
+            ","
+          )
+        )
       ),
       
-      af3_total_atomic_contacts = sum(total_atomic_contacts, na.rm = TRUE),
+      af3_total_atomic_contacts = sum(
+        total_atomic_contacts,
+        na.rm = TRUE
+      ),
       
-      af3_n_models_detected = sum(n_models_detected, na.rm = TRUE),
+      af3_n_models_detected = sum(
+        n_models_detected,
+        na.rm = TRUE
+      ),
       
       af3_model_names = paste(
-        sort(unique(unlist(strsplit(model_names, ",")))),
+        sort(
+          unique(
+            unlist(
+              strsplit(
+                model_names,
+                ","
+              )
+            )
+          )
+        ),
         collapse = ","
       ),
       
-      af3_binder_complexes = if ("binder_complexes" %in% names(cur_data())) {
+      af3_binder_complexes = if (has_binder_complexes) {
+        
         paste(
-          sort(unique(unlist(strsplit(binder_complexes, ",")))),
+          sort(
+            unique(
+              unlist(
+                strsplit(
+                  binder_complexes,
+                  ","
+                )
+              )
+            )
+          ),
           collapse = ","
         )
+        
       } else {
+        
         NA_character_
+        
       },
       
-      af3_is_interface_residue = any(is_interface_residue),
+      af3_is_interface_residue = any(
+        is_interface_residue,
+        na.rm = TRUE
+      ),
       
       .groups = "drop"
     ) %>%
-    arrange(aa_mut_gene, aa_mut_pos)
+    
+    arrange(
+      aa_mut_gene,
+      aa_mut_pos
+    )
 }
+
 
 
 # Function to process AF3 binder information
@@ -5992,7 +7378,7 @@ A_core_surface_lookup <- make_A_core_surface_lookup(
 
 
 # 2) get interface residues from A-DNA and A-C models
-load(file = "./data/proteins_data/PPI_data/af3_interface_lookup_table.RData")
+load(file = "./codes_Github_final/data/proteins_structural_data/PPI_data/af3_interface_lookup_table.RData")
 
 head(as.data.frame(af3_interface_lookup_table), 2)
 
@@ -6055,8 +7441,16 @@ af3_lookup_minimal <- af3_structural_lookup_full %>%
 
 af3_lookup_minimal %>%
   dplyr::count(aa_mut_gene, af3_residue_structural_group)
-
-
+# # A tibble: 7 × 3
+#   aa_mut_gene af3_residue_structural_group     n
+#   <chr>       <chr>                        <int>
+# 1 A           Core                           159
+# 2 A           Interface                      152
+# 3 A           Non-interface surface          202
+# 4 Astar       Core                           121
+# 5 Astar       Interface                       98
+# 6 Astar       Non-interface surface          122
+# 7 C           Interface                       56
 
 
 
@@ -6067,14 +7461,14 @@ af3_lookup_minimal %>%
 ### 2) load original proteome mutation and residue datasets
 ```{r}
 # mutations
-load("./data/proteins_data/plotting_data/phix_proteome_dms_mut_Fitness_unique.RData")
+load("./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_mut_Fitness_unique.RData")
 head(as.data.frame(phix_proteome_dms_mut_Fitness_unique), 0)
 nrow(phix_proteome_dms_mut_Fitness_unique)
 # [1] 48136
 
 
 # residues
-load("./data/proteins_data/plotting_data/phix_proteome_dms_aa_pos_Fitness.RData")
+load("./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_aa_pos_Fitness.RData")
 head(as.data.frame(phix_proteome_dms_aa_pos_Fitness), 0)
 nrow(phix_proteome_dms_aa_pos_Fitness)
 # [1] 2327
@@ -6256,9 +7650,8 @@ phix_proteome_dms_mut_Fitness_unique_advanced %>%
 
 
 ## Saving the advanced proteome data.frame
-save(phix_proteome_dms_mut_Fitness_unique_advanced, file = "./data/proteins_data/plotting_data/phix_proteome_dms_mut_Fitness_unique_advanced.RData")
-write_tsv(phix_proteome_dms_mut_Fitness_unique_advanced, file = "./data/fitness_data/phix_proteome_dms_mut_Fitness_unique_advanced.tsv")
-# renamed 'Supplementary_file_phix_1aa_variants_fitness.tsv'
+save(phix_proteome_dms_mut_Fitness_unique_advanced, file = "./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_mut_Fitness_unique_advanced.RData")
+#write_tsv(phix_proteome_dms_mut_Fitness_unique_advanced, file = "./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_mut_Fitness_unique_advanced.tsv")
 
 
 
@@ -6445,9 +7838,8 @@ table(phix_proteome_dms_aa_pos_Fitness_advanced$aa_mut_gene[phix_proteome_dms_aa
 
 
 ## Saving the advanced proteome data.frame
-save(phix_proteome_dms_aa_pos_Fitness_advanced, file = "./data/proteins_data/plotting_data/phix_proteome_dms_aa_pos_Fitness_advanced.RData")
-write_tsv(phix_proteome_dms_aa_pos_Fitness_advanced, file = "./data/fitness_data/phix_proteome_dms_aa_pos_Fitness_advanced.tsv")
-# renamed 'Supplementary_file_phix_1aa_residues.tsv'
+save(phix_proteome_dms_aa_pos_Fitness_advanced, file = "./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_aa_pos_Fitness_advanced.RData")
+#write_tsv(phix_proteome_dms_aa_pos_Fitness_advanced, file = "./codes_Github_final/data/processed_fitness_data/phix_proteome_dms_aa_pos_Fitness_advanced.tsv")
 
 
 
@@ -6479,18 +7871,18 @@ Subset proteome datasets with data available for mechanistic analysis
 head(as.data.frame(phix_proteome_dms_mut_Fitness_unique_advanced), 0)
 table(phix_proteome_dms_mut_Fitness_unique_advanced$phix_aa_mut_orf_class)
 # multi_orf single_orf Synonymous 
-#     12427      34121       1588 
+#     12426      34122       1588 
 nrow(phix_proteome_dms_mut_Fitness_unique_advanced[phix_proteome_dms_mut_Fitness_unique_advanced$aa_mut_gene != "Astar" & phix_proteome_dms_mut_Fitness_unique_advanced$aa_mut_class != "Synonymous",])
 # [1] 39719
 
 table(phix_proteome_dms_mut_Fitness_unique_advanced$phix_aa_mut_orf_class[phix_proteome_dms_mut_Fitness_unique_advanced$aa_mut_gene != "Astar" & phix_proteome_dms_mut_Fitness_unique_advanced$aa_mut_class != "Synonymous"])
 # multi_orf single_orf 
-#      9740      29979 
+#      9739      29980 
 
 phix_proteome_dms_mut_missense_analysis <- phix_proteome_dms_mut_Fitness_unique_advanced %>%
   filter(phix_aa_mut_orf_class == "single_orf", aa_mut_class == "Missense", aa_mut_gene != "Astar")
 nrow(phix_proteome_dms_mut_missense_analysis)
-# [1] 28380
+# [1] 28381
 
 
 ## Proteome Residues
@@ -6622,7 +8014,10 @@ phix_proteome_chisq_test <- run_chisq_test(
 head(phix_proteome_chisq_test)
 
 phix_proteome_chisq_test$summary
-
+# # A tibble: 1 × 13
+#   test_type  dataset            gene  group_var   category_var              n_total statistic    df p_value effect_size effect_name method                     min_expected
+#   <chr>      <chr>              <chr> <chr>       <chr>                       <int>     <dbl> <int>   <dbl>       <dbl> <chr>       <chr>                             <dbl>
+# 1 chi_square Proteome Mutations all   aa_mut_gene mutation_category_FDR_1aa   28381     3491.    18       0       0.248 cramers_v   Pearson's Chi-squared test         1.65
 
 
 ```
@@ -6637,7 +8032,7 @@ head(as.data.frame(phix_proteome_dms_mut_missense_analysis), 0)
 # 1) resolved annotations
 table(phix_proteome_dms_mut_missense_analysis$residue_structural_group_resolved)
 #                 Core             Interface Non-interface surface     Unknown structure 
-#                 3424                 10071                  2478                 12407 
+#                 3424                 10071                  2478                 12408 
 table(phix_proteome_dms_mut_missense_analysis$residue_surface_class_resolved)
 #            Interface Non-interface surface 
 #                10071                  2478 
@@ -6652,10 +8047,10 @@ table(phix_proteome_dms_mut_missense_analysis$residue_structural_group_predicted
 #                 5783                 12674                  5384                  4539 
 table(phix_proteome_dms_mut_missense_analysis$residue_surface_class_predicted)
 #            Interface Non-interface surface 
-#                12674                  5384 
+#                12675                  5384 
 table(phix_proteome_dms_mut_missense_analysis$monomer_structural_class_predicted)
 #             Core           Surface 
-#             5783             18058 
+#             5783             18059 
 
 
 
@@ -6692,21 +8087,21 @@ phix_proteome_mut_data_advanced_list <- list(
 )
 
 
-# 3) run Odds Ratio calculation
+# 4) run Odds Ratio calculation
 odds_ratio_mut_advanced_analysis_results <- run_or_pipeline(
   dataset_list = phix_proteome_mut_data_advanced_list,
   
   analysis_plan = odds_ratio_analysis,
   exposure_focus_list = exposure_focus_list,
   outcome_col = mutation_category_FDR_lethal_1aa,
-  outcome_focus = c("Detrimental", "Lethal"),
+  outcome_focus = c("Detrimental", "Strongly detrimental"),
   
   #group_col = NULL # Overall proteome
   group_col = "aa_mut_gene" # Group by proteins
 )
 
 
-# 4) save enrichment test results
+# 5) save enrichment test results
 # proteome level 
 odds_ratio_proteome_structural_classes <- odds_ratio_mut_advanced_analysis_results %>%
   filter(subset == "single_orf") %>%
@@ -6719,8 +8114,8 @@ odds_ratio_proteome_structural_classes <- odds_ratio_mut_advanced_analysis_resul
 table(odds_ratio_proteome_structural_classes$exposure_var)
 
 ## Saving the advanced proteome data.frame
-save(odds_ratio_proteome_structural_classes, file = "./data/proteins_data/plotting_data/odds_ratio_proteome_structural_classes.RData")
-write_tsv(odds_ratio_proteome_structural_classes, file = "./data/fitness_data/odds_ratio_proteome_structural_classes.tsv")
+save(odds_ratio_proteome_structural_classes, file = "./codes_Github_final/data/summary_tables/odds_ratio_proteome_structural_classes.RData")
+write_tsv(odds_ratio_proteome_structural_classes, file = "./codes_Github_final/data/summary_tables/odds_ratio_proteome_structural_classes.tsv")
 
 
 # genes level
@@ -6736,8 +8131,8 @@ table(odds_ratio_genes_structural_classes$exposure_var)
 table(odds_ratio_genes_structural_classes$group)
 
 ## Saving the advanced proteome data.frame
-save(odds_ratio_genes_structural_classes, file = "./data/proteins_data/plotting_data/odds_ratio_genes_structural_classes.RData")
-write_tsv(odds_ratio_genes_structural_classes, file = "./data/fitness_data/odds_ratio_genes_structural_classes.tsv")
+save(odds_ratio_genes_structural_classes, file = "./codes_Github_final/data/summary_tables/odds_ratio_genes_structural_classes.RData")
+write_tsv(odds_ratio_genes_structural_classes, file = "./codes_Github_final/data/summary_tables/odds_ratio_genes_structural_classes.tsv")
 
 
 
@@ -6755,9 +8150,14 @@ All mutations & Mechanistic analysis for available missense mutations (Figure 2a
 # check data
 head(as.data.frame(phix_proteome_dms_mut_Fitness_unique_advanced), 0)
 head(as.data.frame(phix_proteome_dms_mut_missense_analysis), 0)
+
+table(phix_proteome_dms_mut_missense_analysis$mutation_category_FDR_1aa)
+#   Increased   No effect Detrimental 
+#         403        8068       19910 
+
 table(phix_proteome_dms_mut_missense_analysis$mutation_category_FDR_lethal_1aa)
-# Beneficial     Neutral Detrimental 
-#        403        8069       19908 
+#            Increased            No effect          Detrimental Strongly detrimental 
+#                  403                 8068                 7252                12658 
 
 
 # 1) All mutations 
@@ -6773,7 +8173,7 @@ summary_proteome_mut_advanced <- generate_mutation_category_summary(
   #category_col = "mutation_category_FDR_lethal_1aa"
 )
 
-#write_tsv(summary_proteome_mut_advanced, file = "./data/summary_tables/summary_proteome_mut_advanced.tsv")
+write_tsv(summary_proteome_mut_advanced, file = "./codes_Github_final/data/summary_tables/summary_proteome_mut_advanced.tsv")
 
 
 # 2) Available missense mutations for mechanistic analysis
@@ -6791,7 +8191,7 @@ summary_proteome_mis_mut_advanced <- generate_mutation_category_summary(
   #category_col = "mutation_category_FDR_lethal_1aa"
 )
 
-write_tsv(summary_proteome_mis_mut_advanced, file = "./data/summary_tables/summary_proteome_mis_mut_advanced.tsv")
+write_tsv(summary_proteome_mis_mut_advanced, file = "./codes_Github_final/data/summary_tables/summary_proteome_mis_mut_advanced.tsv")
 
 
 # 3) Detrimental missense mutations for mechanistic analysis
@@ -6814,8 +8214,8 @@ summary_proteome_mis_mut_advanced_deleterious <- generate_mutation_category_summ
   #category_col = "residue_surface_class_predicted"
 )
 
-write_tsv(summary_proteome_mis_mut_advanced_deleterious, file = "./data/summary_tables/summary_proteome_mis_mut_advanced_deleterious.tsv")
-write_tsv(summary_proteome_mis_mut_advanced_deleterious, file = "./data/summary_tables/summary_proteins_mis_mut_advanced_deleterious.tsv")
+write_tsv(summary_proteome_mis_mut_advanced_deleterious, file = "./codes_Github_final/data/summary_tables/summary_proteome_mis_mut_advanced_deleterious.tsv")
+write_tsv(summary_proteome_mis_mut_advanced_deleterious, file = "./codes_Github_final/data/summary_tables/summary_proteins_mis_mut_advanced_deleterious.tsv")
 
 
 # 4) Detrimental missense mutations in specific proteins
@@ -6847,6 +8247,7 @@ summary_protein_J_mis_mut_advanced <- generate_mutation_category_summary(
   #category_col = "mutation_category_FDR_lethal_1aa"
 )
 
+write_tsv(summary_protein_J_mis_mut_advanced, file = "./codes_Github_final/data/summary_tables/summary_protein_J_mis_mut_advanced.tsv")
 
 
 
@@ -6903,7 +8304,7 @@ summary_proteome_mis_mut_advanced_interface <- summary_proteome_mis_mut_advanced
   #filter(binder_genes != "DNA") %>%
   mutate(interface = paste(aa_mut_gene, binder_genes, sep = "-"))
 
-write_tsv(summary_proteome_mis_mut_advanced_interface, file = "./data/summary_tables/summary_proteome_mis_mut_advanced_interface.tsv")
+write_tsv(summary_proteome_mis_mut_advanced_interface, file = "./codes_Github_final/data/summary_tables/summary_proteome_mis_mut_advanced_interface.tsv")
 
 
 ```
@@ -6917,22 +8318,26 @@ Group mutations improve fitness and plot their distribution (Figure S2)
 head(as.data.frame(phix_proteome_dms_mut_missense_analysis), 0)
 
 table(phix_proteome_dms_mut_missense_analysis$mutation_category_FDR_1aa)
-#  Beneficial     Neutral Detrimental 
-#         403        8069       19908 
+#   Increased   No effect Detrimental 
+#         403        8068       19910 
+
 table(phix_proteome_dms_mut_missense_analysis$mutation_category_FDR_1aa[phix_proteome_dms_mut_missense_analysis$residue_structural_group_predicted == "Interface"])
 ## Interface
-# Beneficial     Neutral Detrimental 
-#        223        2973        9478 
+#  Increased     Neutral Detrimental 
+#        223        2974        9478 
 
 # generate summary tables
 summary_proteome_mis_mut_advanced_beneficial <- generate_mutation_category_summary(
   
-  #phix_proteome_dms_mut_missense_analysis,
-  phix_proteome_dms_mut_missense_analysis[phix_proteome_dms_mut_missense_analysis$mutation_category_FDR_1aa == "Beneficial",],
-  #phix_proteome_dms_mut_missense_analysis[phix_proteome_dms_mut_missense_analysis$mutation_category_FDR_1aa == "Beneficial" & phix_proteome_dms_mut_missense_analysis$aa_mut_gene %in% c("F", "J", "H"),],
+  phix_proteome_dms_mut_missense_analysis,
+  #phix_proteome_dms_mut_missense_analysis[phix_proteome_dms_mut_missense_analysis$mutation_category_FDR_1aa == "Increased",],
+  #phix_proteome_dms_mut_missense_analysis[phix_proteome_dms_mut_missense_analysis$mutation_category_FDR_1aa == "Increased" & phix_proteome_dms_mut_missense_analysis$aa_mut_gene %in% c("F", "J", "H"),],
   
   #class_col = c("aa_mut_gene"),
-  class_col = c("aa_mut_class"),
+  #class_col = c("aa_mut_gene", "mutation_category_FDR_1aa"),
+  class_col = c("aa_mut_gene", "mutation_category_FDR_1aa", "binder_genes"),
+  
+  #class_col = c("aa_mut_class"),
   #class_col = c("residue_structural_group_predicted"),
   #class_col = c("aa_mut_gene", "aa_mut_class", "aa_mut_pos", "residue_structural_group_predicted"),
   
@@ -6948,10 +8353,10 @@ summary_proteome_mis_mut_advanced_beneficial <- generate_mutation_category_summa
 
 summary_proteome_mis_mut_advanced_beneficial_plot <- summary_proteome_mis_mut_advanced_beneficial
 
-write_tsv(summary_proteome_mis_mut_advanced_beneficial, file = "./data/summary_tables/summary_proteome_mis_mut_advanced_beneficial.tsv")
+#write_tsv(summary_proteome_mis_mut_advanced_beneficial, file = "./codes_Github_final/data/summary_tables/summary_proteome_mis_mut_advanced_beneficial.tsv")
 
 
-# plotting Beneficial mutations
+# plotting replication increased (Beneficial) mutations
 head(summary_proteome_mis_mut_advanced_beneficial_plot, 5)
 
 # 1) by proteins 
@@ -6963,7 +8368,7 @@ structural_colors <- c(
 )
 
 plot_df_beneficial_structural_count <- summary_proteome_mis_mut_advanced_beneficial_plot %>%
-  filter(mutation_category_FDR_1aa == "Beneficial") %>%
+  filter(mutation_category_FDR_1aa == "Increased") %>%
   mutate(
     residue_structural_group_predicted = case_when(
       is.na(residue_structural_group_predicted) ~ "Unknown structure",
@@ -7045,16 +8450,15 @@ p_beneficial_structural_count <- ggplot(
 
 p_beneficial_structural_count
 
-
 # saving
-ggsave(p_beneficial_structural_count, filename = "./plots/p_beneficial_structural_count.pdf", width = 5, height = 2.5)
+#ggsave(p_beneficial_structural_count, filename = "./plots/p_beneficial_structural_count.pdf", width = 5, height = 2.5)
 
 
 
 # 2) by binders
 plot_df_beneficial_interface <- summary_proteome_mis_mut_advanced_beneficial_plot %>%
   filter(
-    mutation_category_FDR_1aa == "Beneficial",
+    mutation_category_FDR_1aa == "Increased",
     residue_structural_group_predicted == "Interface",
     !is.na(binder_genes),
     binder_genes != ""
@@ -7114,10 +8518,7 @@ p_beneficial_interface <- ggplot(
 p_beneficial_interface
 
 # saving
-ggsave(p_beneficial_interface, filename = "./plots/p_beneficial_interface.pdf", width = 6, height = 2.5)
-
-
-
+#ggsave(p_beneficial_interface, filename = "./plots/p_beneficial_interface.pdf", width = 6, height = 2.5)
 
 
 
@@ -7194,11 +8595,11 @@ table(phix_protein_H_dms_sub_mut_Fitness_monomer_interaction$wt_hydro_property)
 # hydrophilic hydrophobic        stop 
 #        3353        3459          21 
 table(phix_protein_H_dms_sub_mut_Fitness_monomer_interaction$mutation_category_FDR_1aa)
-# Beneficial     Neutral Detrimental 
-#        158        2755        3920 
+#   Increased   No effect Detrimental 
+#         158        2754        3921 
 table(phix_protein_H_dms_sub_mut_Fitness_monomer_interaction$residue_region[phix_protein_H_dms_sub_mut_Fitness_monomer_interaction$aa_mut_class == "Missense" & phix_protein_H_dms_sub_mut_Fitness_monomer_interaction$mutation_category_FDR_1aa == "Detrimental"])
 # C-terminal Coiled-coil  N-terminal 
-#        610        1325        1634 
+#        610        1325        1635 
 
 
 # summary
@@ -7225,7 +8626,7 @@ summary_protein_H_mis_mut_advanced_interface <- generate_mutation_category_summa
 
 head(as.data.frame(summary_protein_H_mis_mut_advanced_interface), 0)
 
-write_tsv(summary_protein_H_mis_mut_advanced_interface, file = "./data/summary_tables/summary_protein_H_mis_mut_advanced_interface.tsv")
+write_tsv(summary_protein_H_mis_mut_advanced_interface, file = "./codes_Github_final/data/summary_tables/summary_protein_H_mis_mut_advanced_interface.tsv")
 
 
 # OR - Quick check
@@ -7256,7 +8657,8 @@ or_protein_H_hydro_by_region <- run_odds_ratio_grid(
 
 or_protein_H_hydro_by_region
 
-write_tsv(or_protein_H_hydro_by_region, file = "./data/summary_tables/odds_ratio_protein_H_hydro_by_region.tsv")
+save(or_protein_H_hydro_by_region, file = "./codes_Github_final/data/summary_tables/odds_ratio_protein_H_hydro_by_region.RData")
+write_tsv(or_protein_H_hydro_by_region, file = "./codes_Github_final/data/summary_tables/odds_ratio_protein_H_hydro_by_region.tsv")
 
 
 
@@ -7272,9 +8674,11 @@ head(as.data.frame(phix_proteome_dms_aa_pos_Fitness_advanced), 0)
 head(as.data.frame(phix_proteome_dms_aa_pos_analysis), 0)
 
 table(phix_proteome_dms_aa_pos_Fitness_advanced$residue_category[phix_proteome_dms_aa_pos_Fitness_advanced$aa_mut_gene != "Astar"])
-
+#        Essential        Sensitive         Tolerant Unable to define 
+#             1387              278               24              297 
 table(phix_proteome_dms_aa_pos_analysis$residue_category[phix_proteome_dms_aa_pos_analysis$aa_mut_gene != "Astar"])
-
+#        Essential        Sensitive         Tolerant Unable to define 
+#             1387              278               24              297 
 
 summary_proteome_aa_advanced <- generate_mutation_category_summary(
   #phix_proteome_dms_aa_pos_Fitness_advanced,
@@ -7293,7 +8697,7 @@ summary_proteome_aa_advanced <- generate_mutation_category_summary(
   category_col = "residue_category"
 )
 
-write_tsv(summary_proteome_aa_advanced, file = "./data/summary_tables/summary_proteome_aa_advanced.tsv")
+write_tsv(summary_proteome_aa_advanced, file = "./codes_Github_final/data/summary_tables/summary_proteome_aa_advanced.tsv")
 
 
 
@@ -7376,7 +8780,7 @@ summary_proportion_proteome_mis_mut_advanced_deleterious <- generate_proportion_
   #category_col = "mutation_category_FDR_cutoff_1aa_combined",
   
   positive_classes = c("Detrimental"),
-  #positive_classes = c("Detrimental", "Lethal"),
+  #positive_classes = c("Detrimental", "Strongly detrimental"),
   
   output_label = "Reduced-fitness"
 )
@@ -7451,17 +8855,17 @@ print(scatter_aa_mut_proportion)
 
 
 # saving
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_proportions_core_interface.pdf", width = 2, height = 2)
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_proportions_core_non-interface.pdf", width = 2, height = 2)
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_proportions_interface_non-interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_proportions_core_interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_proportions_core_non-interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_proportions_interface_non-interface.pdf", width = 2, height = 2)
 
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_distribution_core_interface.pdf", width = 2, height = 2)
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_distribution_core_non-interface.pdf", width = 2, height = 2)
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_distribution_interface_non-interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_distribution_core_interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_distribution_core_non-interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_distribution_interface_non-interface.pdf", width = 2, height = 2)
 
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_proportion_core_interface.pdf", width = 2, height = 2)
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_proportion_core_non-interface.pdf", width = 2, height = 2)
-ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_proportionn_interface_non-interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_proportion_core_interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_proportion_core_non-interface.pdf", width = 2, height = 2)
+#ggsave(scatter_aa_mut_proportion, filename = "./plots/scatter_aa_mut_proportionn_interface_non-interface.pdf", width = 2, height = 2)
 
 
 
@@ -7498,10 +8902,11 @@ ridgeline_mut_class <- plot_ridgeline_mut_class(
   )  + 
   geom_vline(xintercept = 0, linetype = "dashed", color = "black") + 
   geom_vline(xintercept = 1, linetype = "dashed", color = "black")
+
 print(ridgeline_mut_class)
 
 #ggsave(ridgeline_mut_class, filename = "./plots/ridgeline_aa_mut_class.pdf", width = 8, height = 4)
-ggsave(ridgeline_mut_class, filename = "./plots/ridgeline_aa_mut_nonover_class.pdf", width = 6, height = 3.2)
+#ggsave(ridgeline_mut_class, filename = "./plots/ridgeline_aa_mut_nonover_class.pdf", width = 6, height = 3.2)
 
 
 
@@ -7512,7 +8917,7 @@ ggsave(ridgeline_mut_class, filename = "./plots/ridgeline_aa_mut_nonover_class.p
 
 ### 2) Donut Plots
 Showing the percentages
-1) Proportion of mutational effects in the proteome: Lethal/Detrimental/Neutral/Beneficial; (Figure 3)
+1) Proportion of mutational effects in the proteome: Strongly detrimental/Detrimental/No effect/Increased; (Figure 3)
 2) Proportion of essential residues in the proteome; (Figure S3)
 3) Proportion of the causes of deleterious mutational effects; (Figure 4)
 
@@ -7556,6 +8961,11 @@ donut_plot_proteins_mut <- plot_donut_percent(
     #"Neutral"="#D9D9D9",
     #"Detrimental"="#F4A6A6",
     #"Lethal"="#F0988C"
+  
+    #"Increased"="#A1A9D0",
+    #"No effect"="#D9D9D9",
+    #"Detrimental"="#F4A6A6",
+    #"Strongly detrimental"="#F0988C"
     #)
   
   #palette = c(
@@ -7581,7 +8991,7 @@ print(donut_plot_proteins_mut)
 #ggsave(donut_plot_proteins_mut, filename = "./plots/donut_plot_proteins_mut_category_resolved.pdf", width = 4, height = 4)
 #ggsave(donut_plot_proteins_mut, filename = "./plots/donut_plot_proteins_mut_category_predicted.pdf", width = 4, height = 4)
 
-ggsave(donut_plot_proteins_mut, filename = "./plots/donut_plot_proteome_aa_category.pdf", width = 4, height = 4)
+#ggsave(donut_plot_proteins_mut, filename = "./plots/donut_plot_proteome_aa_category.pdf", width = 4, height = 4)
 
 
 
@@ -7602,7 +9012,6 @@ Stacked Bar plots for each protein;
 ## Check Data
 head(as.data.frame(summary_proteome_mut_advanced), 0)
 table(summary_proteome_mut_advanced$aa_mut_class)
-table(summary_proteome_mut_advanced$residue_structural_group)
 
 head(as.data.frame(summary_proteome_mis_mut_advanced), 0)
 table(summary_proteome_mis_mut_advanced$residue_structural_group_predicted)
@@ -7654,23 +9063,23 @@ bar_stacked_proteome_mut <-
   stat_df = NULL,
   
   #stat_df = phix_proteome_chisq_test$summary,
-  stat_p_col = "p_value",
-  stat_group_col = "group_var",
-  stat_format = c("p", "stars"),
-  stat_position = c("subtitle", "caption", "none")
+  #stat_p_col = "p_value",
+  #stat_group_col = "group_var",
+  #stat_format = c("p", "stars"),
+  #stat_position = c("subtitle", "caption", "none")
   ) +
   theme(legend.position = "none")
 print(bar_stacked_proteome_mut)
 
 
 ## Saving
-ggsave(bar_stacked_proteome_mut, filename = "./plots/bar_stacked_proteome_mut_aa_mut_class.pdf", width = 4, height = 4)
+#ggsave(bar_stacked_proteome_mut, filename = "./plots/bar_stacked_proteome_mut_aa_mut_class.pdf", width = 4, height = 4)
 
-ggsave(bar_stacked_proteome_mut, filename = "./plots/bar_stacked_proteins_mut_aa_mut_gene.pdf", width = 8, height = 4)
+#ggsave(bar_stacked_proteome_mut, filename = "./plots/bar_stacked_proteins_mut_aa_mut_gene.pdf", width = 8, height = 4)
 
-ggsave(bar_stacked_proteome_mut, filename = "./plots/bar_stacked_proteome_mut_residue_structural_group_predicted.pdf", width = 3.5, height = 4)
+#ggsave(bar_stacked_proteome_mut, filename = "./plots/bar_stacked_proteome_mut_residue_structural_group_predicted.pdf", width = 3.5, height = 4)
 
-ggsave(bar_stacked_proteome_mut, filename = "./plots/bar_stacked_proteins_mut_interface.pdf", width = 6, height = 4)
+#ggsave(bar_stacked_proteome_mut, filename = "./plots/bar_stacked_proteins_mut_interface.pdf", width = 6, height = 4)
 
 
 
@@ -7796,13 +9205,13 @@ print(bar_stacked_proteome_protein_factor)
 
 
 ## Saving
-ggsave(bar_stacked_proteome_protein_factor, filename = "./plots/bar_stacked_proteome_nonover_protein_factor_resolved.pdf", width = 4, height = 1.5)
+#ggsave(bar_stacked_proteome_protein_factor, filename = "./plots/bar_stacked_proteome_nonover_protein_factor_resolved.pdf", width = 4, height = 1.5)
 
-ggsave(bar_stacked_proteome_protein_factor, filename = "./plots/bar_stacked_proteome_nonover_protein_factor_predicted.pdf", width = 8, height = 4)
+#ggsave(bar_stacked_proteome_protein_factor, filename = "./plots/bar_stacked_proteome_nonover_protein_factor_predicted.pdf", width = 8, height = 4)
 
-ggsave(bar_stacked_proteome_protein_factor, filename = "./plots/bar_stacked_proteome_residue_category.pdf", width = 8, height = 4)
+#ggsave(bar_stacked_proteome_protein_factor, filename = "./plots/bar_stacked_proteome_residue_category.pdf", width = 8, height = 4)
 
-ggsave(bar_stacked_proteome_protein_factor, filename = "./plots/bar_stacked_proteome_hotspot_category.pdf", width = 8, height = 4)
+#ggsave(bar_stacked_proteome_protein_factor, filename = "./plots/bar_stacked_proteome_hotspot_category.pdf", width = 8, height = 4)
 
 
 ```
@@ -7851,8 +9260,8 @@ print(forest_plot_proteins_or)
 
 
 ## Save Plots 
-ggsave(forest_plot_proteins_log_or, filename = "./plots/forest_plot_proteins_mut_nonover_log_or_core.pdf", width = 2, height = 2) 
-ggsave(forest_plot_proteins_log_or, filename = "./plots/forest_plot_proteins_mut_nonover_log_or_surface.pdf", width = 2, height = 2.5) 
+#ggsave(forest_plot_proteins_log_or, filename = "./plots/forest_plot_proteins_mut_nonover_log_or_core.pdf", width = 2, height = 2) 
+#ggsave(forest_plot_proteins_log_or, filename = "./plots/forest_plot_proteins_mut_nonover_log_or_surface.pdf", width = 2, height = 2.5) 
 
 
 

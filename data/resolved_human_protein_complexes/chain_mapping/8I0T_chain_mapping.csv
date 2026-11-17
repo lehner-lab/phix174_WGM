@@ -1,0 +1,73 @@
+complex,pdb_id,label_chain,auth_chain,entity_id,component_type,polymer_type,entity_description
+spliceosome,8I0T,A,A,1,protein,polypeptide(L),Pre-mRNA-processing-splicing factor 8
+spliceosome,8I0T,B,B,2,RNA,polyribonucleotide,U5 snRNA
+spliceosome,8I0T,C,C,3,protein,polypeptide(L),116 kDa U5 small nuclear ribonucleoprotein component
+spliceosome,8I0T,D,D,4,protein,polypeptide(L),U5 small nuclear ribonucleoprotein 200 kDa helicase
+spliceosome,8I0T,E,E,5,protein,polypeptide(L),U5 small nuclear ribonucleoprotein 40 kDa protein
+spliceosome,8I0T,F,F,6,RNA,polyribonucleotide,U6 snRNA
+spliceosome,8I0T,G,G,7,RNA,polyribonucleotide,Pre-mRNA
+spliceosome,8I0T,H,H,8,RNA,polyribonucleotide,U2 snRNA
+spliceosome,8I0T,I,I,9,protein,polypeptide(L),Pre-mRNA-splicing factor SYF1
+spliceosome,8I0T,J,J,10,protein,polypeptide(L),Crooked neck-like protein 1
+spliceosome,8I0T,K,K,11,protein,polypeptide(L),RING finger protein 113A
+spliceosome,8I0T,L,L,12,protein,polypeptide(L),Cell division cycle 5-like protein
+spliceosome,8I0T,M,N,13,protein,polypeptide(L),Protein BUD31 homolog
+spliceosome,8I0T,N,O,14,protein,polypeptide(L),Pre-mRNA-splicing factor RBM22
+spliceosome,8I0T,O,P,15,protein,polypeptide(L),Spliceosome-associated protein CWC15 homolog
+spliceosome,8I0T,P,Q,16,protein,polypeptide(L),RNA helicase aquarius
+spliceosome,8I0T,Q,R,17,protein,polypeptide(L),SNW domain-containing protein 1
+spliceosome,8I0T,R,S,18,protein,polypeptide(L),Peptidyl-prolyl cis-trans isomerase-like 1
+spliceosome,8I0T,S,T,19,protein,polypeptide(L),Pleiotropic regulator 1
+spliceosome,8I0T,T,U,20,protein,polypeptide(L),Serine/arginine repetitive matrix protein 2
+spliceosome,8I0T,U,V,21,protein,polypeptide(L),Pre-mRNA-splicing factor CWC22 homolog
+spliceosome,8I0T,V,W,22,protein,polypeptide(L),Pre-mRNA-processing factor 17
+spliceosome,8I0T,W,X,23,protein,polypeptide(L),Pre-mRNA-splicing factor ATP-dependent RNA helicase DHX16
+spliceosome,8I0T,X,Y,24,protein,polypeptide(L),Peptidyl-prolyl cis-trans isomerase-like 4
+spliceosome,8I0T,Y,Z,25,protein,polypeptide(L),Pre-mRNA-splicing factor SPF27
+spliceosome,8I0T,Z,1,26,protein,polypeptide(L),Splicing factor 3B subunit 1
+spliceosome,8I0T,AA,3,27,protein,polypeptide(L),Splicing factor 3B subunit 3
+spliceosome,8I0T,BA,p,28,protein,polypeptide(L),U2 small nuclear ribonucleoprotein B''
+spliceosome,8I0T,CA,w,29,protein,polypeptide(L),Splicing factor 3A subunit 3
+spliceosome,8I0T,DA,2,30,protein,polypeptide(L),Splicing factor 3B subunit 2
+spliceosome,8I0T,EA,4,31,protein,polypeptide(L),Splicing factor 3B subunit 4
+spliceosome,8I0T,FA,7,32,protein,polypeptide(L),PHD finger-like domain-containing protein 5A
+spliceosome,8I0T,GA,5,33,protein,polypeptide(L),Splicing factor 3B subunit 5
+spliceosome,8I0T,HA,y,34,protein,polypeptide(L),Peptidyl-prolyl cis-trans isomerase E
+spliceosome,8I0T,IA,v,35,protein,polypeptide(L),Splicing factor 3A subunit 2
+spliceosome,8I0T,JA,o,36,protein,polypeptide(L),U2 small nuclear ribonucleoprotein A'
+spliceosome,8I0T,KA,h,37,protein,polypeptide(L),Small nuclear ribonucleoprotein Sm D2
+spliceosome,8I0T,LA,i,38,protein,polypeptide(L),Small nuclear ribonucleoprotein F
+spliceosome,8I0T,MA,m,39,protein,polypeptide(L),Small nuclear ribonucleoprotein-associated proteins B and B'
+spliceosome,8I0T,NA,l,40,protein,polypeptide(L),Small nuclear ribonucleoprotein Sm D3
+spliceosome,8I0T,OA,k,41,protein,polypeptide(L),Small nuclear ribonucleoprotein G
+spliceosome,8I0T,PA,j,42,protein,polypeptide(L),Small nuclear ribonucleoprotein E
+spliceosome,8I0T,QA,n,43,protein,polypeptide(L),Small nuclear ribonucleoprotein Sm D1
+spliceosome,8I0T,RA,u,44,protein,polypeptide(L),Splicing factor 3A subunit 1
+spliceosome,8I0T,SA,a,39,protein,polypeptide(L),Small nuclear ribonucleoprotein-associated proteins B and B'
+spliceosome,8I0T,TA,b,43,protein,polypeptide(L),Small nuclear ribonucleoprotein Sm D1
+spliceosome,8I0T,UA,c,37,protein,polypeptide(L),Small nuclear ribonucleoprotein Sm D2
+spliceosome,8I0T,VA,d,38,protein,polypeptide(L),Small nuclear ribonucleoprotein F
+spliceosome,8I0T,WA,e,42,protein,polypeptide(L),Small nuclear ribonucleoprotein E
+spliceosome,8I0T,XA,f,41,protein,polypeptide(L),Small nuclear ribonucleoprotein G
+spliceosome,8I0T,YA,g,40,protein,polypeptide(L),Small nuclear ribonucleoprotein Sm D3
+spliceosome,8I0T,ZA,q,45,protein,polypeptide(L),Pre-mRNA-processing factor 19
+spliceosome,8I0T,AB,r,45,protein,polypeptide(L),Pre-mRNA-processing factor 19
+spliceosome,8I0T,BB,s,45,protein,polypeptide(L),Pre-mRNA-processing factor 19
+spliceosome,8I0T,CB,t,45,protein,polypeptide(L),Pre-mRNA-processing factor 19
+spliceosome,8I0T,DB,9,46,protein,polypeptide(L),RING-type E3 ubiquitin-protein ligase PPIL2
+spliceosome,8I0T,EB,A,47,ligand,NA,INOSITOL HEXAKISPHOSPHATE
+spliceosome,8I0T,FB,C,48,ligand,NA,GUANOSINE-5'-TRIPHOSPHATE
+spliceosome,8I0T,GB,C,49,ligand,NA,MAGNESIUM ION
+spliceosome,8I0T,HB,F,49,ligand,NA,MAGNESIUM ION
+spliceosome,8I0T,IB,F,49,ligand,NA,MAGNESIUM ION
+spliceosome,8I0T,JB,F,49,ligand,NA,MAGNESIUM ION
+spliceosome,8I0T,KB,F,49,ligand,NA,MAGNESIUM ION
+spliceosome,8I0T,LB,F,49,ligand,NA,MAGNESIUM ION
+spliceosome,8I0T,MB,F,49,ligand,NA,MAGNESIUM ION
+spliceosome,8I0T,NB,K,50,ligand,NA,ZINC ION
+spliceosome,8I0T,OB,N,50,ligand,NA,ZINC ION
+spliceosome,8I0T,PB,N,50,ligand,NA,ZINC ION
+spliceosome,8I0T,QB,N,50,ligand,NA,ZINC ION
+spliceosome,8I0T,RB,7,50,ligand,NA,ZINC ION
+spliceosome,8I0T,SB,7,50,ligand,NA,ZINC ION
+spliceosome,8I0T,TB,7,50,ligand,NA,ZINC ION

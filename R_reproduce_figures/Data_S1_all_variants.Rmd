@@ -1,0 +1,968 @@
+---
+title: "Overall variant dataset, normalization, and mutation effects"
+output: html_document
+date: "2026-11-13"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Data S1: Supplementary File 1 ΦX174 all-variants dataset.xlsx
+```{r}
+# ============================================================
+# Data S1: ΦX174 all-variants dataset
+# ============================================================
+
+# 1. Load required packages
+library(readxl)
+library(dplyr)
+library(purrr)
+
+
+# 2. Define supplementary data file
+file_path <- paste0(
+  "./codes_Github_final/Supplementary_Data/",
+  "Supplementary File 1 ΦX174 all-variants dataset.xlsx"
+)
+
+# Check file exists
+stopifnot(file.exists(file_path))
+
+
+# 3. Load all worksheets into a named list
+sheet_names <- readxl::excel_sheets(file_path)
+
+data_s1 <- purrr::map(
+  sheet_names,
+  ~ readxl::read_excel(
+    file_path,
+    sheet = .x,
+    guess_max = 10000
+  )
+)
+
+names(data_s1) <- sheet_names
+
+
+# 4. Inspect loaded datasets
+
+# Available worksheets
+names(data_s1)
+# [1] "library_normalized" "unique_variants"    "lost_variants"      "primers_vector"  
+
+# Dimensions of each worksheet
+purrr::map(data_s1, dim)
+
+# Column names of each worksheet
+purrr::map(data_s1, names)
+
+# Preview first rows of each worksheet
+purrr::map(data_s1, head)
+
+
+# 5. Extract individual datasets
+# Adjust sheet names if necessary
+
+phix_library_normalized <- data_s1[["library_normalized"]]
+
+phix_unique_variants <- data_s1[["unique_variants"]]
+
+phix_lost_variants <- data_s1[["lost_variants"]]
+
+phix_primers_vector <- data_s1[["primers_vector"]]
+
+
+# 6. Check datasets
+dplyr::glimpse(phix_library_normalized)
+dplyr::glimpse(phix_unique_variants)
+dplyr::glimpse(phix_lost_variants)
+dplyr::glimpse(phix_primers_vector)
+
+
+
+
+```
+
+
+
+## Main analyses
+Fig. S1D, F, G.
+```{r}
+# ============================================================
+# 1. Adjacent-library reproducibility
+# Input: Data S1 - library_normalized
+# Output: Fig. S1F
+# ============================================================
+
+# check data
+table(phix_library_normalized$oligo_seq_lib)
+#    1   10   11   12   13   14   15   16   17   18   19    2   20   21   22   23   24   25   26   27   28   29    3   30    4    5    6    7    8    9   r1 
+# 1760 1658 1649 1409 1005 1532 1477 1478 1509 1557 1565 1578 1524 1458 1213 1526 1479 1540 1525 1545 2003 2444 1666 2333 2504 1526 1503 1653 1645 1642 2000 
+
+parse_library_number <- function(x) {
+
+  x <- trimws(as.character(x))
+
+  result <- rep(NA_integer_, length(x))
+
+  # Plain numeric identifiers: "1", ..., "30"
+  idx_numeric <- grepl("^[0-9]+$", x)
+
+  result[idx_numeric] <- as.integer(
+    x[idx_numeric]
+  )
+
+  # Identifiers such as "lib1", ..., "lib30"
+  idx_lib <- grepl(
+    "^lib[0-9]+$",
+    x,
+    ignore.case = TRUE
+  )
+
+  result[idx_lib] <- as.integer(
+    sub(
+      "^lib",
+      "",
+      x[idx_lib],
+      ignore.case = TRUE
+    )
+  )
+
+  result
+}
+
+
+# 1.1 Extract standard library numbers
+# Inspect the identifiers before applying this parsing rule.
+
+library_measurements <- phix_library_normalized %>%
+  dplyr::mutate(
+    seq_lib_num = parse_library_number(oligo_seq_lib)
+  ) %>%
+  dplyr::filter(
+    !is.na(seq_lib_num),
+    seq_lib_num %in% 1:30,
+    !is.na(genome_mut_ID_nt)
+  ) %>%
+  dplyr::select(
+    genome_mut_ID_nt,
+    seq_lib_num,
+    fitness_dimsum,
+    fitness_normalized2
+  )
+
+
+# Check for duplicates
+duplicate_measurements <- library_measurements %>%
+  dplyr::count(
+    genome_mut_ID_nt,
+    seq_lib_num
+  ) %>%
+  dplyr::filter(n > 1)
+
+nrow(duplicate_measurements)
+
+stopifnot(nrow(duplicate_measurements) == 0)
+
+
+# 1.2 Define 30 adjacent-library pairs
+
+adjacent_pairs <- tibble::tibble(
+  lib_x = 1:30,
+  lib_y = c(2:30, 1)
+)
+
+
+# 1.3 Match variants independently measured in two libraries
+
+make_adjacent_pair <- function(lib_x_value, lib_y_value, data) {
+
+  x <- data %>%
+    dplyr::filter(seq_lib_num == lib_x_value) %>%
+    dplyr::select(
+      genome_mut_ID_nt,
+      fitness_dimsum,
+      fitness_normalized2
+    )
+
+  y <- data %>%
+    dplyr::filter(seq_lib_num == lib_y_value) %>%
+    dplyr::select(
+      genome_mut_ID_nt,
+      fitness_dimsum,
+      fitness_normalized2
+    )
+
+  dplyr::inner_join(
+    x, y,
+    by = "genome_mut_ID_nt",
+    suffix = c("_x", "_y")
+  ) %>%
+    dplyr::mutate(
+      lib_x = lib_x_value,
+      lib_y = lib_y_value,
+      pair_id = paste0(
+        "Lib ", lib_x_value,
+        " vs Lib ", lib_y_value
+      ),
+      .before = 1
+    )
+}
+
+adjacent_overlap_data <- purrr::map2_dfr(
+  adjacent_pairs$lib_x,
+  adjacent_pairs$lib_y,
+  ~ make_adjacent_pair(.x, .y, library_measurements)
+)
+
+# Number of shared variants per pair
+adjacent_overlap_data %>%
+  dplyr::count(lib_x, lib_y, pair_id)
+
+
+# 1.4 Calculate correlation and agreement statistics
+
+calculate_pair_statistics <- function(data, x_col, y_col) {
+
+  x <- as.numeric(data[[x_col]])
+  y <- as.numeric(data[[y_col]])
+
+  valid <- is.finite(x) & is.finite(y)
+  x <- x[valid]
+  y <- y[valid]
+
+  n <- length(x)
+
+  if (n < 3 || sd(x) == 0 || sd(y) == 0) {
+    return(tibble::tibble(
+      n = n,
+      pearson_r = NA_real_,
+      spearman_rho = NA_real_,
+      slope = NA_real_,
+      intercept = NA_real_,
+      rmse = NA_real_,
+      mean_difference = NA_real_
+    ))
+  }
+
+  fit <- stats::lm(y ~ x)
+
+  tibble::tibble(
+    n = n,
+    pearson_r = stats::cor(x, y, method = "pearson"),
+    spearman_rho = stats::cor(x, y, method = "spearman"),
+    slope = unname(stats::coef(fit)[2]),
+    intercept = unname(stats::coef(fit)[1]),
+    rmse = sqrt(mean((y - x)^2)),
+    mean_difference = mean(y - x)
+  )
+}
+
+
+# 1.5 Original DiMSum scores
+
+stats_original <- adjacent_overlap_data %>%
+  dplyr::group_by(lib_x, lib_y, pair_id) %>%
+  dplyr::group_modify(
+    ~ calculate_pair_statistics(
+      .x,
+      "fitness_dimsum_x",
+      "fitness_dimsum_y"
+    )
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(measurement = "Original DiMSum")
+
+
+# 1.6 Normalized scores
+
+stats_normalized <- adjacent_overlap_data %>%
+  dplyr::group_by(lib_x, lib_y, pair_id) %>%
+  dplyr::group_modify(
+    ~ calculate_pair_statistics(
+      .x,
+      "fitness_normalized2_x",
+      "fitness_normalized2_y"
+    )
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(measurement = "Normalized")
+
+
+# 1.7 Summarize the 30 comparisons
+
+adjacent_pair_statistics <- dplyr::bind_rows(
+  stats_original,
+  stats_normalized
+)
+
+adjacent_pair_summary <- adjacent_pair_statistics %>%
+  dplyr::group_by(measurement) %>%
+  dplyr::summarise(
+    n_pairs = dplyr::n(),
+    median_pearson_r = median(pearson_r, na.rm = TRUE),
+    median_spearman_rho = median(spearman_rho, na.rm = TRUE),
+    median_slope = median(slope, na.rm = TRUE),
+    median_intercept = median(intercept, na.rm = TRUE),
+    median_rmse = median(rmse, na.rm = TRUE),
+    median_mean_difference = median(
+      mean_difference, na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+print(adjacent_pair_summary)
+# # A tibble: 2 × 8
+#   measurement     n_pairs median_pearson_r median_spearman_rho median_slope median_intercept median_rmse median_mean_difference
+#   <chr>             <int>            <dbl>               <dbl>        <dbl>            <dbl>       <dbl>                  <dbl>
+# 1 Normalized           30            0.986               0.938        0.988          0.0321       0.0667                 0.0173
+# 2 Original DiMSum      30            0.986               0.938        1.02          -0.00388      0.331                  0.0725
+
+
+# 1.8 Prepare 30-panel normalized scatter plot
+
+pair_levels <- paste0(
+  "Lib ", adjacent_pairs$lib_x,
+  " vs Lib ", adjacent_pairs$lib_y
+)
+
+panel_stats <- stats_normalized %>%
+  dplyr::mutate(
+    pair_id = factor(pair_id, levels = pair_levels),
+    stat_label = paste0(
+      "n = ", n,
+      "\nPearson r = ", sprintf("%.2f", pearson_r),
+      "\nSpearman \u03c1 = ", sprintf("%.2f", spearman_rho)
+    )
+  )
+
+overlap_plot_data <- adjacent_overlap_data %>%
+  dplyr::mutate(
+    pair_id = factor(pair_id, levels = pair_levels)
+  )
+
+axis_range <- range(
+  c(
+    overlap_plot_data$fitness_normalized2_x,
+    overlap_plot_data$fitness_normalized2_y
+  ),
+  na.rm = TRUE
+)
+
+panel_stats <- panel_stats %>%
+  dplyr::mutate(
+    label_x = axis_range[2] - 0.03 * diff(axis_range),
+    label_y = axis_range[1] + 0.03 * diff(axis_range)
+  )
+
+
+# 1.9 Plot
+
+plot_adjacent_library_overlaps <- ggplot2::ggplot(
+  overlap_plot_data,
+  ggplot2::aes(
+    x = fitness_normalized2_x,
+    y = fitness_normalized2_y
+  )
+) +
+  ggplot2::geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed",
+    linewidth = 0.5,
+    color = "grey40"
+  ) +
+  ggplot2::geom_point(
+    size = 0.7,
+    alpha = 0.45
+  ) +
+  ggplot2::geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    se = FALSE,
+    linewidth = 0.5
+  ) +
+  ggplot2::geom_text(
+    data = panel_stats,
+    ggplot2::aes(
+      x = label_x,
+      y = label_y,
+      label = stat_label
+    ),
+    inherit.aes = FALSE,
+    hjust = 1,
+    vjust = 0,
+    size = 2.5,
+    lineheight = 0.95
+  ) +
+  ggplot2::facet_wrap(
+    ~ pair_id,
+    ncol = 5,
+    scales = "fixed"
+  ) +
+  ggplot2::coord_equal(
+    xlim = axis_range,
+    ylim = axis_range
+  ) +
+  ggplot2::labs(
+    x = "Normalized replication score in first library",
+    y = "Normalized replication score in adjacent library",
+    title = "Overlapping variants between adjacent libraries"
+  ) +
+  ggplot2::theme_classic(base_size = 9) +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(
+      face = "bold",
+      size = 11
+    ),
+    strip.text = ggplot2::element_text(size = 7)
+  )
+
+print(plot_adjacent_library_overlaps)
+
+
+
+
+
+# ============================================================
+# 2. Reproducibility of three fitness replicates
+# Inputs: library_normalized and unique_variants
+# Output: Fig. S1D
+# ============================================================
+
+replicate_cols <- c(
+  "fitness_rep1_uncorr",
+  "fitness_rep2_uncorr",
+  "fitness_rep3_uncorr"
+)
+
+# Function to plot the correlation across bio-replicates
+plot_replicate_reproducibility <- function(
+    df,
+    replicate_cols,
+    cor_method = "pearson",
+    point_alpha = 0.5,
+    point_size = 1.2,
+    title = "Reproducibility Across Replicates"
+) {
+
+  # ---- Check inputs ----
+  stopifnot(all(replicate_cols %in% names(df)))
+
+  # ---- Check required packages ----
+  for (pkg in c("GGally", "ggplot2")) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      stop(
+        paste0(
+          "Please install the '", pkg,
+          "' package: install.packages('", pkg, "')"
+        )
+      )
+    }
+  }
+
+  # ---- Subset and clean data ----
+  df_sub <- df[, replicate_cols, drop = FALSE]
+
+  df_sub <- df_sub[
+    stats::complete.cases(df_sub),
+    ,
+    drop = FALSE
+  ]
+
+  # ---- Build ggpairs plot ----
+  p <- GGally::ggpairs(
+    df_sub,
+
+    upper = list(
+      continuous = GGally::wrap(
+        "cor",
+        size = 4,
+        method = cor_method,
+        use = "pairwise.complete.obs",
+        color = "black"
+      )
+    ),
+
+    lower = list(
+      continuous = GGally::wrap(
+        "points",
+        alpha = point_alpha,
+        size = point_size,
+        color = "black"
+      )
+    ),
+
+    diag = list(
+      continuous = GGally::wrap(
+        "densityDiag",
+        alpha = 0.6,
+        fill = "gray88"
+      )
+    )
+  ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      strip.text = ggplot2::element_text(
+        size = 11,
+        face = "bold"
+      ),
+      plot.title = ggplot2::element_text(
+        size = 14,
+        face = "bold",
+        hjust = 0.5
+      )
+    ) +
+    ggplot2::ggtitle(title)
+
+  return(p)
+}
+
+
+# 2.1 Library-level replicate correlations
+# Before deduplication of variants across libraries
+
+pair_rep_plot_library <- plot_replicate_reproducibility(
+  df = phix_library_normalized,
+  replicate_cols = replicate_cols,
+  cor_method = "pearson",
+  title = "Reproducibility of Fitness Replicates (Library-level)"
+)
+
+print(pair_rep_plot_library)
+
+
+# 2.2 Unique-variant replicate correlations
+# After merging overlapping variant measurements (presented)
+
+pair_rep_plot_unique <- plot_replicate_reproducibility(
+  df = phix_unique_variants,
+  replicate_cols = replicate_cols,
+  cor_method = "pearson",
+  title = "Reproducibility of Fitness Replicates (Unique variants)"
+)
+
+print(pair_rep_plot_unique)
+
+
+
+
+
+
+# ============================================================
+# 3. Volcano plot - all variants
+# Input: Data S1 - unique_variants
+# ============================================================
+
+# Check the published mutational-effect categories
+table(
+  phix_unique_variants$mutational_effect_category_lethal,
+  useNA = "ifany"
+)
+
+# Verify required columns
+required_cols <- c(
+  "replication_score",
+  "p_value_two_sample_ttest_syn_FDR",
+  "mutational_effect_category_lethal"
+)
+
+stopifnot(
+  all(required_cols %in% names(phix_unique_variants))
+)
+
+replication_category_colors <- c(
+  "Increased" = "#A1A9D0",
+  "No effect"  = "#D9D9D9",
+  "Detrimental"   = "#F4A6A6",
+  "Strongly detrimental"  = "#F0988C"
+)
+
+replication_category_levels <- c(
+  "Increased",
+  "No effect",
+  "Detrimental",
+  "Strongly detrimental"
+)
+
+# Function to prepare volcano plots
+plot_volcano <- function(
+  data,
+  x_col = "fitness_final",
+  y_col = "p_adj_two_samples_syn",
+  color_col = "mutation_category_FDR_cutoff",
+  x_lim = c(-1, 1.5),
+  y_lim = c(0, 2.7),
+  reference_value = 1,
+  strong_effect_cutoff = 0.5,
+  fdr_cutoff = 0.05,
+  plot_title = "Volcano plot"
+) {
+
+  library(dplyr)
+  library(ggplot2)
+
+  # ----------------------------------------------------------
+  # Thresholds
+  # ----------------------------------------------------------
+
+  strong_threshold <-
+    reference_value -
+    strong_effect_cutoff
+
+  fdr_y <-
+    -log10(
+      fdr_cutoff
+    )
+
+
+  # ----------------------------------------------------------
+  # Prepare plotting data
+  # ----------------------------------------------------------
+
+  plot_data <-
+    data %>%
+    mutate(
+
+      .x =
+        as.numeric(
+          .data[[x_col]]
+        ),
+
+      .p =
+        as.numeric(
+          .data[[y_col]]
+        ),
+
+      .y =
+        -log10(
+          pmax(
+            .p,
+            .Machine$double.xmin
+          )
+        ),
+
+      .category =
+        as.character(
+          .data[[color_col]]
+        ),
+
+      # Convert historical terminology if still present
+      .category =
+        recode(
+          .category,
+
+          "Beneficial" =
+            "Increased",
+
+          "Increased replication" =
+            "Increased",
+
+          "Neutral" =
+            "No effect",
+
+          "No measurable effect" =
+            "No effect",
+
+          "Reduced replication" =
+            "Detrimental",
+
+          "Lethal" =
+            "Strongly detrimental",
+
+          "Strongly reduced replication" =
+            "Strongly detrimental"
+        ),
+
+      .category =
+        factor(
+          .category,
+          levels =
+            replication_category_levels
+        )
+    )
+
+
+  # ----------------------------------------------------------
+  # Percentage of variants in each category
+  # ----------------------------------------------------------
+
+  percentage_data <-
+    plot_data %>%
+
+    filter(
+      !is.na(
+        .category
+      )
+    ) %>%
+
+    dplyr::count(
+      .category,
+      .drop = FALSE
+    ) %>%
+
+    mutate(
+      percentage =
+        100 *
+        n /
+        sum(n),
+
+      label =
+        sprintf(
+          "%.1f%%",
+          percentage
+        )
+    )
+
+
+  # ----------------------------------------------------------
+  # Positions of percentage labels
+  #
+  # Strongly detrimental : upper left
+  # Detrimental          : upper middle
+  # Increased            : upper right
+  # No effect            : below FDR threshold
+  # ----------------------------------------------------------
+
+  percentage_positions <-
+    tibble::tibble(
+
+      .category =
+        factor(
+          replication_category_levels,
+          levels =
+            replication_category_levels
+        ),
+
+      label_x =
+        c(
+
+          # Increased
+          (
+            reference_value +
+              x_lim[2]
+          ) / 2,
+
+          # No effect
+          x_lim[1] +
+            0.12 *
+            diff(
+              x_lim
+            ),
+
+          # Detrimental
+          (
+            strong_threshold +
+              reference_value
+          ) / 2,
+
+          # Strongly detrimental
+          (
+            x_lim[1] +
+              strong_threshold
+          ) / 2
+        ),
+
+      label_y =
+        c(
+
+          # Increased
+          y_lim[2] -
+            0.18,
+
+          # No effect
+          fdr_y *
+            0.35,
+
+          # Detrimental
+          y_lim[2] -
+            0.18,
+
+          # Strongly detrimental
+          y_lim[2] -
+            0.18
+        )
+    )
+
+
+  percentage_data <-
+    percentage_data %>%
+
+    left_join(
+      percentage_positions,
+      by = ".category"
+    )
+
+
+  # ----------------------------------------------------------
+  # Plot
+  # ----------------------------------------------------------
+
+  ggplot(
+    plot_data,
+    aes(
+      x = .x,
+      y = .y,
+      color = .category
+    )
+  ) +
+
+    # Variants
+    geom_point(
+      alpha = 0.6,
+      size = 1
+    ) +
+
+    # FDR threshold
+    geom_hline(
+      yintercept =
+        fdr_y,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # Strongly detrimental threshold
+    geom_vline(
+      xintercept =
+        strong_threshold,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # WT/reference replication score
+    geom_vline(
+      xintercept =
+        reference_value,
+      linetype =
+        "dashed",
+      linewidth =
+        0.5
+    ) +
+
+    # Percentages
+    geom_text(
+      data =
+        percentage_data,
+
+      aes(
+        x = label_x,
+        y = label_y,
+        label = label
+      ),
+
+      inherit.aes =
+        FALSE,
+
+      color =
+        "black",
+
+      fontface =
+        "bold",
+
+      size =
+        3
+    ) +
+
+    scale_color_manual(
+      values =
+        replication_category_colors,
+
+      limits =
+        replication_category_levels,
+
+      drop =
+        FALSE
+    ) +
+
+    coord_cartesian(
+      xlim =
+        x_lim,
+
+      ylim =
+        y_lim
+    ) +
+
+    labs(
+      x =
+        "Normalized replication score",
+
+      y =
+        expression(
+          -log[10](FDR)
+        ),
+
+      title =
+        plot_title,
+
+      color =
+        "Mutational effect"
+    ) +
+
+    theme_classic() +
+
+    theme(
+      plot.title =
+        element_text(),
+
+      legend.title =
+        element_text(
+          face = "bold"
+        )
+    )
+}
+
+# Make volcano plot with the updated supplementary data columns
+
+volcano_plot_all <- plot_volcano(
+  data = phix_unique_variants,
+
+  x_col = "replication_score",
+
+  y_col = "p_value_two_sample_ttest_syn_FDR",
+
+  color_col = "mutational_effect_category_lethal",
+
+  x_lim = c(-1, 1.5),
+
+  y_lim = c(0, 2.7),
+
+  reference_value = 1,
+
+  strong_effect_cutoff = 0.5,
+
+  fdr_cutoff = 0.05,
+
+  plot_title = paste0(
+    "All variants, n=",
+    format(nrow(phix_unique_variants),
+           big.mark = ",", scientific = FALSE)
+  )
+)
+
+print(volcano_plot_all)
+
+
+
+
+```
+
+
+
+## Save checkpoints
+```{r}
+save.image(
+  file = "./codes_Github_final/run_Supplementary_Data.RData",
+  compress = "xz"
+)
+
+
+```
+
+
+
+
+
