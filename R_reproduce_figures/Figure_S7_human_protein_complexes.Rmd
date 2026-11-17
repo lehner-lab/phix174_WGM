@@ -1,0 +1,1105 @@
+---
+title: "Residue classification in representative human protein complexes"
+output: html_document
+date: "2026-11-17"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Load functions
+```{r}
+# ============================================================
+# Resolved human protein complexes: Input directories
+# ============================================================
+
+human_complexes_dir <- file.path(
+  ".",
+  "codes_Github_final",
+  "data",
+  "resolved_human_protein_complexes"
+)
+
+# Check input directories
+list.dirs(
+  human_complexes_dir,
+  recursive = FALSE
+)
+
+
+
+# ============================================================
+# Function: Read FreeSASA RSA file
+# ============================================================
+
+read_freesasa_rsa <- function(
+    pdb_id,
+    base_dir = human_complexes_dir
+) {
+
+  rsa_file <- file.path(
+    base_dir,
+    "rsa",
+    paste0(pdb_id, "_freesasa.rsa")
+  )
+
+  rsa_lines <- readLines(rsa_file)
+
+  rsa_residue_lines <- rsa_lines[
+    grepl("^RES\\s", rsa_lines)
+  ]
+
+  # Parse residue name, chain and residue number
+  rsa_identity_matrix <- stringr::str_match(
+    rsa_residue_lines,
+    "^RES\\s+([A-Za-z0-9]+)\\s+([^\\s0-9+-]+|[A-Za-z0-9]+?)\\s*([+-]?[0-9]+)\\s+"
+  )
+
+  rsa_identity <- tibble::tibble(
+    residue_name = rsa_identity_matrix[, 2],
+    chain = rsa_identity_matrix[, 3],
+    residue_number = as.integer(
+      rsa_identity_matrix[, 4]
+    )
+  )
+
+  # Remove prefix and parse numerical SASA/RSA values
+  rsa_numeric_text <- stringr::str_remove(
+    rsa_residue_lines,
+    "^RES\\s+[A-Za-z0-9]+\\s+[^\\s]*?\\s*[+-]?[0-9]+\\s+"
+  )
+
+  rsa_numeric <- utils::read.table(
+    text = rsa_numeric_text,
+    header = FALSE,
+    fill = TRUE,
+    stringsAsFactors = FALSE,
+    na.strings = "N/A"
+  )
+
+  names(rsa_numeric) <- c(
+    "ASA_total",
+    "RSA_total",
+    "ASA_sidechain",
+    "RSA_sidechain",
+    "ASA_mainchain",
+    "RSA_mainchain",
+    "ASA_nonpolar",
+    "RSA_nonpolar",
+    "ASA_polar",
+    "RSA_polar"
+  )
+
+  dplyr::bind_cols(
+    rsa_identity,
+    rsa_numeric
+  ) %>%
+    dplyr::mutate(
+      chain = as.character(chain),
+      pdb_id = pdb_id
+    )
+}
+
+
+# ============================================================
+# Function: Read chain mapping
+# ============================================================
+
+read_chain_mapping <- function(
+    pdb_id,
+    base_dir = human_complexes_dir
+) {
+
+  mapping_file <- file.path(
+    base_dir,
+    "chain_mapping",
+    paste0(pdb_id, "_chain_mapping.csv")
+  )
+
+  readr::read_csv(
+    mapping_file,
+    show_col_types = FALSE,
+    col_types = readr::cols(
+      auth_chain = readr::col_character(),
+      label_chain = readr::col_character(),
+      .default = readr::col_guess()
+    )
+  ) %>%
+    dplyr::mutate(
+      auth_chain = as.character(auth_chain)
+    )
+}
+
+
+# ============================================================
+# Function: Read ChimeraX residue contacts
+# ============================================================
+
+read_chimerax_contacts <- function(
+    pdb_id,
+    base_dir = human_complexes_dir
+) {
+
+  contact_file <- file.path(
+    base_dir,
+    "atom_contacts",
+    paste0(pdb_id, "_residue_contacts_5A.txt")
+  )
+
+  contact_lines <- readLines(contact_file)
+
+  contact_lines <- contact_lines[
+    grepl("^\\s*/", contact_lines)
+  ]
+
+  contacts <- utils::read.table(
+    text = contact_lines,
+    header = FALSE,
+    stringsAsFactors = FALSE,
+    fill = TRUE
+  )
+
+  names(contacts) <- c(
+    "chain_1",
+    "residue_1",
+    "position_1",
+    "chain_2",
+    "residue_2",
+    "position_2",
+    "distance"
+  )
+
+  contacts %>%
+    dplyr::mutate(
+      chain_1 = stringr::str_remove(
+        chain_1,
+        "^/"
+      ),
+
+      chain_2 = stringr::str_remove(
+        chain_2,
+        "^/"
+      ),
+
+      chain_1 = as.character(chain_1),
+      chain_2 = as.character(chain_2),
+
+      position_1 = as.integer(position_1),
+      position_2 = as.integer(position_2),
+
+      distance = as.numeric(distance),
+
+      pdb_id = pdb_id
+    ) %>%
+    dplyr::filter(
+      chain_1 != chain_2
+    )
+}
+
+
+# ============================================================
+# Process human protein complexes
+# ============================================================
+
+process_complex <- function(
+  complex_name,
+  pdb_id
+) {
+  
+  message(
+    "Processing ",
+    complex_name,
+    " (",
+    pdb_id,
+    ")"
+  )
+  
+  # ==========================================================
+  # Load inputs
+  # ==========================================================
+  
+  rsa <- read_freesasa_rsa(
+    pdb_id
+  )
+  
+  mapping <- read_chain_mapping(
+    pdb_id
+  )
+  
+  contacts <- read_chimerax_contacts(
+    pdb_id
+  )
+  
+  
+  # ==========================================================
+  # Keep polymer mapping only
+  #
+  # Ligands can share auth_chain IDs with proteins,
+  # so they must not enter chain-based joins.
+  # ==========================================================
+  
+  mapping_polymer <- mapping %>%
+    filter(
+      component_type %in%
+        c(
+          "protein",
+          "DNA",
+          "RNA",
+          "DNA/RNA"
+        )
+    )
+  
+  
+  # ==========================================================
+  # Check for duplicated auth-chain mappings
+  # ==========================================================
+  
+  duplicated_mapping <- mapping_polymer %>%
+    count(
+      auth_chain
+    ) %>%
+    filter(
+      n > 1
+    )
+  
+  if (nrow(duplicated_mapping) > 0) {
+    
+    message(
+      "Warning: ",
+      pdb_id,
+      " has duplicated polymer auth_chain IDs."
+    )
+    
+  }
+  
+  
+  # ==========================================================
+  # Build master protein-residue table from FreeSASA
+  # ==========================================================
+  
+  protein_residues <- rsa %>%
+    left_join(
+      mapping_polymer,
+      by = c(
+        "chain" = "auth_chain"
+      )
+    ) %>%
+    filter(
+      component_type == "protein"
+    ) %>%
+    transmute(
+      complex = complex_name,
+      pdb_id = pdb_id,
+      chain,
+      label_chain,
+      entity_id,
+      protein = entity_description,
+      residue_number,
+      residue_name,
+      ASA_total,
+      RSA_total
+    )
+  
+  
+  # ==========================================================
+  # Annotate both sides of contact table
+  # ==========================================================
+  
+  contacts_annotated <- contacts %>%
+    
+    left_join(
+      mapping_polymer %>%
+        select(
+          auth_chain,
+          component_type,
+          entity_description
+        ),
+      by = c(
+        "chain_1" = "auth_chain"
+      )
+    ) %>%
+    
+    rename(
+      component_type_1 =
+        component_type,
+      
+      component_1 =
+        entity_description
+    ) %>%
+    
+    left_join(
+      mapping_polymer %>%
+        select(
+          auth_chain,
+          component_type,
+          entity_description
+        ),
+      by = c(
+        "chain_2" = "auth_chain"
+      )
+    ) %>%
+    
+    rename(
+      component_type_2 =
+        component_type,
+      
+      component_2 =
+        entity_description
+    )
+  
+  
+  # ==========================================================
+  # Keep macromolecular contacts
+  # ==========================================================
+  
+  contacts_biological <-
+    contacts_annotated %>%
+    
+    filter(
+      component_type_1 %in%
+        c(
+          "protein",
+          "DNA",
+          "RNA",
+          "DNA/RNA"
+        ),
+      
+      component_type_2 %in%
+        c(
+          "protein",
+          "DNA",
+          "RNA",
+          "DNA/RNA"
+        )
+    )
+  
+  
+  # ==========================================================
+  # Put protein contacts from both sides into long format
+  # ==========================================================
+  
+  interface_side_1 <-
+    contacts_biological %>%
+    
+    filter(
+      component_type_1 == "protein"
+    ) %>%
+    
+    transmute(
+      chain = chain_1,
+      residue_number = position_1,
+      residue_name = residue_1,
+      partner_chain = chain_2,
+      partner_component_type =
+        component_type_2,
+      partner_component =
+        component_2,
+      distance
+    )
+  
+  
+  interface_side_2 <-
+    contacts_biological %>%
+    
+    filter(
+      component_type_2 == "protein"
+    ) %>%
+    
+    transmute(
+      chain = chain_2,
+      residue_number = position_2,
+      residue_name = residue_2,
+      partner_chain = chain_1,
+      partner_component_type =
+        component_type_1,
+      partner_component =
+        component_1,
+      distance
+    )
+  
+  
+  interface_contacts_long <-
+    bind_rows(
+      interface_side_1,
+      interface_side_2
+    )
+  
+  
+  # ==========================================================
+  # Collapse to one row per protein residue
+  # ==========================================================
+  
+  interface_residue_summary <-
+    interface_contacts_long %>%
+    
+    group_by(
+      chain,
+      residue_number,
+      residue_name
+    ) %>%
+    
+    summarise(
+      
+      has_contact = TRUE,
+      
+      min_contact_distance =
+        min(
+          distance,
+          na.rm = TRUE
+        ),
+      
+      n_contact_pairs = n(),
+      
+      n_partner_chains =
+        n_distinct(
+          partner_chain
+        ),
+      
+      has_protein_contact =
+        any(
+          partner_component_type ==
+            "protein"
+        ),
+      
+      has_DNA_contact =
+        any(
+          partner_component_type %in%
+            c(
+              "DNA",
+              "DNA/RNA"
+            )
+        ),
+      
+      has_RNA_contact =
+        any(
+          partner_component_type %in%
+            c(
+              "RNA",
+              "DNA/RNA"
+            )
+        ),
+      
+      .groups = "drop"
+    )
+  
+  
+  # ==========================================================
+  # Merge RSA and interface information
+  # ==========================================================
+  
+  residue_classes <-
+    protein_residues %>%
+    
+    left_join(
+      interface_residue_summary,
+      by = c(
+        "chain",
+        "residue_number",
+        "residue_name"
+      )
+    ) %>%
+    
+    mutate(
+      
+      has_contact =
+        replace_na(
+          has_contact,
+          FALSE
+        ),
+      
+      n_contact_pairs =
+        replace_na(
+          n_contact_pairs,
+          0L
+        ),
+      
+      n_partner_chains =
+        replace_na(
+          n_partner_chains,
+          0L
+        ),
+      
+      has_protein_contact =
+        replace_na(
+          has_protein_contact,
+          FALSE
+        ),
+      
+      has_DNA_contact =
+        replace_na(
+          has_DNA_contact,
+          FALSE
+        ),
+      
+      has_RNA_contact =
+        replace_na(
+          has_RNA_contact,
+          FALSE
+        )
+    )
+  
+  
+  # ==========================================================
+  # Final structural classification
+  # ==========================================================
+  
+  residue_classes <-
+    residue_classes %>%
+    
+    mutate(
+      
+      structural_class =
+        case_when(
+          
+          has_contact ~
+            "Interface",
+          
+          RSA_total <= 25 ~
+            "Core",
+          
+          RSA_total > 25 ~
+            "Non-interface Surface",
+          
+          TRUE ~
+            NA_character_
+        ),
+      
+      
+      interface_type =
+        case_when(
+          
+          has_protein_contact &
+            has_DNA_contact &
+            has_RNA_contact ~
+            "Protein + DNA + RNA",
+          
+          has_protein_contact &
+            has_DNA_contact ~
+            "Protein + DNA",
+          
+          has_protein_contact &
+            has_RNA_contact ~
+            "Protein + RNA",
+          
+          has_DNA_contact &
+            has_RNA_contact ~
+            "DNA + RNA",
+          
+          has_protein_contact ~
+            "Protein",
+          
+          has_DNA_contact ~
+            "DNA",
+          
+          has_RNA_contact ~
+            "RNA",
+          
+          TRUE ~
+            NA_character_
+        ),
+      
+      
+      # Keeps identical copies distinguishable
+      protein_copy =
+        paste0(
+          protein,
+          "__chain_",
+          chain
+        )
+    )
+  
+  
+  # ==========================================================
+  # QC
+  # ==========================================================
+  
+  unmatched_interfaces <-
+    anti_join(
+      interface_residue_summary,
+      protein_residues,
+      by = c(
+        "chain",
+        "residue_number",
+        "residue_name"
+      )
+    )
+  
+  
+  qc <- tibble(
+    complex = complex_name,
+    pdb_id = pdb_id,
+    n_protein_residues =
+      nrow(
+        protein_residues
+      ),
+    n_interface_residues =
+      sum(
+        residue_classes$has_contact
+      ),
+    n_unclassified =
+      sum(
+        is.na(
+          residue_classes$structural_class
+        )
+      ),
+    n_unmatched_interface_residues =
+      nrow(
+        unmatched_interfaces
+      )
+  )
+  
+  
+  list(
+    residues =
+      residue_classes,
+    
+    contacts =
+      contacts_biological,
+    
+    interface_contacts_long =
+      interface_contacts_long,
+    
+    unmatched_interfaces =
+      unmatched_interfaces,
+    
+    qc =
+      qc
+  )
+}
+
+
+
+
+```
+
+
+
+## Process structural data
+```{r}
+# Run all complexes
+complex_results <- purrr::map2(
+  complexes$complex,
+  complexes$pdb_id,
+  process_complex
+)
+
+names(complex_results) <-
+  complexes$pdb_id
+
+names(complex_results)
+# [1] "7PFO" "6QZP" "8I0T" "6MSD"
+
+
+# Combine all residue-level datasets
+human_complex_residues <-
+  complex_results %>%
+  purrr::map(
+    "residues"
+  ) %>%
+  bind_rows()
+
+human_complex_residues %>%
+  count(
+    complex
+  )
+
+# # A tibble: 4 × 2
+#   complex         n
+#   <chr>       <int>
+# 1 proteasome  13526
+# 2 replisome    8415
+# 3 ribosome    11711
+# 4 spliceosome 17084
+
+
+# Combine QC results
+complex_qc <-
+  complex_results %>%
+  purrr::map(
+    "qc"
+  ) %>%
+  bind_rows()
+
+complex_qc
+# # A tibble: 4 × 6
+#   complex     pdb_id n_protein_residues n_interface_residues n_unclassified n_unmatched_interface_residues
+#   <chr>       <chr>               <int>                <int>          <int>                          <int>
+# 1 replisome   7PFO                 8415                 3128              0                              0
+# 2 ribosome    6QZP                11711                 6620              0                              2
+# 3 spliceosome 8I0T                17084                 4042              0                              1
+# 4 proteasome  6MSD                13526                 4525              0                              0
+
+
+# ============================================================
+# Examine unmatched residues in FreeSASA
+# ============================================================
+
+check_unmatched_residues <- function(pdb_id) {
+
+  rsa <- read_freesasa_rsa(pdb_id)
+
+  unmatched <-
+    complex_results[[pdb_id]]$unmatched_interfaces
+
+  unmatched %>%
+    dplyr::left_join(
+      rsa %>%
+        dplyr::select(
+          chain,
+          residue_number,
+          rsa_residue_name = residue_name,
+          RSA_total
+        ),
+      by = c(
+        "chain",
+        "residue_number"
+      )
+    )
+}
+
+check_unmatched_residues("6QZP")
+check_unmatched_residues("8I0T")
+
+# The mismatch originated from how FreeSASA and ChimeraX represent modified residues.
+
+
+# ============================================================
+# Per-complex structural proportions
+# ============================================================
+
+complex_structural_summary <-
+  human_complex_residues %>%
+  
+  count(
+    complex,
+    pdb_id,
+    structural_class,
+    name = "n_residues"
+  ) %>%
+  
+  group_by(
+    complex,
+    pdb_id
+  ) %>%
+  
+  mutate(
+    total_residues =
+      sum(
+        n_residues
+      ),
+    
+    proportion =
+      n_residues /
+      total_residues,
+    
+    percentage =
+      proportion *
+      100
+  ) %>%
+  
+  ungroup()
+
+
+
+
+# Colors are always the same
+structural_colors <- c(
+  "Core" = "#A6B5C6",
+  "Interface" = "#A9C6B0",
+  "Non-interface Surface" = "#C5BFA0"
+)
+
+
+# Prepare the complex proportions 
+complex_structural_summary <- complex_structural_summary %>%
+  mutate(
+    structural_class = factor(
+      structural_class,
+      levels = c(
+        "Core",
+        "Interface",
+        "Non-interface Surface"
+      )
+    ),
+    complex_label = case_when(
+      complex == "replisome" ~ "Replisome (7PFO)",
+      complex == "ribosome" ~ "Ribosome (6QZP)",
+      complex == "spliceosome" ~ "Spliceosome (8I0T)",
+      complex == "proteasome" ~ "Proteasome (6MSD)",
+      TRUE ~ paste0(complex, " (", pdb_id, ")")
+    )
+  )
+
+average_structural_summary <- complex_structural_summary %>%
+  group_by(structural_class) %>%
+  summarise(
+    percentage = mean(percentage),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    complex_label = "Average"
+  )
+
+sum(average_structural_summary$percentage)
+
+plot_structural_summary <- bind_rows(
+  complex_structural_summary %>%
+    select(
+      complex_label,
+      structural_class,
+      percentage
+    ),
+  
+  average_structural_summary %>%
+    select(
+      complex_label,
+      structural_class,
+      percentage
+    )
+)
+
+
+# Generate the five donuts
+p_replisome <- plot_structural_donut(
+  plot_structural_summary %>%
+    filter(
+      complex_label == "Replisome (7PFO)"
+    ),
+  title = "Replisome (7PFO)"
+)
+
+p_ribosome <- plot_structural_donut(
+  plot_structural_summary %>%
+    filter(
+      complex_label == "Ribosome (6QZP)"
+    ),
+  title = "Ribosome (6QZP)"
+)
+
+p_spliceosome <- plot_structural_donut(
+  plot_structural_summary %>%
+    filter(
+      complex_label == "Spliceosome (8I0T)"
+    ),
+  title = "Spliceosome (8I0T)"
+)
+
+p_proteasome <- plot_structural_donut(
+  plot_structural_summary %>%
+    filter(
+      complex_label == "Proteasome (6MSD)"
+    ),
+  title = "Proteasome (6MSD)"
+)
+
+p_average <- plot_structural_donut(
+  plot_structural_summary %>%
+    filter(
+      complex_label == "Average"
+    ),
+  title = "Average"
+)
+# Add one shared legend
+p_average <- p_average +
+  theme(
+    legend.position = "right"
+  )
+
+plot_complex_structural_composition <-
+  (p_replisome | p_ribosome | p_spliceosome | p_proteasome | p_average | plot_spacer())
+
+plot_complex_structural_composition
+
+# Saving
+#ggplot2::ggsave(
+  #plot_complex_structural_composition, 
+  #filename = "./plots/plot_complex_structural_composition.pdf", 
+  #width = 10, 
+  #height = 3
+  #)
+
+
+
+
+# Function to plot dunot proportion plots
+library(tidyverse)
+library(scales)
+library(patchwork)
+
+plot_structural_donut <- function(
+    df,
+    title,
+    palette = structural_colors
+) {
+  
+  df_plot <- df %>%
+    mutate(
+      structural_class = factor(
+        structural_class,
+        levels = c(
+          "Core",
+          "Interface",
+          "Non-interface Surface"
+        )
+      ),
+      proportion = percentage / 100,
+      label = percent(
+        proportion,
+        accuracy = 0.1
+      )
+    ) %>%
+    arrange(structural_class)
+  
+  ggplot(
+    df_plot,
+    aes(
+      x = 2,
+      y = proportion,
+      fill = structural_class
+    )
+  ) +
+    geom_col(
+      color = "white",
+      linewidth = 0.8,
+      width = 0.9
+    ) +
+    
+    coord_polar(
+      theta = "y"
+    ) +
+    
+    xlim(
+      0.6,
+      2.5
+    ) +
+    
+    geom_text(
+      aes(label = label),
+      position = position_stack(
+        vjust = 0.5
+      ),
+      size = 4
+    ) +
+    
+    scale_fill_manual(
+      values = palette,
+      drop = FALSE
+    ) +
+    
+    labs(
+      title = title,
+      fill = NULL
+    ) +
+    
+    theme_void() +
+    
+    theme(
+      plot.title = element_text(
+        hjust = 0.5,
+        face = "bold",
+        size = 12
+      ),
+      legend.position = "none"
+    )
+}
+
+
+plot_structural_donut <- function(
+    df,
+    title,
+    total_residues = NULL,
+    palette = structural_colors
+) {
+  
+  df_plot <- df %>%
+    mutate(
+      structural_class = factor(
+        structural_class,
+        levels = c(
+          "Core",
+          "Interface",
+          "Non-interface Surface"
+        )
+      ),
+      proportion = percentage / 100,
+      label = percent(
+        proportion,
+        accuracy = 0.1
+      )
+    )
+  
+  p <- ggplot(
+    df_plot,
+    aes(
+      x = 2,
+      y = proportion,
+      fill = structural_class
+    )
+  ) +
+    geom_col(
+      color = "white",
+      linewidth = 0.8,
+      width = 0.9
+    ) +
+    coord_polar(theta = "y") +
+    xlim(0.6, 2.5) +
+    geom_text(
+      aes(label = label),
+      position = position_stack(vjust = 0.5),
+      size = 4
+    ) +
+    scale_fill_manual(
+      values = palette,
+      drop = FALSE
+    ) +
+    labs(
+      title = title,
+      fill = NULL
+    ) +
+    theme_void() +
+    theme(
+      plot.title = element_text(
+        hjust = 0.5,
+        face = "bold",
+        size = 12
+      ),
+      legend.position = "none"
+    )
+  
+  if (!is.null(total_residues)) {
+    
+    p <- p +
+      annotate(
+        "text",
+        x = 0,
+        y = 0,
+        label = paste0(
+          "n = ",
+          scales::comma(total_residues)
+        ),
+        size = 3.8
+      )
+  }
+  
+  p
+}
+
+
+
+
+```
+
+
+
+## Save checkpoints
+```{r}
+save.image(
+  file = "./codes_Github_final/run_Supplementary_Data.RData",
+  compress = "xz"
+)
+
+
+```
+
+
+

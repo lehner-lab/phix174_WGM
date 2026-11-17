@@ -1,0 +1,2189 @@
+---
+title: "AF3 confidence, interfaces, and model evaluation"
+output: html_document
+date: "2026-11-14"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Data S5: Supplementary File 5 Evaluation of AlphaFold 3 predictions.xlsx
+```{r}
+# ============================================================
+# Data S5: Evaluation of AlphaFold 3 predictions
+# ============================================================
+
+# 1. Load required packages
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(ggplot2)
+
+
+# 2. Define supplementary data file
+file_path <- paste0(
+  "./codes_Github_final/Supplementary_Data/",
+  "Supplementary File 5 Evaluation of AlphaFold 3 predictions.xlsx"
+)
+
+stopifnot(file.exists(file_path))
+
+
+# 3. Load all worksheets
+sheet_names <- readxl::excel_sheets(file_path)
+
+data_s5 <- purrr::map(
+  sheet_names,
+  ~ readxl::read_excel(
+    file_path,
+    sheet = .x,
+    guess_max = 10000
+  )
+)
+
+names(data_s5) <- sheet_names
+
+
+# 4. Inspect datasets
+names(data_s5)
+
+purrr::map(data_s5, dim)
+
+purrr::map(data_s5, names)
+
+purrr::map(data_s5, head)
+
+
+
+# ============================================================
+# Extract Data S5 datasets
+# ============================================================
+
+phix_AF3_model_confidence <-
+  data_s5[["AF3_model_confidence"]]
+
+phix_AF3_model_components <-
+  data_s5[["AF3_model_components"]]
+
+phix_AF3_RMSD_analysis <-
+  data_s5[["AF3_RMSD_analysis"]]
+
+phix_AF3_residue_contacts <-
+  data_s5[["AF3_residue_contacts"]]
+
+phix_AF3_A_DNA_mut_eval <-
+  data_s5[["AF3_A_DNA_mut_eval"]]
+
+phix_AF3_A_C_mut_eval <-
+  data_s5[["AF3_A_C_mut_eval"]]
+
+phix_AF3_A_DNA_selected_enrichment <-
+  data_s5[["AF3_A_DNA_selected_enrichment"]]
+
+phix_AF3_A_C_model_selection <-
+  data_s5[["AF3_A_C_model_selection"]]
+
+
+# Inspect confidence and RMSD columns first
+names(phix_AF3_model_confidence)
+names(phix_AF3_RMSD_analysis)
+
+dplyr::glimpse(phix_AF3_model_confidence)
+dplyr::glimpse(phix_AF3_RMSD_analysis)
+
+
+
+```
+
+
+
+## Main analyses
+Fig. 5E, G; Fig. S5A, C; Fig. S6A, D, E, F, G, H;
+
+### 1) A-DNA interactions (Fig. 5E; Fig. S5A, C)
+```{r}
+# ============================================================
+# Load functions
+# ============================================================
+
+# Function to parse model names at both model and hypothesis levels 
+# 1) parsing model names in column 'group'
+parse_model_group <- function(df, group_col = "group") {
+  
+  library(dplyr)
+  library(stringr)
+  
+  df %>%
+    mutate(
+      hypothesis = str_remove(.data[[group_col]],
+                              "_seed[0-9]+_model_[0-9]+$"),
+      
+      seed = as.integer(str_extract(.data[[group_col]],
+                                    "(?<=_seed)[0-9]+")),
+      
+      model = as.integer(str_extract(.data[[group_col]],
+                                     "(?<=_model_)[0-9]+")),
+      
+      system = str_extract(hypothesis, "^[^_]+"),
+      rest   = str_remove(hypothesis, "^[^_]+_"),
+      
+      nt = str_extract(rest, "[0-9]+nt"),
+      nt_numeric = as.integer(str_remove(nt, "nt"))
+    ) %>%
+    
+    mutate(
+      dna_type = case_when(
+        str_detect(rest, "^noDNA") ~ "noDNA",
+        !is.na(nt) ~ str_remove(rest, paste0("_?", nt, ".*$")),
+        TRUE ~ NA_character_
+      ),
+      
+      modifier = case_when(
+        str_detect(rest, "^noDNA") ~ str_remove(rest, "^noDNA_?"),
+        !is.na(nt) ~ str_remove(rest, paste0(".*", nt, "_?")),
+        TRUE ~ NA_character_
+      ),
+      
+      modifier = na_if(modifier, "")
+    ) %>%
+    
+    mutate(
+      modifier_plot = case_when(
+        is.na(modifier) ~ "DNA-only",
+        modifier == "2rep" ~ "+ 2Rep",
+        modifier == "gpc" ~ "+ C",
+        modifier == "2rep_gpc" ~ "+ 2Rep + C",
+        TRUE ~ modifier
+      ),
+      
+      system_short = case_when(
+        system == "gpa" ~ "A",
+        system == "gpc" ~ "C",
+        TRUE ~ system
+      ),
+      
+      hypothesis_short = ifelse(
+        is.na(modifier),
+        paste0(system_short, "-", dna_type),
+        paste0(system_short, "-", dna_type, "-", modifier)
+      ),
+      
+      group_short = paste0(
+        hypothesis_short,
+        "-s", seed,
+        "-m", model
+      )
+    ) %>%
+    
+    select(-rest)
+}
+
+# 2) function to get interaction information from the column names of computational scores
+parse_confidence_feature <- function(df) {
+  
+  genes <- c("A", "C", "DNA", "MG", "rep")
+  
+  df %>%
+    mutate(
+      parts = strsplit(feature, "_"),
+      n = lengths(parts),
+      
+      last = sapply(parts, function(x) x[length(x)]),
+      second_last = sapply(parts, function(x) {
+        if (length(x) >= 2) x[length(x)-1] else NA_character_
+      }),
+      
+      is_pair  = last %in% genes & second_last %in% genes,
+      is_chain = last %in% genes & !is_pair,
+      
+      interaction = ifelse(
+        is_pair,
+        paste(second_last, last, sep = "-"),
+        NA_character_
+      ),
+      
+      gene = ifelse(
+        is_chain,
+        last,
+        NA_character_
+      ),
+      
+      metric = case_when(
+        is_pair  ~ sapply(parts, function(x) paste(x[1:(length(x)-2)], collapse = "_")),
+        is_chain ~ sapply(parts, function(x) paste(x[1:(length(x)-1)], collapse = "_")),
+        TRUE ~ feature
+      ),
+      
+      level = case_when(
+        is_pair  ~ "pair",
+        is_chain ~ "chain",
+        TRUE ~ "other"
+      )
+    ) %>%
+    select(-parts, -n, -last, -second_last, -is_pair, -is_chain)
+}
+
+
+# Function to annotate A-C interaction predictions
+add_hypothesis_short_plot <- function(
+  df,
+  hypothesis_col = "hypothesis_short",
+  new_col = "hypothesis_short_plot"
+) {
+  
+  df %>%
+    dplyr::mutate(
+      !!new_col := dplyr::case_when(
+        .data[[hypothesis_col]] == "A-noDNA-gpc" ~ "A-C",
+        .data[[hypothesis_col]] == "A-ssDNA-gpc" ~ "A-C-DNA",
+        .data[[hypothesis_col]] == "A-ssDNA-2rep_gpc" ~ "A-C-DNA-Rep",
+        TRUE ~ .data[[hypothesis_col]]
+      )
+    )
+}
+
+# Function to plot violin plots
+plot_confidence_violin <- function(
+  data,
+  x_col = "interaction",
+  y_col = "value",
+  x_order = NULL,
+  x_lab = NULL,
+  y_lab = NULL,
+  plot_title = NULL,
+  y_limits = NULL,
+  facet_col = NULL,
+  facet_scales = "fixed",
+  add_thresholds = FALSE,
+  threshold_lines = NULL,
+  fill_color = "steelblue"
+) {
+  
+  library(ggplot2)
+  library(dplyr)
+  
+  plot_df <- data %>%
+    filter(
+      !is.na(.data[[y_col]]),
+      is.finite(.data[[y_col]])
+    )
+  
+  # Optional custom x-axis order
+  if (!is.null(x_order)) {
+    plot_df <- plot_df %>%
+      mutate(
+        !!x_col := factor(.data[[x_col]], levels = x_order)
+      ) %>%
+      filter(!is.na(.data[[x_col]]))
+  }
+  
+  p <- ggplot(
+    plot_df,
+    aes(
+      x = .data[[x_col]],
+      y = .data[[y_col]]
+    )
+  ) +
+    #geom_violin(trim = FALSE, fill = fill_color, alpha = 0.6) +
+    geom_violin(trim = FALSE, scale = "width", fill = fill_color, alpha = 0.6) +
+    geom_boxplot(width = 0.1, outlier.shape = NA) +
+    theme_classic() +
+    labs(
+      x = x_lab,
+      y = y_lab,
+      title = plot_title
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+  # Optional y limits
+  if (!is.null(y_limits)) {
+    p <- p + coord_cartesian(ylim = y_limits)
+  }
+  
+  # Optional facet
+  if (!is.null(facet_col)) {
+    p <- p +
+      facet_wrap(
+        as.formula(paste("~", facet_col)),
+        scales = facet_scales
+      )
+  }
+  
+  # Optional thresholds
+  if (add_thresholds && !is.null(threshold_lines)) {
+    for (thr in threshold_lines) {
+      p <- p +
+        geom_hline(
+          yintercept = thr,
+          linetype = "dashed",
+          color = "black"
+        )
+    }
+  }
+  
+  return(p)
+}
+
+
+# ============================================================
+# AF3 computational confidence: Prepare data
+# ============================================================
+
+computational_confidence_table <-
+  phix_AF3_model_confidence
+
+names(computational_confidence_table)
+
+# 1. Transform confidence metrics to long format
+computational_confidence_long <-
+  computational_confidence_table %>%
+  tidyr::pivot_longer(
+    cols = -model_id,
+    names_to = "feature",
+    values_to = "value"
+  ) %>%
+  parse_model_group(group_col = "model_id") %>%
+  parse_confidence_feature() %>%
+  add_hypothesis_short_plot()
+
+
+# 2. Inspect transformed results
+computational_confidence_long %>%
+  dplyr::select(
+    model_id,
+    hypothesis_short_plot,
+    modifier,
+    feature,
+    interaction,
+    metric,
+    value
+  ) %>%
+  head(20)
+
+
+# 3. Inspect available models and confidence features
+sort(unique(computational_confidence_long$hypothesis_short_plot))
+
+sort(unique(computational_confidence_long$feature))
+
+table(
+  computational_confidence_long$modifier,
+  useNA = "ifany"
+)
+
+
+# ============================================================
+# AF3 violin plot: Computational confidence for A-DNA models
+# ============================================================
+
+# 1. Select A-DNA models and confidence metrics
+AF3_confidence_plot_data <-
+  computational_confidence_long %>%
+  dplyr::filter(
+    is.na(modifier),
+    feature %in% c(
+      "ipTM_A_DNA",
+      "pTM_A"
+    )
+  )
+
+
+# 2. Generate violin plot
+violin_AF3_confidence <- plot_confidence_violin(
+  data = AF3_confidence_plot_data,
+
+  x_col = "hypothesis_short_plot",
+  y_col = "value",
+
+  x_lab = "Models",
+  y_lab = "Scores",
+
+  plot_title = NULL,
+
+  add_thresholds = TRUE,
+  threshold_lines = c(0.8),
+
+  facet_col = "feature",
+
+  fill_color = "steelblue"
+)
+
+print(violin_AF3_confidence)
+
+
+# 3. Save plot
+#ggplot2::ggsave(
+  #filename = "./plots/violin_AF3_confidence.pdf",
+  #plot = violin_AF3_confidence,
+  #width = 7,
+  #height = 3.5
+#)
+
+
+
+# ============================================================
+# Data S5: A-DNA mutational enrichment
+# ============================================================
+
+AF3_A_DNA_mut_eval <-
+  data_s5[["AF3_A_DNA_mut_eval"]]
+
+# Prepare model labels
+AF3_A_DNA_plot_data <-
+  AF3_A_DNA_mut_eval %>%
+  dplyr::mutate(
+    system_short = dplyr::case_when(
+      system == "gpa" ~ "A",
+      system == "gpc" ~ "C",
+      TRUE ~ system
+    ),
+
+    hypothesis_short = dplyr::if_else(
+      is.na(modifier) | modifier == "",
+      paste0(system_short, "-", dna_type),
+      paste0(system_short, "-", dna_type, "-", modifier)
+    )
+  ) %>%
+  dplyr::filter(
+    hypothesis_short %in% c("A-dsDNA", "A-ssDNA")
+  )
+
+# Inspect available models
+AF3_A_DNA_plot_data %>%
+  dplyr::count(hypothesis_short)
+
+# Check enrichment statistics
+AF3_A_DNA_plot_data %>%
+  dplyr::select(
+    model_id,
+    hypothesis_short,
+    odds_ratio_strongly_detrimental,
+    p_value_adj_BH_strongly_detrimental,
+    odds_ratio_detrimental,
+    p_value_adj_BH_detrimental
+  ) %>%
+  head()
+
+
+# ============================================================
+# Dot plot: A-DNA interface enrichment
+# Strongly detrimental mutations
+# ============================================================
+
+# Function to make dot plots showing enrichment
+# Function for plotting dots  
+plot_model_score_dots <- function(
+  df,
+  x_col = "hypothesis_short",
+  y_col,
+  p_col = NULL,
+  or_col = NULL,
+  model_col = "group",
+  p_cutoff = 0.05,
+  or_cutoff = 1,
+  highlight_significant = TRUE,
+  threshold_value = NULL,
+  threshold_label = NULL,
+  add_threshold_line = TRUE,
+  count_above_threshold = FALSE,
+  add_median = TRUE,
+  add_n_label = TRUE,
+  y_lab = NULL,
+  x_lab = NULL,
+  plot_title = NULL,
+  y_limits = NULL,
+  y_break_by = NULL,
+  jitter_width = 0.15,
+  point_size = 1.6
+) {
+  library(dplyr)
+  library(ggplot2)
+  
+  # ---- safety checks ----
+  required_cols <- c(x_col, y_col, model_col)
+  
+  if (!is.null(p_col)) {
+    required_cols <- c(required_cols, p_col)
+  }
+  
+  if (!is.null(or_col)) {
+    required_cols <- c(required_cols, or_col)
+  }
+  
+  missing_cols <- setdiff(required_cols, names(df))
+  
+  if (length(missing_cols) > 0) {
+    stop(
+      "These columns are missing from df: ",
+      paste(missing_cols, collapse = ", ")
+    )
+  }
+  
+  # ---- prepare plotting dataframe ----
+  plot_df <- df %>%
+    mutate(
+      plot_x = .data[[x_col]],
+      plot_y = as.numeric(.data[[y_col]]),
+      model_id = .data[[model_col]]
+    ) %>%
+    filter(
+      !is.na(plot_x),
+      !is.na(plot_y),
+      is.finite(plot_y)
+    )
+  
+  # ---- add p-value column if provided ----
+  if (!is.null(p_col)) {
+    plot_df <- plot_df %>%
+      mutate(plot_p = as.numeric(.data[[p_col]]))
+  } else {
+    plot_df <- plot_df %>%
+      mutate(plot_p = NA_real_)
+  }
+  
+  # ---- add OR column if provided ----
+  if (!is.null(or_col)) {
+    plot_df <- plot_df %>%
+      mutate(plot_or = as.numeric(.data[[or_col]]))
+  } else {
+    plot_df <- plot_df %>%
+      mutate(plot_or = NA_real_)
+  }
+  
+  # ---- define significance ----
+  if (!is.null(p_col) && !is.null(or_col)) {
+    plot_df <- plot_df %>%
+      mutate(
+        is_significant = !is.na(plot_p) &
+          !is.na(plot_or) &
+          plot_p <= p_cutoff &
+          plot_or > or_cutoff
+      )
+  } else if (!is.null(p_col)) {
+    plot_df <- plot_df %>%
+      mutate(
+        is_significant = !is.na(plot_p) &
+          plot_p <= p_cutoff
+      )
+  } else {
+    plot_df <- plot_df %>%
+      mutate(is_significant = FALSE)
+  }
+  
+  # ---- threshold counting ----
+  plot_df <- plot_df %>%
+    mutate(
+      above_threshold = if (!is.null(threshold_value)) {
+        plot_y > threshold_value
+      } else {
+        FALSE
+      }
+    )
+  
+  # ---- labels ----
+  n_label_df <- plot_df %>%
+    group_by(plot_x) %>%
+    summarise(
+      n_models = n_distinct(model_id),
+      n_significant = sum(is_significant, na.rm = TRUE),
+      n_above_threshold = sum(above_threshold, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      n_label = case_when(
+        highlight_significant && !is.null(p_col) &&
+          count_above_threshold && !is.null(threshold_value) ~
+          paste0("n=", n_models, "; sig=", n_significant, "; >thr=", n_above_threshold),
+        
+        highlight_significant && !is.null(p_col) ~
+          paste0("n=", n_models, "; sig=", n_significant),
+        
+        count_above_threshold && !is.null(threshold_value) ~
+          paste0("n=", n_models, "; >thr=", n_above_threshold),
+        
+        TRUE ~ paste0("n=", n_models)
+      )
+    )
+  
+  # ---- y limits ----
+  if (is.null(y_limits)) {
+    y_min <- min(plot_df$plot_y, na.rm = TRUE)
+    y_max <- max(plot_df$plot_y, na.rm = TRUE)
+    
+    if (!is.null(threshold_value)) {
+      y_min <- min(y_min, threshold_value, na.rm = TRUE)
+      y_max <- max(y_max, threshold_value, na.rm = TRUE)
+    }
+    
+    y_range <- y_max - y_min
+    
+    if (y_range == 0) {
+      y_range <- 0.1
+    }
+    
+    y_limits <- c(
+      y_min,
+      y_max + 0.12 * y_range
+    )
+  }
+  
+  n_label_df <- n_label_df %>%
+    mutate(y_pos = y_limits[2])
+  
+  # ---- plot ----
+  p <- ggplot(
+    plot_df,
+    aes(
+      x = plot_x,
+      y = plot_y
+    )
+  )
+  
+  if (add_threshold_line && !is.null(threshold_value)) {
+    p <- p +
+      geom_hline(
+        yintercept = threshold_value,
+        linetype = "dashed",
+        color = "red",
+        linewidth = 0.45
+      )
+  }
+  
+  if (add_median) {
+    p <- p +
+      stat_summary(
+        fun = median,
+        geom = "crossbar",
+        width = 0.45,
+        color = "red",
+        linewidth = 0.35,
+        linetype = "solid"
+      )
+  }
+  
+  if (highlight_significant && !is.null(p_col)) {
+    p <- p +
+      geom_jitter(
+        data = plot_df %>% filter(!is_significant),
+        width = jitter_width,
+        height = 0,
+        size = point_size,
+        alpha = 0.5,
+        color = "grey50"
+      ) +
+      geom_jitter(
+        data = plot_df %>% filter(is_significant),
+        width = jitter_width,
+        height = 0,
+        size = point_size + 0.5,
+        alpha = 0.95,
+        color = "red"
+      )
+  } else {
+    p <- p +
+      geom_jitter(
+        width = jitter_width,
+        height = 0,
+        size = point_size,
+        alpha = 0.75,
+        color = "black"
+      )
+  }
+  
+  if (!is.null(threshold_label) && !is.null(threshold_value)) {
+    p <- p +
+      annotate(
+        "text",
+        x = Inf,
+        y = threshold_value,
+        label = threshold_label,
+        hjust = 1.05,
+        vjust = -0.4,
+        size = 3,
+        color = "red"
+      )
+  }
+  
+  if (add_n_label) {
+    p <- p +
+      geom_text(
+        data = n_label_df,
+        aes(
+          x = plot_x,
+          y = y_pos,
+          label = n_label
+        ),
+        inherit.aes = FALSE,
+        size = 3,
+        angle = 0,
+        hjust = 0.5
+      )
+  }
+  
+  if (!is.null(y_break_by)) {
+    p <- p +
+      scale_y_continuous(
+        breaks = seq(
+          floor(y_limits[1] / y_break_by) * y_break_by,
+          ceiling(y_limits[2] / y_break_by) * y_break_by,
+          by = y_break_by
+        )
+      )
+  }
+  
+  p <- p +
+    coord_cartesian(
+      ylim = y_limits,
+      clip = "off"
+    ) +
+    theme_classic() +
+    labs(
+      x = x_lab,
+      y = y_lab,
+      title = plot_title
+    ) +
+    theme(
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        vjust = 1
+      ),
+      plot.margin = margin(t = 15, r = 10, b = 10, l = 10)
+    )
+  
+  return(p)
+}
+
+
+dot_DMS_enrichment_A_DNA <- plot_model_score_dots(
+  df = AF3_A_DNA_plot_data,
+
+  x_col = "hypothesis_short",
+  model_col = "model_id",
+
+  y_col = "odds_ratio_strongly_detrimental",
+  or_col = "odds_ratio_strongly_detrimental",
+
+  p_col = "p_value_adj_BH_strongly_detrimental",
+  p_cutoff = 0.05,
+
+  x_lab = "Model",
+  y_lab = "Enrichment",
+
+  highlight_significant = TRUE,
+
+  plot_title = NULL,
+
+  y_limits = c(0, 6),
+
+  threshold_value = 1,
+  threshold_label = "OR = 1"
+)
+
+print(dot_DMS_enrichment_A_DNA)
+
+# Save figure
+#ggplot2::ggsave(
+  #filename = "./plots/dot_DMS_enrichment_A_DNA.pdf",
+  #plot = dot_DMS_enrichment_A_DNA,
+  #width = 3,
+  #height = 2.5
+#)
+
+
+
+# ============================================================
+# Data S5: Selected A-DNA interface enrichment
+# ============================================================
+
+# Function to plot forest showing OR for AF3 predictions
+plot_forest_AF3 <- function(
+  data,
+  label_col,
+  est_col,
+  low_col,
+  high_col,
+  p_col = NULL,
+  facet_col = NULL,
+  title = "Forest plot",
+  ref_line = 1,
+  star_y = 1.0,
+  facet_scales = "free_x",
+  facet_nrow = NULL,
+  facet_ncol = 1,
+  flip_axes = TRUE,
+
+  # Ordering
+  label_col_order = NULL,
+  facet_col_order = NULL,
+
+  # Numeric labels
+  show_value_labels = TRUE,
+  label_size = 3.3,
+  label_vjust = -0.6
+) {
+
+  library(ggplot2)
+  library(dplyr)
+
+  # ============================================================
+  # Prepare data
+  # ============================================================
+
+  df <- data %>%
+    mutate(
+      label = .data[[label_col]],
+      est   = .data[[est_col]],
+      low   = .data[[low_col]],
+      high  = .data[[high_col]],
+
+      pval =
+        if (!is.null(p_col)) {
+          .data[[p_col]]
+        } else {
+          NA_real_
+        },
+
+      facet =
+        if (!is.null(facet_col)) {
+          .data[[facet_col]]
+        } else {
+          "All"
+        }
+    ) %>%
+    filter(
+      is.finite(est),
+      is.finite(low),
+      is.finite(high)
+    )
+
+
+  # ============================================================
+  # Label ordering
+  # ============================================================
+
+  if (!is.null(label_col_order)) {
+
+    df <- df %>%
+      mutate(
+        label = factor(
+          label,
+          levels = label_col_order
+        )
+      )
+  }
+
+
+  # ============================================================
+  # Facet ordering
+  # ============================================================
+
+  if (!is.null(facet_col_order)) {
+
+    df <- df %>%
+      mutate(
+        facet = factor(
+          facet,
+          levels = facet_col_order
+        )
+      )
+  }
+
+
+  # ============================================================
+  # Significance stars
+  # ============================================================
+
+  if (!is.null(p_col)) {
+
+    df <- df %>%
+      mutate(
+        signif_label = case_when(
+          is.na(pval)   ~ "",
+          pval <= 0.001 ~ "***",
+          pval <= 0.01  ~ "**",
+          pval <= 0.05  ~ "*",
+          TRUE          ~ ""
+        )
+      )
+
+  } else {
+
+    df <- df %>%
+      mutate(
+        signif_label = ""
+      )
+  }
+
+
+  # ============================================================
+  # Base mappings
+  # ============================================================
+
+  if (flip_axes) {
+
+    p <- ggplot(
+      df,
+      aes(
+        x = label,
+        y = est
+      )
+    )
+
+    err_aes <-
+      aes(
+        ymin = low,
+        ymax = high
+      )
+
+    star_aes <-
+      aes(
+        y = star_y,
+        x = label,
+        label = signif_label
+      )
+
+    val_label_aes <-
+      aes(
+        label = round(est, 2),
+        y = est,
+        x = label
+      )
+
+  } else {
+
+    p <- ggplot(
+      df,
+      aes(
+        y = label,
+        x = est
+      )
+    )
+
+    err_aes <-
+      aes(
+        xmin = low,
+        xmax = high
+      )
+
+    star_aes <-
+      aes(
+        x = star_y,
+        y = label,
+        label = signif_label
+      )
+
+    val_label_aes <-
+      aes(
+        label = round(est, 2),
+        x = est,
+        y = label
+      )
+  }
+
+
+  # ============================================================
+  # Reference line
+  # ============================================================
+
+  if (flip_axes) {
+
+    p <- p +
+      geom_hline(
+        yintercept = ref_line,
+        linetype = "dashed",
+        color = "gray60"
+      )
+
+  } else {
+
+    p <- p +
+      geom_vline(
+        xintercept = ref_line,
+        linetype = "dashed",
+        color = "gray60"
+      )
+  }
+
+
+  # ============================================================
+  # Confidence intervals
+  # ============================================================
+
+  if (flip_axes) {
+
+    p <- p +
+      geom_errorbar(
+        err_aes,
+        width = 0,
+        color = "black"
+      )
+
+  } else {
+
+    p <- p +
+      geom_errorbar(
+        err_aes,
+        width = 0,
+        color = "black",
+        orientation = "y"
+      )
+  }
+
+
+  # ============================================================
+  # Points + basic theme
+  # ============================================================
+
+  p <- p +
+
+    geom_point(
+      size = 2.5,
+      color = "black"
+    ) +
+
+    theme_classic() +
+
+    labs(
+      x =
+        if (flip_axes) {
+          NULL
+        } else {
+          "Odds ratio"
+        },
+
+      y =
+        if (flip_axes) {
+          "Odds ratio"
+        } else {
+          NULL
+        },
+
+      title = title
+    ) +
+
+    theme(
+
+      axis.text.x = element_text(
+        size = 9,
+        angle =
+          if (flip_axes) {
+            45
+          } else {
+            0
+          },
+        hjust =
+          if (flip_axes) {
+            1
+          } else {
+            0.5
+          }
+      ),
+
+      axis.text.y = element_text(
+        size = 9
+      ),
+
+      strip.background = element_blank(),
+
+      strip.text = element_text(
+        face = "bold",
+        size = 11
+      )
+    )
+
+
+  # ============================================================
+  # Numeric estimate labels
+  # ============================================================
+
+  if (show_value_labels) {
+
+    if (flip_axes) {
+
+      p <- p +
+        geom_text(
+          val_label_aes,
+          vjust = label_vjust,
+          size = label_size,
+          fontface = "plain"
+        )
+
+    } else {
+
+      p <- p +
+        geom_text(
+          val_label_aes,
+          hjust = -0.3,
+          size = label_size,
+          fontface = "plain"
+        )
+    }
+  }
+
+
+  # ============================================================
+  # Significance stars
+  # ============================================================
+
+  if (!is.null(p_col)) {
+
+    p <- p +
+      geom_text(
+        data = df,
+        star_aes,
+        hjust = 0.5,
+        size = 3.5,
+        fontface = "bold"
+      )
+  }
+
+
+  # ============================================================
+  # Facets
+  # ============================================================
+
+  if (!is.null(facet_col)) {
+
+    p <- p +
+      facet_wrap(
+        vars(facet),
+        scales = facet_scales,
+        nrow = facet_nrow,
+        ncol = facet_ncol,
+        drop = TRUE
+      )
+  }
+
+
+  return(p)
+}
+
+
+AF3_A_DNA_selected_enrichment <-
+  data_s5[["AF3_A_DNA_selected_enrichment"]]
+
+# Inspect dataset
+dim(AF3_A_DNA_selected_enrichment)
+names(AF3_A_DNA_selected_enrichment)
+head(AF3_A_DNA_selected_enrichment)
+
+AF3_A_DNA_selected_enrichment <- AF3_A_DNA_selected_enrichment %>%
+  dplyr::mutate(
+    interface_group_label = dplyr::case_when(
+      interface_group == "ssDNA-specific" ~ paste0("ssDNA-specific\n(n=", n_residues, ")"),
+      interface_group == "dsDNA-specific" ~ paste0("dsDNA-specific\n(n=", n_residues, ")"),
+      interface_group == "Shared" ~ paste0("Shared\n(n=", n_residues, ")"),
+      TRUE ~ interface_group
+    )
+  )
+
+table(AF3_A_DNA_selected_enrichment$interface_group_label)
+# dsDNA-specific\n(n=37)         Shared\n(n=44) ssDNA-specific\n(n=30) 
+#                      1                      1                      1 
+
+forest_plot_AF3_model_A <- plot_forest_AF3(
+  data = AF3_A_DNA_selected_enrichment,
+
+  #label_col = "interface_group",
+  label_col = "interface_group_label",
+  
+  est_col   = "odds_ratio",
+  low_col   = "conf_low",
+  high_col  = "conf_high",
+
+  # use raw p values, or switch to p_value_adj_BH if preferred
+  p_col = "p_value",
+
+  label_col_order = c(
+    "ssDNA-specific\n(n=30)",
+    "dsDNA-specific\n(n=37)",
+    "Shared\n(n=44)"
+  ),
+
+  title = "Enrichment of detrimental mutations\nin DNA interfaces",
+
+  ref_line = 1
+)
+
+print(forest_plot_AF3_model_A)
+
+#ggplot2::ggsave(
+  #filename = "./plots/forest_plot_AF3_model_A.pdf",
+  #plot = forest_plot_AF3_model_A,
+  #width = 2.5,
+  #height = 3
+#)
+
+
+
+```
+
+
+### 2) A-C interactions (Fig. 5G; Fig. S6A, D, E, F, G, H)
+```{r}
+# ============================================================
+# Data S5: AF3 A-C interface mutational evaluation
+# ============================================================
+
+phix_AF3_A_C_mut_eval <-
+  data_s5[["AF3_A_C_mut_eval"]]
+
+
+# Inspect dataset
+dim(phix_AF3_A_C_mut_eval)
+names(phix_AF3_A_C_mut_eval)
+head(phix_AF3_A_C_mut_eval)
+
+dplyr::glimpse(phix_AF3_A_C_mut_eval)
+
+# Inspect model hypotheses
+table(
+  phix_AF3_A_C_mut_eval$hypothesis,
+  useNA = "ifany"
+)
+#           gpa_noDNA_gpc gpa_ssDNA_30nt_2rep_gpc      gpa_ssDNA_30nt_gpc 
+#                      50                      49                      50 
+
+# Check unique model identifiers
+nrow(phix_AF3_A_C_mut_eval)
+# [1] 149
+
+dplyr::n_distinct(
+  phix_AF3_A_C_mut_eval$model_id
+)
+
+# Inspect key enrichment and confidence columns
+grep(
+  "odds_ratio|p_value|ipTM",
+  names(phix_AF3_A_C_mut_eval),
+  value = TRUE
+)
+
+
+
+# ============================================================
+# Prepare A-C interface enrichment results
+# ============================================================
+
+# 1. Check columns
+required_A_C_cols <- c(
+  "model_id",
+  "hypothesis",
+  "seed",
+  "model_index",
+  "ipTM_A_C",
+
+  "A_odds_ratio_detrimental",
+  "A_p_value_adj_BH_detrimental",
+  "C_odds_ratio_detrimental",
+  "C_p_value_adj_BH_detrimental",
+
+  "A_odds_ratio_strongly_detrimental",
+  "A_p_value_adj_BH_strongly_detrimental",
+  "C_odds_ratio_strongly_detrimental",
+  "C_p_value_adj_BH_strongly_detrimental"
+)
+
+stopifnot(
+  all(required_A_C_cols %in%
+        names(phix_AF3_A_C_mut_eval))
+)
+
+
+# 2. Select original AF3 model hypotheses
+A_C_plot_counts <-
+  phix_AF3_A_C_mut_eval %>%
+  dplyr::filter(
+    hypothesis %in% c(
+      "gpa_noDNA_gpc",
+      "gpa_ssDNA_30nt_gpc",
+      "gpa_ssDNA_30nt_2rep_gpc"
+    )
+  ) %>%
+  dplyr::mutate(
+
+    # Detrimental mutations
+    A_side_detrimental =
+      !is.na(A_p_value_adj_BH_detrimental) &
+      A_p_value_adj_BH_detrimental < 0.05 &
+      A_odds_ratio_detrimental > 1,
+
+    C_side_detrimental =
+      !is.na(C_p_value_adj_BH_detrimental) &
+      C_p_value_adj_BH_detrimental < 0.05 &
+      C_odds_ratio_detrimental > 1,
+
+    Both_detrimental =
+      A_side_detrimental & C_side_detrimental,
+
+
+    # Strongly detrimental mutations
+    A_side_strongly_detrimental =
+      !is.na(A_p_value_adj_BH_strongly_detrimental) &
+      A_p_value_adj_BH_strongly_detrimental < 0.05 &
+      A_odds_ratio_strongly_detrimental > 1,
+
+    C_side_strongly_detrimental =
+      !is.na(C_p_value_adj_BH_strongly_detrimental) &
+      C_p_value_adj_BH_strongly_detrimental < 0.05 &
+      C_odds_ratio_strongly_detrimental > 1,
+
+    Both_strongly_detrimental =
+      A_side_strongly_detrimental &
+      C_side_strongly_detrimental
+  )
+
+
+# Inspect counts
+A_C_plot_counts %>%
+  dplyr::summarise(
+    n_models = dplyr::n(),
+
+    A_detrimental = sum(A_side_detrimental),
+    C_detrimental = sum(C_side_detrimental),
+    Both_detrimental = sum(Both_detrimental),
+
+    A_strongly_detrimental =
+      sum(A_side_strongly_detrimental),
+
+    C_strongly_detrimental =
+      sum(C_side_strongly_detrimental),
+
+    Both_strongly_detrimental =
+      sum(Both_strongly_detrimental)
+  )
+# # A tibble: 1 × 7
+#   n_models A_detrimental C_detrimental Both_detrimental A_strongly_detrimental C_strongly_detrimental Both_strongly_detrimental
+#      <int>         <int>         <int>            <int>                  <int>                  <int>                     <int>
+# 1      149            27            32                7                     16                     33                         5
+
+
+
+# ============================================================
+# Function: Prepare A-C enrichment scatter data
+# ============================================================
+
+prepare_A_C_enrichment_plot <- function(
+    df,
+    mutation_category = "detrimental"
+) {
+
+  # Column names for selected mutation category
+  A_or_col <- paste0(
+    "A_odds_ratio_", mutation_category
+  )
+
+  C_or_col <- paste0(
+    "C_odds_ratio_", mutation_category
+  )
+
+  A_p_col <- paste0(
+    "A_p_value_adj_BH_", mutation_category
+  )
+
+  C_p_col <- paste0(
+    "C_p_value_adj_BH_", mutation_category
+  )
+
+
+  # Prepare model-level results
+  plot_df <- df %>%
+    dplyr::mutate(
+      A_or = .data[[A_or_col]],
+      C_or = .data[[C_or_col]],
+
+      A_p_adj = .data[[A_p_col]],
+      C_p_adj = .data[[C_p_col]],
+
+      A_enriched =
+        !is.na(A_p_adj) &
+        is.finite(A_or) &
+        A_p_adj < 0.05 &
+        A_or > 1,
+
+      C_enriched =
+        !is.na(C_p_adj) &
+        is.finite(C_or) &
+        C_p_adj < 0.05 &
+        C_or > 1,
+
+      enrichment_class = dplyr::case_when(
+        A_enriched & C_enriched ~ "Both A and C",
+        A_enriched & !C_enriched ~ "A only",
+        !A_enriched & C_enriched ~ "C only",
+        TRUE ~ "Not significantly enriched"
+      )
+    )
+
+
+  # Rank models enriched on both sides by ipTM
+  # Only both-enriched models receive a displayed rank
+  plot_df <- plot_df %>%
+    dplyr::arrange(
+      dplyr::desc(ipTM_A_C),
+      model_id
+    ) %>%
+    dplyr::mutate(
+      ipTM_rank_A_C = dplyr::if_else(
+        enrichment_class == "Both A and C",
+        cumsum(enrichment_class == "Both A and C"),
+        NA_integer_
+      )
+    )
+
+
+  return(plot_df)
+}
+
+
+# ============================================================
+# Prepare two categories
+# ============================================================
+
+# Detrimental
+A_C_scatter_detrimental <-
+  prepare_A_C_enrichment_plot(
+    df = A_C_plot_counts,
+    mutation_category = "detrimental"
+  )
+
+
+# Strongly detrimental
+A_C_scatter_strongly_detrimental <-
+  prepare_A_C_enrichment_plot(
+    df = A_C_plot_counts,
+    mutation_category = "strongly_detrimental"
+  )
+
+
+# Inspect enrichment groups
+table(
+  A_C_scatter_detrimental$enrichment_class
+)
+#                     A only               Both A and C                     C only Not significantly enriched 
+#                         20                          7                         25                         97 
+
+table(
+  A_C_scatter_strongly_detrimental$enrichment_class
+)
+#                     A only               Both A and C                     C only Not significantly enriched 
+#                         11                          5                         28                        105 
+
+
+# ============================================================
+# Function: A-C interface enrichment scatter plot
+# ============================================================
+
+plot_A_C_enrichment_scatter <- function(
+    plot_df,
+    plot_title = NULL
+) {
+
+  # Keep finite OR values
+  plot_df <- plot_df %>%
+    dplyr::filter(
+      is.finite(A_or),
+      is.finite(C_or)
+    )
+
+  # Define common axis limits
+  max_or <- ceiling(
+    max(
+      c(plot_df$A_or, plot_df$C_or),
+      na.rm = TRUE
+    )
+  )
+
+  max_or <- max(1, max_or)
+  axis_breaks <- seq(0, max_or, by = 1)
+
+
+  ggplot2::ggplot(
+    plot_df,
+    ggplot2::aes(
+      x = A_or,
+      y = C_or
+    )
+  ) +
+
+    # OR = 1 reference lines
+    ggplot2::geom_vline(
+      xintercept = 1,
+      linetype = "dashed",
+      linewidth = 0.5,
+      color = "grey40"
+    ) +
+
+    ggplot2::geom_hline(
+      yintercept = 1,
+      linetype = "dashed",
+      linewidth = 0.5,
+      color = "grey40"
+    ) +
+
+    # Models not enriched on both sides
+    ggplot2::geom_point(
+      data = plot_df %>%
+        dplyr::filter(
+          enrichment_class != "Both A and C"
+        ),
+      ggplot2::aes(
+        color = enrichment_class,
+        alpha = enrichment_class
+      ),
+      size = 2.7
+    ) +
+
+    # Models enriched on both sides
+    ggplot2::geom_point(
+      data = plot_df %>%
+        dplyr::filter(
+          enrichment_class == "Both A and C"
+        ),
+      shape = 21,
+      size = 5,
+      stroke = 0.5,
+      fill = "black",
+      color = "black"
+    ) +
+
+    # ipTM ranks
+    ggplot2::geom_text(
+      data = plot_df %>%
+        dplyr::filter(
+          enrichment_class == "Both A and C"
+        ),
+      ggplot2::aes(
+        label = ipTM_rank_A_C
+      ),
+      color = "white",
+      fontface = "bold",
+      size = 3
+    ) +
+
+    # Original category colors
+    ggplot2::scale_color_manual(
+      values = c(
+        "Not significantly enriched" = "grey60",
+        "A only" = "#1bb7af",
+        "C only" = "#f5a7c9"
+      )
+    ) +
+
+    ggplot2::scale_alpha_manual(
+      values = c(
+        "Not significantly enriched" = 0.5,
+        "A only" = 0.75,
+        "C only" = 0.75
+      ),
+      guide = "none"
+    ) +
+
+    ggplot2::scale_x_continuous(
+      breaks = axis_breaks,
+      expand = c(0, 0)
+    ) +
+
+    ggplot2::scale_y_continuous(
+      breaks = axis_breaks,
+      expand = c(0, 0)
+    ) +
+
+    ggplot2::coord_equal(
+      xlim = c(-0.3, max_or),
+      ylim = c(-0.3, max_or)
+    ) +
+
+    ggplot2::labs(
+      x = "A-C interface",
+      y = "C-A interface",
+      title = plot_title,
+      color = NULL
+    ) +
+
+    ggplot2::theme_classic() +
+
+    ggplot2::theme(
+      legend.position = "bottom"
+    )
+}
+
+
+
+# ============================================================
+# Scatter plot 1: Detrimental mutations (Fig. S6F)
+# ============================================================
+
+plot_A_C_enrichment_detrimental <-
+  plot_A_C_enrichment_scatter(
+    plot_df = A_C_scatter_detrimental
+  )
+
+print(plot_A_C_enrichment_detrimental)
+
+
+# ============================================================
+# Scatter plot 2: Strongly detrimental mutations (Fig. 5G)
+# ============================================================
+
+plot_A_C_enrichment_strongly_detrimental <-
+  plot_A_C_enrichment_scatter(
+    plot_df = A_C_scatter_strongly_detrimental
+  )
+
+print(plot_A_C_enrichment_strongly_detrimental)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/plot_A_C_enrichment_detrimental.pdf",
+  #plot = plot_A_C_enrichment_detrimental,
+  #width = 4,
+  #height = 3.5
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/plot_A_C_enrichment_strongly_detrimental.pdf",
+  #plot = plot_A_C_enrichment_strongly_detrimental,
+  #width = 4,
+  #height = 3.5
+#)
+
+
+
+# ============================================================
+# Summarise number of selected A-C models
+# ============================================================
+
+A_C_enrichment_counts_plot_df <-
+  tibble::tibble(
+    test = c(
+      "Detrimental",
+      "Detrimental",
+      "Detrimental",
+      "Strongly detrimental",
+      "Strongly detrimental",
+      "Strongly detrimental"
+    ),
+
+    side = rep(
+      c("A-side", "C-side", "Both"),
+      times = 2
+    ),
+
+    n_models = c(
+      sum(
+        A_C_scatter_detrimental$A_enriched,
+        na.rm = TRUE
+      ),
+      sum(
+        A_C_scatter_detrimental$C_enriched,
+        na.rm = TRUE
+      ),
+      sum(
+        A_C_scatter_detrimental$enrichment_class ==
+          "Both A and C"
+      ),
+
+      sum(
+        A_C_scatter_strongly_detrimental$A_enriched,
+        na.rm = TRUE
+      ),
+      sum(
+        A_C_scatter_strongly_detrimental$C_enriched,
+        na.rm = TRUE
+      ),
+      sum(
+        A_C_scatter_strongly_detrimental$enrichment_class ==
+          "Both A and C"
+      )
+    )
+  ) %>%
+  dplyr::mutate(
+    test = factor(
+      test,
+      levels = c(
+        "Detrimental",
+        "Strongly detrimental"
+      )
+    ),
+
+    side = factor(
+      side,
+      levels = c(
+        "A-side",
+        "C-side",
+        "Both"
+      )
+    )
+  )
+
+print(A_C_enrichment_counts_plot_df)
+# # A tibble: 6 × 3
+#   test                 side   n_models
+#   <fct>                <fct>     <int>
+# 1 Detrimental          A-side       27
+# 2 Detrimental          C-side       32
+# 3 Detrimental          Both          7
+# 4 Strongly detrimental A-side       16
+# 5 Strongly detrimental C-side       33
+# 6 Strongly detrimental Both          5
+
+
+# ============================================================
+# Bar plot: Number of AF3 models selected (Fig. S6G)
+# ============================================================
+
+mutation_category_colors <- c(
+  "Detrimental" = "#F4A6A6",
+  "Strongly detrimental" = "#F0988C"
+)
+
+
+plot_A_C_enrichment_counts <-
+  ggplot2::ggplot(
+    A_C_enrichment_counts_plot_df,
+    ggplot2::aes(
+      x = side,
+      y = n_models,
+      fill = test
+    )
+  ) +
+
+  ggplot2::geom_col(
+    position = ggplot2::position_dodge(
+      width = 0.75
+    ),
+    width = 0.65
+  ) +
+
+  ggplot2::geom_text(
+    ggplot2::aes(
+      label = n_models
+    ),
+    position = ggplot2::position_dodge(
+      width = 0.75
+    ),
+    vjust = -0.3,
+    size = 3.5
+  ) +
+
+  ggplot2::scale_fill_manual(
+    values = mutation_category_colors
+  ) +
+
+  ggplot2::scale_y_continuous(
+    expand = ggplot2::expansion(
+      mult = c(0, 0.1)
+    )
+  ) +
+
+  ggplot2::labs(
+    x = NULL,
+    y = "Number of models",
+    fill = "Mutation category"
+  ) +
+
+  ggplot2::theme_classic() +
+
+  ggplot2::theme(
+    legend.position = "top"
+  )
+
+print(plot_A_C_enrichment_counts)
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/plot_A_C_enrichment_counts.pdf",
+  #plot = plot_A_C_enrichment_counts,
+  #width = 4,
+  #height = 3
+#)
+
+
+# ============================================================
+# Select AF3 models with joint A-C enrichment
+# ============================================================
+
+A_C_selected_models <-
+  A_C_plot_counts %>%
+  dplyr::mutate(
+    selected_detrimental =
+      dplyr::coalesce(Both_detrimental, FALSE),
+
+    selected_strongly_detrimental =
+      dplyr::coalesce(
+        Both_strongly_detrimental,
+        FALSE
+      )
+  ) %>%
+  dplyr::filter(
+    selected_detrimental |
+    selected_strongly_detrimental
+  ) %>%
+  dplyr::mutate(
+    selection_group = dplyr::case_when(
+      selected_detrimental &
+        selected_strongly_detrimental ~
+        "Both tests",
+
+      selected_detrimental ~
+        "Detrimental only",
+
+      selected_strongly_detrimental ~
+        "Strongly detrimental only"
+    )
+  ) %>%
+  dplyr::arrange(
+    dplyr::desc(ipTM_A_C),
+    model_id
+  ) %>%
+  dplyr::mutate(
+    ipTM_rank = dplyr::row_number(),
+
+    highest_ranked =
+      model_id ==
+      "gpa_ssDNA_30nt_2rep_gpc_seed8_model_3"
+  )
+
+
+# Inspect selected models
+A_C_selected_models %>%
+  dplyr::select(
+    model_id,
+    hypothesis,
+    seed,
+    model_index,
+    ipTM_A_C,
+    ipTM_rank,
+    selection_group,
+    highest_ranked
+  )
+
+
+# ============================================================
+# Prepare A-C model-selection heatmap
+# ============================================================
+
+A_C_selected_models_plot_df <-
+  A_C_selected_models %>%
+  dplyr::mutate(
+    # Include hypothesis to distinguish models
+    # with the same seed/index across hypotheses
+    model_label = paste0(
+      hypothesis,
+      "\nseed",
+      seed,
+      "_model_",
+      model_index
+    ),
+
+    model_label = dplyr::if_else(
+      highest_ranked,
+      paste0(
+        model_label,
+        " (top-ranked)"
+      ),
+      model_label
+    ),
+
+    model_label = factor(
+      model_label,
+      
+      #levels = unique(model_label)
+      levels = rev(unique(model_label))
+    )
+  ) %>%
+  dplyr::select(
+    model_id,
+    model_label,
+    ipTM_A_C,
+    highest_ranked,
+    selected_detrimental,
+    selected_strongly_detrimental
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(
+      selected_detrimental,
+      selected_strongly_detrimental
+    ),
+    names_to = "test",
+    values_to = "selected"
+  ) %>%
+  dplyr::mutate(
+    test = dplyr::recode(
+      test,
+      selected_detrimental = "Detrimental",
+      selected_strongly_detrimental =
+        "Strongly detrimental"
+    ),
+
+    test = factor(
+      test,
+      levels = c(
+        "Detrimental",
+        "Strongly detrimental"
+      )
+    ),
+
+    selection_class = dplyr::case_when(
+      !selected ~ "Not selected",
+      test == "Detrimental" ~ "Detrimental",
+      test == "Strongly detrimental" ~
+        "Strongly detrimental"
+    )
+  )
+
+
+# Original color palette
+selection_colors <- c(
+  "Not selected" = "grey92",
+  "Detrimental" = "#F4A6A6",
+  "Strongly detrimental" = "#F0988C"
+)
+
+
+
+# ============================================================
+# Heatmap: AF3 A-C model selection (Fig. S6H)
+# ============================================================
+
+plot_A_C_selected_models <-
+  ggplot2::ggplot(
+    A_C_selected_models_plot_df,
+    ggplot2::aes(
+      x = model_label,
+      y = test,
+      fill = selection_class
+    )
+  ) +
+
+  ggplot2::geom_tile(
+    color = "black",
+    linewidth = 0.25,
+    width = 0.90,
+    height = 0.85
+  ) +
+
+  ggplot2::scale_fill_manual(
+    values = selection_colors,
+    breaks = c(
+      "Detrimental",
+      "Strongly detrimental"
+    )
+  ) +
+
+  ggplot2::labs(
+    x = NULL,
+    y = NULL,
+    fill = "Selected by"
+  ) +
+
+  ggplot2::theme_classic(
+    base_size = 12
+  ) +
+
+  ggplot2::theme(
+    axis.line = ggplot2::element_blank(),
+    axis.ticks = ggplot2::element_blank(),
+
+    axis.text.x = ggplot2::element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1,
+      face = "italic"
+    ),
+
+    axis.text.y = ggplot2::element_text(
+      face = "plain"
+    ),
+
+    legend.position = "top"
+  )
+
+print(plot_A_C_selected_models)
+
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/plot_A_C_selected_models.pdf",
+  #plot = plot_A_C_selected_models,
+  #width = 6,
+  #height = 2.5
+#)
+
+
+# Number of models by hypothesis
+A_C_plot_counts %>%
+  dplyr::count(hypothesis)
+
+# Check highlighted model
+A_C_selected_models %>%
+  dplyr::filter(highest_ranked) %>%
+  dplyr::select(
+    model_id,
+    ipTM_A_C,
+    ipTM_rank,
+    selection_group
+  )
+# # A tibble: 1 × 4
+#   model_id                              ipTM_A_C ipTM_rank selection_group
+#   <chr>                                    <dbl>     <int> <chr>          
+# 1 gpa_ssDNA_30nt_2rep_gpc_seed8_model_3     0.27         1 Both tests     
+
+
+
+# ============================================================
+# AF3 violin plot: Computational confidence for A-C models
+# ============================================================
+
+# 1. Select A-C models and confidence metrics
+AF3_confidence_plot_data <-
+  computational_confidence_long %>%
+  dplyr::filter(
+    modifier %in% c("gpc", "2rep_gpc"),
+    feature %in% c(
+      "ipTM_A_C",
+      "pTM_A",
+      "pTM_C"
+    )
+  )
+
+
+# 2. Generate violin plot
+violin_AF3_confidence <- plot_confidence_violin(
+  data = AF3_confidence_plot_data,
+
+  x_col = "hypothesis_short_plot",
+  y_col = "value",
+
+  x_lab = "Models",
+  y_lab = "Scores",
+
+  plot_title = NULL,
+
+  add_thresholds = TRUE,
+  threshold_lines = c(0.8),
+
+  facet_col = "feature",
+
+  fill_color = "steelblue"
+)
+
+print(violin_AF3_confidence)
+
+# 3. Save plot
+#ggplot2::ggsave(
+  #filename = "./plots/violin_AF3_confidence.pdf",
+  #plot = violin_AF3_confidence,
+  #width = 7,
+  #height = 3.5
+#)
+
+
+# ============================================================
+# AF3 RMSD data
+# ============================================================
+
+#rmsd_table <- data_s5[["AF3_RMSD_analysis"]]
+rmsd_table <- phix_AF3_RMSD_analysis
+
+rmsd_long <- rmsd_table %>%
+  dplyr::mutate(
+    system_short = dplyr::case_when(
+      system == "gpa" ~ "A",
+      system == "gpc" ~ "C",
+      TRUE ~ system
+    ),
+
+    hypothesis_short = dplyr::if_else(
+      is.na(modifier) | modifier == "",
+      paste0(system_short, "-", dna_type),
+      paste0(system_short, "-", dna_type, "-", modifier)
+    )
+  ) %>%
+  add_hypothesis_short_plot(
+    hypothesis_col = "hypothesis_short"
+  )
+
+# Check reconstructed model categories
+table(rmsd_long$hypothesis_short_plot)
+#         A-C     A-C-DNA A-C-DNA-Rep     A-dsDNA     A-ssDNA 
+#          50          50          50          50          49 
+
+# Inspect RMSD data
+rmsd_long %>%
+  dplyr::select(
+    hypothesis,
+    seed,
+    model_index,
+    hypothesis_short_plot,
+    all_atom_rmsd_to_reference
+  ) %>%
+  head()
+
+
+# ============================================================
+# Violin plot: AF3 structural RMSD
+# ============================================================
+
+violin_AF3_RMSD <- plot_confidence_violin(
+  data = rmsd_long,
+
+  x_col = "hypothesis_short_plot",
+  y_col = "all_atom_rmsd_to_reference",
+
+  x_lab = "Model",
+  y_lab = "RMSD",
+
+  x_order = c(
+    "A-ssDNA",
+    "A-dsDNA",
+    "A-C",
+    "A-C-DNA",
+    "A-C-DNA-Rep"
+  ),
+
+  plot_title = "Computational confidence for A-C models",
+
+  add_thresholds = FALSE,
+
+  fill_color = "black"
+)
+
+print(violin_AF3_RMSD)
+
+# Save
+#ggplot2::ggsave(
+  #filename = "./plots/violin_AF3_RMSD.pdf",
+  #plot = violin_AF3_RMSD,
+  #width = 6,
+  #height = 3.5
+#)
+
+
+
+
+
+```
+
+
+
+## Save checkpoints
+```{r}
+save.image(
+  file = "./codes_Github_final/run_Supplementary_Data.RData",
+  compress = "xz"
+)
+
+
+```
+
+
+
+

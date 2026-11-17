@@ -1,0 +1,4269 @@
+---
+title: "Single-amino-acid mutational landscape"
+output: html_document
+date: "2026-11-13"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Data S3: Supplementary File 3 ΦX174 single-amino-acid proteomic variants dataset.xlsx
+```{r}
+
+# ============================================================
+# Data S3: ΦX174 single-amino-acid proteomic variants
+# ============================================================
+
+# 1. Load required packages
+library(readxl)
+library(dplyr)
+library(purrr)
+
+
+# 2. Define supplementary data file
+file_path <- paste0(
+  "./codes_Github_final/Supplementary_Data/",
+  "Supplementary File 3 ΦX174 single-amino-acid proteomic variants dataset.xlsx"
+)
+
+# Check file exists
+stopifnot(file.exists(file_path))
+
+
+# 3. Load all worksheets into a named list
+sheet_names <- readxl::excel_sheets(file_path)
+
+data_s3 <- purrr::map(
+  sheet_names,
+  ~ readxl::read_excel(
+    file_path,
+    sheet = .x,
+    guess_max = 10000
+  )
+)
+
+names(data_s3) <- sheet_names
+
+
+# 4. Inspect loaded datasets
+
+# Available worksheets
+names(data_s3)
+# [1] "WT_proteins"   "1aa_mutations" "1aa_residues" 
+
+# Dimensions of each worksheet
+purrr::map(data_s3, dim)
+
+# Column names of each worksheet
+purrr::map(data_s3, names)
+
+# Preview first rows
+purrr::map(data_s3, head)
+
+
+# 5. Extract individual datasets
+# Confirm exact worksheet names before running
+
+phix_wt_proteins <- data_s3[["WT_proteins"]]
+
+phix_1aa_mutations <- data_s3[["1aa_mutations"]]
+
+phix_1aa_residues <- data_s3[["1aa_residues"]]
+
+
+# 6. Check datasets
+
+dplyr::glimpse(phix_wt_proteins)
+
+dplyr::glimpse(phix_1aa_mutations)
+
+dplyr::glimpse(phix_1aa_residues)
+
+
+
+# ============================================================
+# Fix column types in Data S3 - 1aa_mutations
+# ============================================================
+
+# Get column names from the worksheet
+mutation_col_names <- names(
+  readxl::read_excel(
+    file_path,
+    sheet = "1aa_mutations",
+    n_max = 0
+  )
+)
+
+# Set default column types to automatic
+mutation_col_types <- rep(
+  "guess",
+  length(mutation_col_names)
+)
+
+# Force structural annotation columns to character
+character_cols <- c(
+  "monomer_structural_class_resolved",
+  "monomer_structural_class_predicted",
+  "residue_surface_class_resolved",
+  "residue_surface_class_predicted",
+  "residue_structural_group_resolved",
+  "residue_structural_group_predicted",
+  "residue_interaction_class",
+  "binder_genes",
+  "binder_classes",
+  "binder_complexes"
+)
+
+mutation_col_types[
+  mutation_col_names %in% character_cols
+] <- "text"
+
+
+# Reload the worksheet
+phix_1aa_mutations <- readxl::read_excel(
+  file_path,
+  sheet = "1aa_mutations",
+  col_types = mutation_col_types,
+  guess_max = 10000
+)
+
+# Update the named list
+data_s3[["1aa_mutations"]] <- phix_1aa_mutations
+
+
+# Verify corrected column types
+sapply(
+  phix_1aa_mutations[, character_cols],
+  class
+)
+
+# Check structural annotations
+table(
+  phix_1aa_mutations$monomer_structural_class_resolved,
+  useNA = "ifany"
+)
+#    Core Surface    <NA> 
+#    4247   17346   26543 
+
+table(
+  phix_1aa_mutations$residue_surface_class_resolved,
+  useNA = "ifany"
+)
+#             Interface Non-interface surface                  <NA> 
+#                 13407                  3939                 30790 
+
+
+
+```
+
+
+
+## Main analyses
+Fig. 2A, B, C; Fig. S2A, B, C; 
+Fig. 3A, B; Fig. S3A, B, D;
+Fig. 4A, B, C, D, E, F; Fig. S4A, B, C, H, I;
+
+### 1) Mutation categories, stacked bar plots and donut plots (Fig. 2A; Fig. 3A, B; Fig. S3A, B; Fig. 4B; Fig. S4H)
+```{r}
+# ============================================================
+# Data S3: Single-amino-acid mutation analyses
+# ============================================================
+
+# 1. Check mutation classes and ORF classifications
+
+table(phix_1aa_mutations$aa_mut_class, useNA = "ifany")
+#   Missense   Nonsense  Stop-loss Synonymous 
+#      44010       2319        219       1588 
+     
+table(phix_1aa_mutations$phix_aa_mut_orf_class, useNA = "ifany")
+#  multi_orf single_orf Synonymous 
+#      12426      34122       1588 
+     
+table(phix_1aa_mutations$aa_mut_gene, useNA = "ifany")
+#     A Astar     B     C     D     E     F     G     H     J     K 
+# 10605  7012  2417  1794  3097  1826  8958  3635  6833   817  1142 
+
+
+# 2. Single-ORF missense mutations, excluding A*
+# Used for downstream mechanistic analyses
+
+phix_proteome_dms_mut_missense_analysis <-
+  phix_1aa_mutations %>%
+  dplyr::filter(
+    phix_aa_mut_orf_class == "single_orf",
+    aa_mut_class == "Missense",
+    aa_mut_gene != "Astar"
+  )
+
+nrow(phix_proteome_dms_mut_missense_analysis)
+# [1] 28381
+
+
+# 3. All mutations excluding multi-ORF variants
+# Used for ridgeline distributions
+
+phix_proteome_dms_mut_single_orf <- phix_1aa_mutations %>%
+  dplyr::filter(
+    phix_aa_mut_orf_class != "multi_orf"
+  )
+
+nrow(phix_proteome_dms_mut_single_orf)
+# [1] 35710
+
+
+# ============================================================
+# Mutation categories by amino-acid mutation class
+# ============================================================
+
+# All amino-acid mutation classes
+# Includes classes such as Missense, Nonsense, etc.
+
+summary_proteome_all_mut_classes <-
+  generate_mutation_category_summary(
+    #df = phix_1aa_mutations,
+    #df = phix_1aa_mutations[phix_1aa_mutations$phix_aa_mut_orf_class != "multi_orf",],
+    df = phix_1aa_mutations[phix_1aa_mutations$phix_aa_mut_orf_class != "multi_orf" & phix_1aa_mutations$aa_mut_gene != "Astar",],
+    
+    class_col = "aa_mut_class",
+    
+    #category_col = "mutational_effect_category_1aa"
+    category_col = "mutational_effect_category_lethal_1aa"
+  )
+
+print(summary_proteome_all_mut_classes)
+# # A tibble: 10 × 5
+#    aa_mut_class mutational_effect_category_1aa count proportion percent
+#    <chr>        <chr>                          <int>      <dbl>   <dbl>
+#  1 Missense     Detrimental                    19910    0.702     70.2 
+#  2 Missense     Increased                        403    0.0142     1.42
+#  3 Missense     No effect                       8068    0.284     28.4 
+#  4 Nonsense     Detrimental                     1492    0.990     99   
+#  5 Nonsense     No effect                         15    0.00995    1   
+#  6 Stop-loss    Detrimental                       72    0.783     78.3 
+#  7 Stop-loss    No effect                         20    0.217     21.7 
+#  8 Synonymous   Detrimental                      116    0.0826     8.26
+#  9 Synonymous   Increased                         90    0.0641     6.41
+# 10 Synonymous   No effect                       1199    0.853     85.3 
+
+
+# Missense mutations (Single-amino-acid substitutions)
+summary_proteome_mut_advanced <-
+  generate_mutation_category_summary(
+    df = phix_proteome_dms_mut_missense_analysis,
+    
+    class_col = "aa_mut_class",
+    #class_col = "aa_mut_gene",
+    
+    category_col = "mutational_effect_category_1aa"
+  )
+
+print(summary_proteome_mut_advanced)
+# # A tibble: 3 × 5
+#   aa_mut_class mutational_effect_category_1aa count proportion percent
+#   <chr>        <chr>                          <int>      <dbl>   <dbl>
+# 1 Missense     Detrimental                    19910     0.702    70.2 
+# 2 Missense     Increased                        403     0.0142    1.42
+# 3 Missense     No effect                       8068     0.284    28.4 
+
+
+# ============================================================
+# Single-ORF missense mutations across proteins
+# ============================================================
+
+summary_proteome_mis_mut_advanced <-
+  generate_mutation_category_summary(
+    df = phix_proteome_dms_mut_missense_analysis,
+    class_col = "aa_mut_gene",
+    category_col = "mutational_effect_category_1aa"
+  )
+
+print(summary_proteome_mis_mut_advanced)
+
+
+# Four-category version, including strongly detrimental
+summary_proteome_mis_mut_lethal <-
+  generate_mutation_category_summary(
+    df = phix_proteome_dms_mut_missense_analysis,
+    class_col = "aa_mut_gene",
+    category_col = "mutational_effect_category_lethal_1aa"
+  )
+
+print(summary_proteome_mis_mut_lethal)
+
+
+# Check mutation counts for each protein
+phix_proteome_dms_mut_missense_analysis %>%
+  dplyr::count(aa_mut_gene)
+# # A tibble: 10 × 2
+#    aa_mut_gene     n
+#    <chr>       <int>
+#  1 A            7191
+#  2 B             229
+#  3 C            1114
+#  4 D            1292
+#  5 E             179
+#  6 F            8103
+#  7 G            3270
+#  8 H            6174
+#  9 J             713
+# 10 K             116
+
+
+
+# ============================================================
+# Stacked bar plot - amino-acid mutation classes
+# Reuse the bar_percent_stacked_genome() function from Data S2.
+# ============================================================
+
+replication_category_colors <- c(
+  "Increased" = "#A1A9D0",
+  "No effect" = "#D9D9D9",
+  "Detrimental" = "#F4A6A6",
+  "Strongly detrimental" = "#F0988C"
+)
+
+plot_proteome_mut_classes <- bar_percent_stacked_genome(
+  summary_df = summary_proteome_all_mut_classes,
+  class_col = "aa_mut_class",
+  category_col = "mutational_effect_category_lethal_1aa",
+  count_col = "count",
+  custom_colors = replication_category_colors,
+  x_order = c(
+    "Nonsense",
+    "Stop-loss",
+    "Missense",
+    "Synonymous"
+  ),
+  plot_title = "Mutational effects by amino-acid mutation class",
+  fill_legend_title = "Mutational effect",
+  show_segment_labels = FALSE
+)
+
+print(plot_proteome_mut_classes)
+
+
+# ============================================================
+# Stacked bar plot - single-ORF missense mutations
+# ============================================================
+
+# Original structural/nonstructural gene ordering
+#protein_order <- c(
+  #"B", "D", "F", "G", "H", "J",
+  #"A", "C", "E", "K"
+#)
+
+plot_proteome_missense <- bar_percent_stacked_genome(
+  summary_df = summary_proteome_mis_mut_lethal,
+  class_col = "aa_mut_gene",
+  category_col = "mutational_effect_category_lethal_1aa",
+  count_col = "count",
+  custom_colors = replication_category_colors,
+  #x_order = protein_order,
+  plot_title = "Single-ORF missense mutations across proteins",
+  fill_legend_title = "Mutational effect",
+  show_segment_labels = FALSE
+)
+
+print(plot_proteome_missense)
+
+
+# ============================================================
+# Export Data S3 figures
+# ============================================================
+
+#dir.create(
+  #"./plots",
+  #recursive = TRUE,
+  #showWarnings = FALSE
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/proteome_mutation_classes.pdf",
+  #plot = plot_proteome_mut_classes,
+  #width = 5,
+  #height = 3
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/proteome_missense_categories.pdf",
+  #plot = plot_proteome_missense,
+  #width = 6,
+  #height = 3
+#)
+
+
+
+# ============================================================
+# Interface mutation analysis
+# Input: Data S3 - 1aa_mutations
+# ============================================================
+
+# 1. Extract mutations at predicted interface residues
+
+phix_proteome_missense_interface <-
+  phix_proteome_dms_mut_missense_analysis %>%
+  dplyr::filter(
+    residue_structural_group_predicted == "Interface"
+  )
+
+
+# 2. Inspect interface classifications
+
+table(
+  phix_proteome_missense_interface$residue_interaction_class,
+  useNA = "ifany"
+)
+#  Multi-interaction Single-interaction 
+#               2124              10551 
+
+table(
+  phix_proteome_missense_interface$binder_genes,
+  useNA = "ifany"
+)
+
+
+# 3. Summarize mutation categories by interaction class
+
+summary_proteome_mis_mut_advanced_interface <-
+  generate_mutation_category_summary(
+    df = phix_proteome_missense_interface,
+    class_col = "residue_interaction_class",
+    category_col = "mutational_effect_category_1aa"
+  )
+
+print(summary_proteome_mis_mut_advanced_interface)
+# # A tibble: 6 × 5
+#   residue_interaction_class mutational_effect_category_1aa count proportion percent
+#   <chr>                     <chr>                          <int>      <dbl>   <dbl>
+# 1 Multi-interaction         Detrimental                     1869     0.880    88.0 
+# 2 Multi-interaction         Increased                         25     0.0118    1.18
+# 3 Multi-interaction         No effect                        230     0.108    10.8 
+# 4 Single-interaction        Detrimental                     7609     0.721    72.1 
+# 5 Single-interaction        Increased                        198     0.0188    1.88
+# 6 Single-interaction        No effect                       2744     0.260    26.0 
+
+
+# 4. Four-category version
+
+summary_proteome_mis_mut_interface_lethal <-
+  generate_mutation_category_summary(
+    df = phix_proteome_missense_interface,
+    class_col = "residue_interaction_class",
+    category_col = "mutational_effect_category_lethal_1aa"
+  )
+
+print(summary_proteome_mis_mut_interface_lethal)
+
+
+
+
+# ============================================================
+# Mutation effects at individual protein interfaces
+# ============================================================
+
+# 1. Create interface identifier before summarization
+
+phix_proteome_missense_interface <- 
+  phix_proteome_missense_interface %>%
+  dplyr::mutate(
+    interface = paste(
+      aa_mut_gene,
+      binder_genes,
+      sep = "-"
+    )
+  )
+
+
+# 2. Summarize by interface and interaction class
+
+summary_proteome_interface_by_partner <-
+  generate_mutation_category_summary(
+    df = phix_proteome_missense_interface,
+    class_col = c(
+      "aa_mut_gene",
+      "binder_genes",
+      "interface",
+      "residue_interaction_class"
+    ),
+    category_col = "mutational_effect_category_lethal_1aa"
+  )
+
+print(summary_proteome_interface_by_partner)
+
+
+# 3. Example: Restrict to single-interaction residues
+
+summary_proteome_single_interaction <-
+  generate_mutation_category_summary(
+    df = phix_proteome_missense_interface %>%
+      dplyr::filter(
+        residue_interaction_class == "Single-interaction"
+      ),
+    class_col = c(
+      "aa_mut_gene",
+      "binder_genes",
+      "interface"
+    ),
+    category_col = "mutational_effect_category_lethal_1aa"
+  )
+
+
+# 4. Example: Protein F, G interfaces (presented)
+
+summary_protein_F_G_interface <-
+  generate_mutation_category_summary(
+    df = phix_proteome_missense_interface %>%
+      dplyr::filter(
+        residue_interaction_class == "Single-interaction",
+        binder_genes != "DNA",
+        aa_mut_gene %in% c("F", "G")
+        #aa_mut_gene == "F"
+        
+      ),
+    class_col = c(
+      "interface",
+      "residue_interaction_class"
+    ),
+    category_col = "mutational_effect_category_lethal_1aa"
+  )
+
+
+
+# ============================================================
+# Stacked bar plots - protein interface mutations
+# ============================================================
+
+# 1. By interaction class
+
+plot_interface_interaction_class <-
+  bar_percent_stacked_genome(
+    summary_df = summary_proteome_mis_mut_interface_lethal,
+
+    class_col = "residue_interaction_class",
+
+    category_col = "mutational_effect_category_lethal_1aa",
+
+    count_col = "count",
+
+    custom_colors = replication_category_colors,
+
+    plot_title = "Mutation categories by interaction class",
+
+    fill_legend_title = "Mutational effect"
+  )
+
+print(plot_interface_interaction_class)
+
+
+# 2. By protein-binding partner interface
+
+plot_interface_by_partner <-
+  bar_percent_stacked_genome(
+    #summary_df = summary_proteome_interface_by_partner,
+    summary_df = summary_protein_F_G_interface,
+
+    class_col = "interface",
+
+    category_col = "mutational_effect_category_lethal_1aa",
+
+    count_col = "count",
+
+    custom_colors = replication_category_colors,
+
+    plot_title = "Mutation categories by protein interface",
+
+    fill_legend_title = "Mutational effect"
+  )
+
+print(plot_interface_by_partner)
+
+
+
+
+# ============================================================
+# Mechanistic classification of amino-acid mutations
+# Input: Data S3 - 1aa_mutations
+# ============================================================
+
+# 1.1 Mutation effects by predicted structural classification
+
+summary_proteome_mis_mut_structural <-
+  generate_mutation_category_summary(
+    df = phix_proteome_dms_mut_missense_analysis,
+    class_col = "residue_structural_group_predicted",
+    
+    #category_col = "mutational_effect_category_1aa"
+    category_col = "mutational_effect_category_lethal_1aa"
+  )
+
+print(summary_proteome_mis_mut_structural)
+# # A tibble: 12 × 5
+#    residue_structural_group_predicted mutational_effect_category_1aa count proportion percent
+#    <chr>                              <chr>                          <int>      <dbl>   <dbl>
+#  1 Core                               Detrimental                     5058    0.875     87.5 
+#  2 Core                               Increased                         10    0.00173    0.17
+#  3 Core                               No effect                        715    0.124     12.4 
+#  4 Interface                          Detrimental                     9478    0.748     74.8 
+#  5 Interface                          Increased                        223    0.0176     1.76
+#  6 Interface                          No effect                       2974    0.235     23.5 
+#  7 Non-interface surface              Detrimental                     2803    0.521     52.1 
+#  8 Non-interface surface              Increased                         83    0.0154     1.54
+#  9 Non-interface surface              No effect                       2498    0.464     46.4 
+# 10 Unknown structure                  Detrimental                     2571    0.566     56.6 
+# 11 Unknown structure                  Increased                         87    0.0192     1.92
+# 12 Unknown structure                  No effect                       1881    0.414     41.4 
+
+
+# 1.2 Mutation effects by wild-type amino acid
+
+#summary_proteome_mis_mut_wt <-
+  #generate_mutation_category_summary(
+    #df = phix_proteome_dms_mut_missense_analysis,
+    #class_col = "aa_mut_wt",
+    #category_col = "mutational_effect_category_1aa"
+  #)
+
+#print(summary_proteome_mis_mut_wt)
+
+
+
+# ============================================================
+# Stacked bar plot - mutation counts by structural class
+# ============================================================
+
+# Function to plot stacked bar plots by counts
+bar_count_stacked_proteome <- function(
+    summary_df,
+    class_col = Class,
+    category_col = Category,
+    count_col = count,
+    plot_title = "Mutation Count by Class",
+    fill_legend_title = "Mutation Category",
+    x_order = NULL,
+    facet_col = NULL,
+    stat_df = NULL,
+    stat_p_col = "p_value",
+    stat_format = c("p", "stars"),
+    stat_position = c("subtitle", "caption", "none"),
+    label_size = 3.5,
+    label_color = "black",
+    label_vjust = 0,
+    label_offset_frac = 0.03,
+    y_expand_frac = 0.15
+) {
+  
+  stat_format   <- match.arg(stat_format)
+  stat_position <- match.arg(stat_position)
+  
+  # ---- Symbols ----
+  class_sym    <- rlang::ensym(class_col)
+  category_sym <- rlang::ensym(category_col)
+  count_sym    <- rlang::ensym(count_col)
+  facet_sym    <- if (!is.null(facet_col)) rlang::ensym(facet_col) else NULL
+  
+  class_name    <- rlang::as_name(class_sym)
+  category_name <- rlang::as_name(category_sym)
+  count_name    <- rlang::as_name(count_sym)
+  
+  # ---- Grouping variables ----
+  grouping_vars <- if (is.null(facet_sym)) {
+    list(class_sym, category_sym)
+  } else {
+    list(facet_sym, class_sym, category_sym)
+  }
+  
+  group_class_vars <- if (is.null(facet_sym)) {
+    list(class_sym)
+  } else {
+    list(facet_sym, class_sym)
+  }
+  
+  # ---- Clean and aggregate ----
+  summary_df <- summary_df %>%
+    dplyr::filter(
+      !is.na(!!class_sym),
+      !is.na(!!category_sym)
+    ) %>%
+    dplyr::group_by(!!!grouping_vars) %>%
+    dplyr::summarise(
+      !!count_sym := sum(!!count_sym, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # ---- Category order ----
+  summary_df[[category_name]] <- factor(
+    summary_df[[category_name]],
+    #levels = c("Beneficial", "Neutral", "Detrimental", "Lethal"),
+    levels = c(
+      "Increased",
+      "No effect",
+      "Detrimental",
+      "Strongly detrimental"
+    ),
+    ordered = TRUE
+  )
+  
+  # ---- Total counts per bar ----
+  totals_df <- summary_df %>%
+    dplyr::group_by(!!!group_class_vars) %>%
+    dplyr::summarise(
+      total_count = sum(!!count_sym, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # ---- X-axis ordering ----
+  if (!is.null(x_order)) {
+    
+    summary_df <- summary_df %>%
+      dplyr::mutate(
+        !!class_sym := factor(.data[[class_name]], levels = x_order)
+      )
+    
+    totals_df <- totals_df %>%
+      dplyr::mutate(
+        !!class_sym := factor(.data[[class_name]], levels = x_order)
+      )
+    
+  } else if (is.null(facet_sym)) {
+    
+    class_order <- summary_df %>%
+      dplyr::group_by(!!class_sym) %>%
+      dplyr::summarise(
+        order_val = sum(
+          ifelse(
+            .data[[category_name]] %in% c("Detrimental", "Strongly detrimental"),
+            .data[[count_name]],
+            0
+          ),
+          na.rm = TRUE
+        ),
+        .groups = "drop"
+      ) %>%
+      dplyr::arrange(dplyr::desc(order_val)) %>%
+      dplyr::pull(!!class_sym)
+    
+    summary_df <- summary_df %>%
+      dplyr::mutate(
+        !!class_sym := factor(.data[[class_name]], levels = class_order)
+      )
+    
+    totals_df <- totals_df %>%
+      dplyr::mutate(
+        !!class_sym := factor(.data[[class_name]], levels = class_order)
+      )
+  }
+  
+  # ---- Y-axis label position ----
+  y_max <- max(totals_df$total_count, na.rm = TRUE)
+  
+  if (!is.finite(y_max) || y_max == 0) {
+    y_max <- 1
+  }
+  
+  totals_df <- totals_df %>%
+    dplyr::mutate(
+      label_y = total_count + label_offset_frac * y_max
+    )
+  
+  # ---- Base plot ----
+  p <- ggplot2::ggplot(
+    summary_df,
+    ggplot2::aes(
+      x = .data[[class_name]],
+      y = .data[[count_name]],
+      fill = .data[[category_name]]
+    )
+  ) +
+    ggplot2::geom_bar(
+      stat = "identity",
+      position = "stack",
+      width = 0.9,
+      color = "black"
+    ) +
+    ggplot2::geom_text(
+      data = totals_df,
+      ggplot2::aes(
+        x = .data[[class_name]],
+        y = label_y,
+        label = scales::comma(total_count)
+      ),
+      inherit.aes = FALSE,
+      size = label_size,
+      color = label_color,
+      vjust = label_vjust
+    ) +
+    ggplot2::scale_fill_manual(
+      values = c(
+        #"Beneficial"  = "#A1A9D0",
+        #"Neutral"     = "#D9D9D9",
+        #"Detrimental" = "#F4A6A6",
+        #"Lethal"      = "#F0988C"
+        
+        "Increased"="#A1A9D0",
+        "No effect"="#D9D9D9",
+        "Detrimental"="#F4A6A6",
+        "Strongly detrimental"="#F0988C"
+      ),
+      name = fill_legend_title,
+      drop = FALSE
+    ) +
+    ggplot2::scale_y_continuous(
+      breaks = scales::pretty_breaks(n = 5),
+      expand = c(0, 0)
+    ) +
+    ggplot2::coord_cartesian(
+      ylim = c(0, y_max * (1 + y_expand_frac))
+    ) +
+    ggplot2::labs(
+      title = plot_title,
+      x = "Class",
+      y = "Mutation count"
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
+    )
+  
+  # ---- Faceting ----
+  if (!is.null(facet_sym)) {
+    p <- p +
+      ggplot2::facet_wrap(
+        vars(!!facet_sym),
+        scales = "free_x"
+      )
+  }
+  
+  # ---- External statistics ----
+  if (!is.null(stat_df) &&
+      stat_position != "none" &&
+      is.null(facet_sym)) {
+    
+    if (!stat_p_col %in% colnames(stat_df)) {
+      stop("stat_p_col not found in stat_df.")
+    }
+    
+    p_val <- stat_df[[stat_p_col]][1]
+    
+    if (stat_format == "p") {
+      stat_label <- ifelse(
+        p_val < 2.2e-16,
+        "p < 2.2e-16",
+        paste0("p = ", signif(p_val, 3))
+      )
+    } else {
+      stat_label <- dplyr::case_when(
+        p_val < 0.001 ~ "***",
+        p_val < 0.01  ~ "**",
+        p_val < 0.05  ~ "*",
+        TRUE ~ "ns"
+      )
+    }
+    
+    if (stat_position == "subtitle") {
+      p <- p +
+        ggplot2::labs(
+          subtitle = paste0("Chi-square test: ", stat_label)
+        )
+    } else if (stat_position == "caption") {
+      p <- p +
+        ggplot2::labs(
+          caption = paste0("Chi-square test: ", stat_label)
+        )
+    }
+  }
+  
+  return(p)
+}
+
+
+bar_count_proteome_structural <- bar_count_stacked_proteome(
+  summary_df = summary_proteome_mis_mut_structural,
+
+  class_col = residue_structural_group_predicted,
+
+  category_col = mutational_effect_category_lethal_1aa,
+
+  count_col = count,
+
+  plot_title = "Mutation counts by structural class",
+
+  fill_legend_title = "Mutational effect",
+
+  #x_order = c(
+    #"Core",
+    #"Interface",
+    #"Non-interface surface",
+    #"Unknown structure"
+  #),
+
+  label_size = 3.5,
+  label_color = "black",
+
+  label_offset_frac = 0.03,
+  y_expand_frac = 0.15
+)
+
+print(bar_count_proteome_structural)
+
+#ggplot2::ggsave(
+  #filename = "./plots/bar_count_proteome_structural.pdf",
+  #plot = bar_count_proteome_structural,
+  #width = 6,
+  #height = 3.5
+#)
+
+
+
+# Alternative: the percentage version
+bar_percent_proteome_structural <- bar_percent_stacked_genome(
+  summary_df = summary_proteome_mis_mut_structural,
+
+  class_col = "residue_structural_group_predicted",
+
+  category_col = "mutational_effect_category_lethal_1aa",
+
+  count_col = "count",
+
+  custom_colors = replication_category_colors,
+
+  x_order = c(
+    "Core",
+    "Interface",
+    "Non-interface surface",
+    "Unknown structure"
+  ),
+
+  plot_title = "Mutational effects by structural class",
+
+  fill_legend_title = "Mutational effect"
+)
+
+print(bar_percent_proteome_structural)
+
+
+
+
+```
+
+Volcano plot, Fig. S3A
+```{r}
+# ============================================================
+# Volcano plots - single-amino-acid variants
+# ============================================================
+
+# All 1aa variants (presented)
+
+volcano_plot_1aa <- plot_volcano(
+  data = phix_1aa_mutations,
+
+  x_col = "replication_score",
+
+  y_col = "p_value_1aa_two_sample_ttest_syn_FDR",
+
+  color_col = "mutational_effect_category_lethal_1aa",
+
+  x_lim = c(-1, 1.5),
+
+  y_lim = c(0, 2.7),
+
+  reference_value = 1,
+
+  strong_effect_cutoff = 0.5,
+
+  fdr_cutoff = 0.05,
+
+  plot_title = paste0(
+    "1aa variants, n=",
+    format(
+      nrow(phix_1aa_mutations),
+      big.mark = ",",
+      scientific = FALSE
+    )
+  )
+)
+
+print(volcano_plot_1aa)
+
+
+# Alternative Single-ORF missense variants, excluding A*
+# Reuse the previously prepared analysis subset
+
+volcano_plot_1aa_single_orf <- plot_volcano(
+  data = phix_proteome_dms_mut_missense_analysis,
+
+  x_col = "replication_score",
+
+  y_col = "p_value_1aa_two_sample_ttest_syn_FDR",
+
+  color_col = "mutational_effect_category_lethal_1aa",
+
+  x_lim = c(-1, 1.5),
+
+  y_lim = c(0, 2.7),
+
+  reference_value = 1,
+
+  strong_effect_cutoff = 0.5,
+
+  fdr_cutoff = 0.05,
+
+  plot_title = paste0(
+    "1aa variants (single-ORF missense, no A*), n=",
+    format(
+      nrow(phix_proteome_dms_mut_missense_analysis),
+      big.mark = ",",
+      scientific = FALSE
+    )
+  )
+)
+
+print(volcano_plot_1aa_single_orf)
+
+
+
+```
+
+Protein H, Fig. S4H
+```{r}
+# ============================================================
+# Protein H - mutation analysis by structural region
+# ============================================================
+
+# 1. Extract protein H mutations and annotate regions
+
+phix_protein_H_dms_mut <- phix_1aa_mutations %>%
+  dplyr::filter(
+    aa_mut_gene == "H"
+  ) %>%
+  dplyr::mutate(
+    residue_id = paste0(
+      aa_mut_wt,
+      aa_mut_pos
+    ),
+
+    residue_mut_id = paste0(
+      aa_mut_wt,
+      aa_mut_pos,
+      aa_mut_sub
+    ),
+
+    residue_region = dplyr::case_when(
+      dplyr::between(aa_mut_pos, 1, 143) ~ "N-terminal",
+      dplyr::between(aa_mut_pos, 144, 272) ~ "Coiled-coil",
+      dplyr::between(aa_mut_pos, 273, 328) ~ "C-terminal",
+      TRUE ~ NA_character_
+    )
+  )
+
+
+# 2. Extract missense mutations
+# Optional single-ORF restriction can be added separately
+
+phix_protein_H_missense <- phix_protein_H_dms_mut %>%
+  dplyr::filter(
+    aa_mut_class == "Missense"
+  )
+
+
+# 3. Inspect region and hydrophobicity categories
+
+table(
+  phix_protein_H_missense$residue_region,
+  useNA = "ifany"
+)
+#  C-terminal Coiled-coil  N-terminal 
+#        1035        2435        2704 
+
+table(
+  phix_protein_H_missense$wt_hydro_property,
+  useNA = "ifany"
+)
+# hydrophilic hydrophobic 
+#        3032        3142 
+
+
+
+# ============================================================
+# Protein H - mutation category summaries
+# ============================================================
+
+# 1. Original summary: hydrophobicity only
+
+summary_protein_H_mis_mut_advanced_interface <-
+  generate_mutation_category_summary(
+    df = phix_protein_H_missense,
+    class_col = "wt_hydro_property",
+    category_col = "mutational_effect_category_1aa"
+  )
+
+print(summary_protein_H_mis_mut_advanced_interface)
+# # A tibble: 6 × 5
+#   wt_hydro_property mutational_effect_category_1aa count proportion percent
+#   <chr>             <chr>                          <int>      <dbl>   <dbl>
+# 1 hydrophilic       Detrimental                     1479     0.488    48.8 
+# 2 hydrophilic       Increased                         85     0.0280    2.8 
+# 3 hydrophilic       No effect                       1468     0.484    48.4 
+# 4 hydrophobic       Detrimental                     2091     0.665    66.6 
+# 5 hydrophobic       Increased                         49     0.0156    1.56
+# 6 hydrophobic       No effect                       1002     0.319    31.9 
+
+
+# 2. Four-category version by hydrophobicity and region
+
+summary_protein_H_region_hydro <-
+  generate_mutation_category_summary(
+    df = phix_protein_H_missense,
+    class_col = c(
+      "residue_region",
+      "wt_hydro_property"
+    ),
+    category_col = "mutational_effect_category_lethal_1aa"
+  )
+
+
+# 3. Order regions
+
+summary_protein_H_region_hydro <-
+  summary_protein_H_region_hydro %>%
+  dplyr::mutate(
+    residue_region = factor(
+      residue_region,
+      levels = c(
+        "N-terminal",
+        "Coiled-coil",
+        "C-terminal"
+      )
+    )
+  )
+
+print(summary_protein_H_region_hydro)
+
+
+# ============================================================
+# Protein H - hydrophobicity and structural region
+# ============================================================
+
+bar_stacked_protein_H <- bar_percent_stacked_genome(
+  summary_df = summary_protein_H_region_hydro,
+
+  class_col = "wt_hydro_property",
+
+  category_col = "mutational_effect_category_lethal_1aa",
+
+  count_col = "count",
+
+  plot_title = "Protein H: mutational effects by region",
+
+  fill_legend_title = "Mutational effect",
+
+  custom_colors = replication_category_colors,
+
+  x_order = c(
+    "hydrophobic",
+    "hydrophilic"
+  ),
+
+  facet_col = "residue_region",
+
+  show_segment_labels = FALSE
+) +
+  ggplot2::theme(
+    legend.position = "none"
+  )
+
+print(bar_stacked_protein_H)
+
+
+
+```
+
+
+### 2) Ridgeline plot, mutational effect distributions (Fig. 2B)
+```{r}
+# ============================================================
+# Function: Ridgeline distribution of replication scores
+# Required packages: dplyr, ggplot2, ggridges, rlang
+# ============================================================
+
+plot_ridgeline_mut_class <- function(
+    data,
+    score_col = replication_score,
+    class_col = aa_mut_gene,
+    group_col = NULL,
+    y_order = NULL,
+    group_order = NULL,
+    plot_title = "Ridgeline Density Plot",
+    x_label = "Replication score",
+    y_label = "Protein"
+) {
+
+  # ---- Capture tidy evaluation symbols ----
+  score_sym <- rlang::ensym(score_col)
+  class_sym <- rlang::ensym(class_col)
+
+  group_sym <- if (!is.null(group_col)) {
+    rlang::ensym(group_col)
+  } else {
+    NULL
+  }
+
+  class_name <- rlang::as_name(class_sym)
+  group_name <- if (!is.null(group_sym)) {
+    rlang::as_name(group_sym)
+  } else {
+    NULL
+  }
+
+  # ---- Apply manual y-axis order ----
+  if (!is.null(y_order)) {
+
+    data <- data %>%
+      dplyr::mutate(
+        !!class_sym := factor(
+          .data[[class_name]],
+          levels = y_order
+        )
+      )
+  }
+
+  # ---- Apply manual facet order ----
+  if (!is.null(group_name) && !is.null(group_order)) {
+
+    data <- data %>%
+      dplyr::mutate(
+        !!group_sym := factor(
+          .data[[group_name]],
+          levels = group_order
+        )
+      )
+  }
+
+  # ---- Build ridgeline plot ----
+  p <- ggplot2::ggplot(
+    data,
+    ggplot2::aes(
+      x = !!score_sym,
+      y = !!class_sym
+    )
+  ) +
+    ggridges::geom_density_ridges(
+      scale = 1.2,
+      fill = "grey80",
+      color = "black",
+      alpha = 0.8,
+      linewidth = 0.5
+    ) +
+    ggplot2::xlim(-1, 1.5) +
+    ggplot2::labs(
+      title = plot_title,
+      x = x_label,
+      y = y_label
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      strip.text = ggplot2::element_text(
+        face = "bold"
+      ),
+      axis.text.y = ggplot2::element_text(
+        face = "bold"
+      )
+    )
+
+  # ---- Add faceting ----
+  if (!is.null(group_name)) {
+
+    p <- p +
+      ggplot2::facet_wrap(
+        ggplot2::vars(!!group_sym),
+        scales = "free_x",
+        nrow = 1
+      )
+  }
+
+  return(p)
+}
+
+
+# ============================================================
+# Ridgeline plot - replication scores across ΦX174 proteins
+# ============================================================
+
+ridgeline_mut_class <- plot_ridgeline_mut_class(
+  data = phix_proteome_dms_mut_single_orf,
+
+  score_col = replication_score,
+
+  class_col = aa_mut_gene,
+
+  group_col = "aa_mut_class",
+
+  y_order = c(
+    "K", "E", "C", "Astar", "A",
+    "J", "H", "G", "F", "D", "B"
+  ),
+
+  group_order = c(
+    "Missense",
+    "Nonsense",
+    "Synonymous",
+    "Stop-loss"
+  ),
+
+  plot_title = "Fitness Distribution by PhiX Genes (Single ORF)",
+
+  x_label = "Replication score",
+
+  y_label = "Protein"
+) +
+  ggplot2::geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "black"
+  ) +
+  ggplot2::geom_vline(
+    xintercept = 1,
+    linetype = "dashed",
+    color = "black"
+  )
+
+print(ridgeline_mut_class)
+
+#ggplot2::ggsave(
+  #filename = "./plots/proteome_ridgeline_mutation_classes.pdf",
+  #plot = ridgeline_mut_class,
+  #width = 12,
+  #height = 5
+#)
+
+
+```
+
+
+### 3) Heatmaps, mutational effect landscapes (Fig. 2C; Fig. S2A)
+```{r}
+# ============================================================
+# Function: Amino-acid mutational heatmap with WT markers
+# Required packages: dplyr, ggplot2, scales
+# ============================================================
+
+plot_heatmap_colored_wt <- function(
+    data,
+    pos_col = "aa_mut_pos",
+    sub_col = "aa_mut_sub",
+    wt_col = "aa_mut_wt",
+    value_col = "replication_score",
+    wt_value = 1,
+    plot_title = "",
+    show_legend = FALSE,
+    show_title = FALSE,
+    x_tick_step = 10,
+    x_text_size = 8,
+    x_tick_length = 2.5,
+    x_label = "Position",
+    y_label = "Mutant AA"
+) {
+
+  # ---- Check required columns ----
+  stopifnot(
+    all(
+      c(pos_col, sub_col, wt_col, value_col) %in%
+        names(data)
+    )
+  )
+
+  # ---- 1. Create WT rows ----
+  wt_rows <- data %>%
+    dplyr::distinct(
+      .data[[pos_col]],
+      .data[[wt_col]]
+    ) %>%
+    dplyr::mutate(
+      !!sub_col := .data[[wt_col]],
+      !!value_col := wt_value
+    )
+
+  # ---- 2. Combine WT and mutant data ----
+  data_plot <- dplyr::bind_rows(
+    data,
+    wt_rows
+  )
+
+  # ---- 3. Calculate x-axis breaks ----
+  x_min <- min(data_plot[[pos_col]], na.rm = TRUE)
+  x_max <- max(data_plot[[pos_col]], na.rm = TRUE)
+
+  x_breaks <- seq(
+    from = ceiling(x_min / x_tick_step) * x_tick_step,
+    to = floor(x_max / x_tick_step) * x_tick_step,
+    by = x_tick_step
+  )
+
+  # ---- 4. Build heatmap ----
+  p <- ggplot2::ggplot(
+    data_plot,
+    ggplot2::aes(
+      x = .data[[pos_col]],
+      y = .data[[sub_col]],
+      fill = .data[[value_col]]
+    )
+  ) +
+
+    ggplot2::geom_tile(
+      width = 1,
+      height = 1,
+      color = "white",
+      linewidth = 0.1
+    ) +
+
+    ggplot2::coord_fixed() +
+
+    # WT markers
+    ggplot2::geom_point(
+      data = wt_rows,
+      ggplot2::aes(
+        x = .data[[pos_col]],
+        y = .data[[sub_col]]
+      ),
+      shape = 4,
+      size = 0.4,
+      color = "black",
+      stroke = 0.4,
+      inherit.aes = FALSE
+    ) +
+
+    # X-axis
+    ggplot2::scale_x_continuous(
+      expand = c(0, 0),
+      breaks = x_breaks,
+      minor_breaks = NULL,
+      guide = ggplot2::guide_axis(
+        check.overlap = TRUE
+      )
+    ) +
+
+    # Y-axis
+    ggplot2::scale_y_discrete(
+      expand = c(0, 0)
+    ) +
+
+    # Original replication-score color scale
+    ggplot2::scale_fill_gradientn(
+      colors = c(
+        "darkred",
+        "red",
+        "gray88",
+        "blue"
+      ),
+      values = scales::rescale(
+        c(-1, 0, 1, 1.5)
+      ),
+      limits = c(-1, 1.5),
+      name = value_col,
+      na.value = "white",
+      guide = if (show_legend) {
+        ggplot2::guide_colorbar(
+          barwidth = 10,
+          barheight = 1,
+          direction = "horizontal",
+          ticks.colour = "black",
+          title.position = "top",
+          title.hjust = 0.5
+        )
+      } else {
+        "none"
+      }
+    ) +
+
+    ggplot2::theme_minimal(base_size = 12) +
+
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        size = x_text_size,
+        angle = 0,
+        hjust = 0.5,
+        vjust = 1,
+        margin = ggplot2::margin(t = 3)
+      ),
+
+      axis.ticks.x = ggplot2::element_line(
+        linewidth = 0.4,
+        color = "black"
+      ),
+
+      axis.ticks.length.x = grid::unit(
+        x_tick_length,
+        "pt"
+      ),
+
+      axis.line.x = ggplot2::element_line(
+        linewidth = 0.4,
+        color = "black"
+      ),
+
+      axis.title.x = ggplot2::element_text(
+        face = "bold",
+        size = 12,
+        margin = ggplot2::margin(t = 8)
+      ),
+
+      axis.title.y = ggplot2::element_blank(),
+
+      panel.grid = ggplot2::element_blank(),
+
+      legend.position = if (show_legend) "top" else "none",
+
+      plot.title = ggplot2::element_text(
+        hjust = 0.5,
+        size = 14,
+        face = "bold"
+      ),
+
+      plot.margin = ggplot2::margin(
+        10, 10, 10, 10
+      )
+    )
+
+  if (show_title) {
+    p <- p + ggplot2::ggtitle(plot_title)
+  }
+
+  if (!is.null(x_label)) {
+    p <- p + ggplot2::xlab(x_label)
+  }
+
+  if (!is.null(y_label)) {
+    p <- p + ggplot2::ylab(y_label)
+  }
+
+  return(p)
+}
+
+
+# ============================================================
+# Prepare protein mutational heatmap datasets
+# ============================================================
+
+# Standard protein order
+protein_order <- c(
+  "A", "Astar", "B", "C", "D",
+  "E", "F", "G", "H", "J", "K"
+)
+
+# Retain single-ORF substitutions
+phix_1aa_heatmap_data <- phix_1aa_mutations %>%
+  dplyr::filter(
+    phix_aa_mut_orf_class == "single_orf",
+    aa_mut_gene %in% protein_order
+  )
+
+# Verify number of mutations per protein
+phix_1aa_heatmap_data %>%
+  dplyr::count(aa_mut_gene)
+# # A tibble: 11 × 2
+#    aa_mut_gene     n
+#    <chr>       <int>
+#  1 A            7571
+#  2 Astar        4142
+#  3 B             253
+#  4 C            1175
+#  5 D            1359
+#  6 E             195
+#  7 F            8548
+#  8 G            3464
+#  9 H            6519
+# 10 J             770
+# 11 K             126
+
+
+# ============================================================
+# Generate protein mutational heatmaps
+# ============================================================
+
+# Split by protein
+#phix_heatmap_by_protein <- split(
+  #phix_1aa_heatmap_data,
+  #phix_1aa_heatmap_data$aa_mut_gene
+#)
+
+# Generate heatmaps
+#phix_protein_heatmaps <- lapply(
+  #phix_heatmap_by_protein,
+  #function(df) {
+
+    #plot_heatmap_colored_wt(
+      #data = df,
+      #plot_title = paste0(
+        #"Protein ",
+        #unique(df$aa_mut_gene)
+      #),
+      #show_legend = FALSE,
+      #show_title = FALSE,
+      #x_tick_step = 10,
+      #x_text_size = 7,
+      #wt_value = 1
+    #)
+  #}
+#)
+
+# Inspect individual proteins
+#print(phix_protein_heatmaps$A)
+#print(phix_protein_heatmaps$B)
+#print(phix_protein_heatmaps$C)
+#print(phix_protein_heatmaps$F)
+
+
+
+# ============================================================
+# Protein mutational heatmaps
+# Version 1: All 1aa mutations
+# Version 2: Single-ORF mutations only
+# ============================================================
+
+# 1. Prepare two datasets
+
+# All 1aa mutations
+phix_1aa_heatmap_all <- phix_1aa_mutations
+
+# Single-ORF mutations, excluding multi-ORF variants
+phix_1aa_heatmap_single_orf <- phix_1aa_mutations %>%
+  dplyr::filter(
+    phix_aa_mut_orf_class == "single_orf"
+  )
+
+
+# 2. Function to generate heatmaps for all proteins
+
+generate_protein_heatmaps <- function(data) {
+
+  protein_data <- split(
+    data,
+    data$aa_mut_gene
+  )
+
+  lapply(
+    protein_data,
+    function(df) {
+
+      plot_heatmap_colored_wt(
+        data = df,
+        plot_title = paste0(
+          "Protein ",
+          unique(df$aa_mut_gene)
+        ),
+        show_legend = FALSE,
+        show_title = FALSE,
+        x_tick_step = 10,
+        x_text_size = 7,
+        wt_value = 1
+      )
+    }
+  )
+}
+
+
+# 3. Version 1: All 1aa mutations
+
+phix_protein_heatmaps_all <-
+  generate_protein_heatmaps(
+    phix_1aa_heatmap_all
+  )
+
+
+# 4. Version 2: Single-ORF mutations only
+
+phix_protein_heatmaps_single_orf <-
+  generate_protein_heatmaps(
+    phix_1aa_heatmap_single_orf
+  )
+
+
+# 5. Inspect both versions
+
+# Protein A
+print(phix_protein_heatmaps_all[["A"]])
+print(phix_protein_heatmaps_single_orf[["A"]])
+
+# Protein B
+print(phix_protein_heatmaps_all[["B"]])
+print(phix_protein_heatmaps_single_orf[["B"]])
+
+# Protein F
+print(phix_protein_heatmaps_all[["F"]])
+print(phix_protein_heatmaps_single_orf[["F"]])
+
+
+
+
+# ============================================================
+# Structural annotation heatmaps
+# Input: Data S3 - 1aa_residues
+# ============================================================
+
+# Inspect structural classifications
+table(
+  phix_1aa_residues$residue_structural_group_predicted,
+  useNA = "ifany"
+)
+#                  Core             Interface Non-interface surface     Unknown structure 
+#                   485                   955                   516                   371 
+
+
+# Extract core and interface annotations
+phix_residue_core_interface_binary <-
+  phix_1aa_residues %>%
+
+  dplyr::select(
+    aa_mut_gene,
+    aa_mut_pos,
+    residue_structural_group_predicted
+  ) %>%
+
+  dplyr::distinct() %>%
+
+  dplyr::mutate(
+    is_core = dplyr::case_when(
+      residue_structural_group_predicted == "Core" ~ 100,
+      is.na(residue_structural_group_predicted) ~ NA_real_,
+      TRUE ~ 0
+    ),
+
+    is_interface = dplyr::case_when(
+      residue_structural_group_predicted == "Interface" ~ 100,
+      is.na(residue_structural_group_predicted) ~ NA_real_,
+      TRUE ~ 0
+    )
+  )
+
+
+# Convert to long format
+phix_residue_core_interface_heatmap_long <-
+  phix_residue_core_interface_binary %>%
+
+  dplyr::select(
+    aa_mut_gene,
+    aa_mut_pos,
+    is_core,
+    is_interface
+  ) %>%
+
+  tidyr::pivot_longer(
+    cols = c(is_core, is_interface),
+    names_to = "Class",
+    values_to = "Value"
+  ) %>%
+
+  dplyr::mutate(
+    Class = dplyr::recode(
+      Class,
+      is_core = "Core",
+      is_interface = "Interface"
+    ),
+
+    Class = factor(
+      Class,
+      levels = c("Interface", "Core")
+    )
+  ) %>%
+
+  dplyr::rename(
+    pos = aa_mut_pos,
+    gene = aa_mut_gene
+  )
+
+
+# Inspect
+head(phix_residue_core_interface_heatmap_long)
+
+
+
+# ============================================================
+# Function: Binary structural annotation heatmap
+# Required packages: dplyr, ggplot2, grid
+# ============================================================
+
+plot_heatmap_binary_class <- function(
+    data,
+    pos_col = "pos",
+    class_col = "Class",
+    value_col = "Value",
+    plot_title = "",
+    show_legend = FALSE,
+    show_title = FALSE,
+    x_tick_step = 10,
+    x_label = "Position",
+    y_label = "Class",
+    core_color = "#a6b6c7",
+    interface_color = "#aac6b0",
+    absent_color = "gray95"
+) {
+
+  # ---- Check columns ----
+  stopifnot(
+    all(
+      c(pos_col, class_col, value_col) %in%
+        names(data)
+    )
+  )
+
+  # ---- X-axis breaks ----
+  x_breaks <- sort(unique(data[[pos_col]]))
+  x_breaks <- x_breaks[
+    x_breaks %% x_tick_step == 0
+  ]
+
+  # ---- Prepare fill categories ----
+  plot_data <- data %>%
+    dplyr::mutate(
+      fill_class = dplyr::case_when(
+        .data[[class_col]] == "Core" &
+          .data[[value_col]] > 0 ~ "Core",
+
+        .data[[class_col]] == "Interface" &
+          .data[[value_col]] > 0 ~ "Interface",
+
+        is.na(.data[[value_col]]) ~ NA_character_,
+
+        TRUE ~ "Absent"
+      ),
+
+      fill_class = factor(
+        fill_class,
+        levels = c(
+          "Interface",
+          "Core",
+          "Absent"
+        )
+      )
+    )
+
+  # ---- Plot ----
+  p <- ggplot2::ggplot(
+    plot_data,
+    ggplot2::aes(
+      x = .data[[pos_col]],
+      y = .data[[class_col]],
+      fill = fill_class
+    )
+  ) +
+
+    ggplot2::geom_tile(
+      width = 1,
+      height = 1,
+      color = "white"
+    ) +
+
+    ggplot2::coord_fixed() +
+
+    ggplot2::scale_x_continuous(
+      expand = c(0, 0),
+      breaks = x_breaks
+    ) +
+
+    ggplot2::scale_y_discrete(
+      expand = c(0, 0)
+    ) +
+
+    ggplot2::scale_fill_manual(
+      values = c(
+        "Interface" = interface_color,
+        "Core" = core_color,
+        "Absent" = absent_color
+      ),
+      na.value = "white",
+      name = "Class",
+      guide = if (show_legend) {
+        ggplot2::guide_legend(
+          title.position = "top",
+          title.hjust = 0.5
+        )
+      } else {
+        "none"
+      }
+    ) +
+
+    ggplot2::theme_minimal(base_size = 12) +
+
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_blank(),
+      axis.text.y = ggplot2::element_blank(),
+      axis.title.x = ggplot2::element_blank(),
+      axis.title.y = ggplot2::element_blank(),
+
+      axis.ticks.length = grid::unit(0, "pt"),
+
+      panel.grid = ggplot2::element_blank(),
+
+      legend.position = if (show_legend) "top" else "none",
+
+      plot.title = ggplot2::element_text(
+        hjust = 0.5,
+        size = 14,
+        face = "bold"
+      ),
+
+      plot.margin = ggplot2::margin(
+        10, 10, 10, 10
+      )
+    )
+
+  if (show_title) {
+    p <- p + ggplot2::ggtitle(plot_title)
+  }
+
+  p <- p +
+    ggplot2::xlab(x_label) +
+    ggplot2::ylab(y_label)
+
+  return(p)
+}
+
+
+# ============================================================
+# Generate structural annotation heatmaps
+# ============================================================
+
+# Split annotation data by protein
+phix_structural_by_protein <- split(
+  phix_residue_core_interface_heatmap_long,
+  phix_residue_core_interface_heatmap_long$gene
+)
+
+
+# Generate all structural heatmaps
+phix_core_interface_heatmaps <- lapply(
+  phix_structural_by_protein,
+  function(df) {
+
+    plot_heatmap_binary_class(
+      data = df,
+
+      pos_col = "pos",
+      class_col = "Class",
+      value_col = "Value",
+
+      plot_title = paste0(
+        "Protein ",
+        unique(df$gene)
+      ),
+
+      show_title = TRUE,
+      show_legend = FALSE,
+
+      x_tick_step = 20,
+
+      x_label = "Position",
+      y_label = "Class"
+    )
+  }
+)
+
+
+# Inspect individual proteins
+print(phix_core_interface_heatmaps$A)
+print(phix_core_interface_heatmaps$B)
+print(phix_core_interface_heatmaps$C)
+print(phix_core_interface_heatmaps$F)
+
+
+
+# ============================================================
+# Export figures
+# ============================================================
+
+#dir.create(
+  #"./plots",
+  #recursive = TRUE,
+  #showWarnings = FALSE
+#)
+
+# Volcano plots
+#ggplot2::ggsave(
+  #"./plots/volcano_plot_1aa.pdf",
+  #plot = volcano_plot_1aa,
+  #width = 5,
+  #height = 3
+#)
+
+#ggplot2::ggsave(
+  #"./plots/volcano_plot_1aa_single_orf.pdf",
+  #plot = volcano_plot_1aa_single_orf,
+  #width = 5,
+  #height = 3
+#)
+
+# Protein A mutational landscape (positions 1–220)
+#ggplot2::ggsave(
+  #"./plots/heatmap_A_fitness.pdf",
+  #plot = heatmap_A_fitness,
+  #width = 12,
+  #height = 2.5
+#)
+
+# Protein A structural annotations
+#ggplot2::ggsave(
+  #"./plots/heatmap_A_structure.pdf",
+  #plot = phix_core_interface_heatmaps[["A"]],
+  #width = 12,
+  #height = 1.5
+#)
+
+
+
+```
+
+
+### 4) Amino-acid residue categories, stacked bar plots and donut plots (Fig. S3D)
+```{r}
+# ============================================================
+# Amino-acid residue category analysis
+# Input: Data S3 - 1aa_residues
+# ============================================================
+
+# 1. Exclude protein A*
+phix_proteome_dms_aa_pos_analysis <- phix_1aa_residues %>%
+  dplyr::filter(
+    aa_mut_gene != "Astar"
+  )
+
+nrow(phix_proteome_dms_aa_pos_analysis)
+# [1] 1986
+
+# 2. Generate residue category summary by protein
+summary_proteome_aa_advanced <-
+  generate_mutation_category_summary(
+    df = phix_proteome_dms_aa_pos_analysis,
+
+    class_col = "aa_mut_gene",
+
+    category_col = "residue_category"
+  )
+
+print(summary_proteome_aa_advanced)
+
+
+# 3. Define residue category colors
+# Same palette as Data S2 nucleotide residue categories
+
+residue_category_colors <- c(
+  "Unable to define" = "#2B82AC",
+  "Tolerant" = "#DFCBBC",
+  "Sensitive" = "#EDB01D",
+  "Essential" = "#CD6143"
+)
+
+
+# 4. Inspect residue category counts
+table(
+  phix_proteome_dms_aa_pos_analysis$residue_category,
+  useNA = "ifany"
+)
+#        Essential        Sensitive         Tolerant Unable to define 
+#             1387              278               24              297 
+
+# Total classified residues
+sum(summary_proteome_aa_advanced$count)
+# [1] 1986
+
+# Number of residues per protein
+phix_proteome_dms_aa_pos_analysis %>%
+  dplyr::count(aa_mut_gene)
+# # A tibble: 10 × 2
+#    aa_mut_gene     n
+#    <chr>       <int>
+#  1 A             513
+#  2 B             120
+#  3 C              86
+#  4 D             152
+#  5 E              91
+#  6 F             427
+#  7 G             175
+#  8 H             328
+#  9 J              38
+# 10 K              56
+
+
+
+# ============================================================
+# Donut plot - amino-acid residue categories
+# ============================================================
+
+donut_plot_proteome_aa <- plot_donut_percent(
+  df = summary_proteome_aa_advanced,
+
+  category_col = "residue_category",
+
+  count_col = "count",
+
+  title = NULL,
+
+  palette = residue_category_colors
+)
+
+print(donut_plot_proteome_aa)
+
+
+# ============================================================
+# Stacked bar plot - amino-acid residue categories by protein
+# ============================================================
+
+bar_stacked_proteome_aa_category <-
+  bar_percent_stacked_protein_factor(
+    data = summary_proteome_aa_advanced,
+
+    factor_col = residue_category,
+
+    count_col = count,
+
+    palette = residue_category_colors,
+
+    title = "Amino-acid residue categories by protein",
+
+    legend_title = "Residue category",
+
+    show_legend = FALSE,
+
+    x_order = c(
+      "D", "F", "J", "A", "C", "G",
+      "H", "B", "E", "K"
+    )
+  )
+
+print(bar_stacked_proteome_aa_category)
+
+
+# ============================================================
+# Export amino-acid residue category plots
+# ============================================================
+
+#dir.create(
+  #"./plots",
+  #recursive = TRUE,
+  #showWarnings = FALSE
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/donut_proteome_aa_category.pdf",
+  #plot = donut_plot_proteome_aa,
+  #width = 4,
+  #height = 4
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/bar_proteome_aa_category.pdf",
+  #plot = bar_stacked_proteome_aa_category,
+  #width = 6,
+  #height = 3
+#)
+
+
+
+```
+
+
+### 5) Mechanistic classification of detrimental mutations, stacked bar plots and donut plots (Fig. 4A; Fig. S2B, C)
+Detrimental mutations, Fig. 4A
+```{r}
+# ============================================================
+# Detrimental missense mutations - structural classification
+# ============================================================
+
+# Retain the same detrimental classification as original
+phix_proteome_missense_detrimental <-
+  phix_proteome_dms_mut_missense_analysis %>%
+  dplyr::filter(
+    mutational_effect_category_1aa == "Detrimental"
+  )
+
+# Number of detrimental mutations
+nrow(phix_proteome_missense_detrimental)
+# [1] 19910
+
+
+# Inspect structural group assignments
+table(
+  phix_proteome_missense_detrimental$
+    residue_structural_group_resolved,
+  useNA = "ifany"
+)
+#                  Core             Interface Non-interface surface     Unknown structure 
+#                  3051                  7702                  1498                  7659 
+
+table(
+  phix_proteome_missense_detrimental$
+    residue_structural_group_predicted,
+  useNA = "ifany"
+)
+#                  Core             Interface Non-interface surface     Unknown structure 
+#                  5058                  9478                  2803                  2571 
+
+
+# Define original structural colors
+structural_colors <- c(
+  "Core" = "#A6B5C6",
+  "Interface" = "#A9C6B0",
+  "Non-interface surface" = "#C5BFA0",
+  "Unknown structure" = "#979188"
+)
+
+
+# Replace missing labels with Unknown structure
+normalize_structural_category <- function(x) {
+  x <- as.character(x)
+  x[is.na(x) | trimws(x) == ""] <- "Unknown structure"
+  factor(x, levels = names(structural_colors))
+}
+
+
+# Prepare both structural classifications
+phix_proteome_missense_detrimental <-
+  phix_proteome_missense_detrimental %>%
+  dplyr::mutate(
+    structural_resolved = normalize_structural_category(
+      residue_structural_group_resolved
+    ),
+    structural_predicted = normalize_structural_category(
+      residue_structural_group_predicted
+    )
+  )
+
+
+
+# ============================================================
+# Structural distribution summaries - detrimental mutations
+# ============================================================
+
+# 1. Experimentally resolved structures
+
+summary_detrimental_structural_resolved <-
+  phix_proteome_missense_detrimental %>%
+  dplyr::count(
+    structural_resolved,
+    name = "count",
+    .drop = FALSE
+  ) %>%
+  dplyr::mutate(
+    percent = 100 * count / sum(count)
+  )
+
+
+# 2. Resolved + predicted structures
+
+summary_detrimental_structural_predicted <-
+  phix_proteome_missense_detrimental %>%
+  dplyr::count(
+    structural_predicted,
+    name = "count",
+    .drop = FALSE
+  ) %>%
+  dplyr::mutate(
+    percent = 100 * count / sum(count)
+  )
+
+
+# Inspect summaries
+print(summary_detrimental_structural_resolved)
+print(summary_detrimental_structural_predicted)
+# # A tibble: 4 × 3
+#   structural_predicted  count percent
+#   <fct>                 <int>   <dbl>
+# 1 Core                   5058    25.4
+# 2 Interface              9478    47.6
+# 3 Non-interface surface  2803    14.1
+# 4 Unknown structure      2571    12.9
+
+
+
+# ============================================================
+# Donut plots - structural classification of detrimental mutations
+# ============================================================
+
+# Experimentally resolved structures
+donut_detrimental_resolved <- plot_donut_percent(
+  df = summary_detrimental_structural_resolved,
+  category_col = "structural_resolved",
+  count_col = "count",
+  title = NULL,
+  palette = structural_colors
+)
+
+print(donut_detrimental_resolved)
+
+
+# Resolved + predicted structures
+donut_detrimental_predicted <- plot_donut_percent(
+  df = summary_detrimental_structural_predicted,
+  category_col = "structural_predicted",
+  count_col = "count",
+  title = NULL,
+  palette = structural_colors
+)
+
+print(donut_detrimental_predicted)
+
+
+
+# ============================================================
+# Detrimental mutations by protein and structural group
+# ============================================================
+
+protein_order_structural <- c(
+  "D", "F", "J", "A", "C",
+  "G", "H", "B", "E", "K"
+)
+
+summary_detrimental_by_protein <-
+  phix_proteome_missense_detrimental %>%
+  dplyr::count(
+    aa_mut_gene,
+    structural_predicted,
+    name = "count"
+  ) %>%
+  dplyr::group_by(aa_mut_gene) %>%
+  dplyr::mutate(
+    percent = 100 * count / sum(count)
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+    aa_mut_gene = factor(
+      aa_mut_gene,
+      levels = protein_order_structural
+    )
+  )
+
+print(summary_detrimental_by_protein)
+
+
+
+# ============================================================
+# Stacked bar plot - structural classification by protein
+# ============================================================
+
+# Function to show mechanistic classification of detrimental mutations
+bar_percent_stacked_protein_factor <- function(
+  data,
+  factor_col,
+  count_col = count,
+  palette = NULL,
+  title = "Percentage within each gene",
+  legend_title = "Class",
+  show_legend = TRUE,
+  x_order = NULL,
+  order_by = "Interface"
+) {
+
+  factor_sym <- rlang::ensym(factor_col)
+  count_sym  <- rlang::ensym(count_col)
+
+  factor_name <- rlang::as_name(factor_sym)
+  count_name  <- rlang::as_name(count_sym)
+
+  # --- Step 1: Aggregate counts ---
+  percent_data <- data %>%
+    dplyr::filter(!is.na(!!factor_sym)) %>%
+    dplyr::group_by(aa_mut_gene, !!factor_sym) %>%
+    dplyr::summarise(
+      !!count_sym := sum(!!count_sym, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # --- Step 2: Ensure all x_order + factor levels exist ---
+  if (!is.null(x_order)) {
+
+    factor_levels <- if (!is.null(palette) && !is.null(names(palette))) {
+      names(palette)
+    } else {
+      unique(percent_data[[factor_name]])
+    }
+
+    percent_data <- percent_data %>%
+      tidyr::complete(
+        aa_mut_gene = x_order,
+        !!factor_sym := factor_levels,
+        fill = setNames(list(0), count_name)
+      )
+  }
+
+  # --- Step 3: Recalculate percentages ---
+  percent_data <- percent_data %>%
+    dplyr::group_by(aa_mut_gene) %>%
+    dplyr::mutate(
+      total = sum(.data[[count_name]], na.rm = TRUE),
+      percent = dplyr::if_else(
+        total > 0,
+        100 * .data[[count_name]] / total,
+        0
+      )
+    ) %>%
+    dplyr::ungroup()
+
+  # --- Step 4: Total counts ---
+  total_df <- percent_data %>%
+    dplyr::group_by(aa_mut_gene) %>%
+    dplyr::summarise(
+      total_count = sum(.data[[count_name]], na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  if (!is.null(x_order)) {
+    total_df <- tibble::tibble(aa_mut_gene = x_order) %>%
+      dplyr::left_join(total_df, by = "aa_mut_gene") %>%
+      dplyr::mutate(total_count = tidyr::replace_na(total_count, 0))
+  }
+
+  # --- Step 5: Factor levels ---
+  if (!is.null(palette) && !is.null(names(palette))) {
+    percent_data[[factor_name]] <- factor(
+      percent_data[[factor_name]],
+      levels = names(palette)
+    )
+  }
+
+  # --- Step 6: X ordering ---
+  if (!is.null(x_order)) {
+
+    percent_data <- percent_data %>%
+      dplyr::mutate(aa_mut_gene = factor(aa_mut_gene, levels = x_order))
+
+    total_df <- total_df %>%
+      dplyr::mutate(aa_mut_gene = factor(aa_mut_gene, levels = x_order))
+
+  } else {
+
+    order_df <- percent_data %>%
+      dplyr::filter(.data[[factor_name]] == order_by) %>%
+      dplyr::select(aa_mut_gene, percent)
+
+    percent_data <- percent_data %>%
+      dplyr::left_join(order_df, by = "aa_mut_gene", suffix = c("", "_order")) %>%
+      dplyr::mutate(percent_order = tidyr::replace_na(percent_order, -1)) %>%
+      dplyr::mutate(
+        aa_mut_gene = forcats::fct_reorder(aa_mut_gene, percent_order, .desc = TRUE)
+      )
+
+    total_df <- total_df %>%
+      dplyr::mutate(
+        aa_mut_gene = factor(aa_mut_gene, levels = levels(percent_data$aa_mut_gene))
+      )
+  }
+
+  # --- Step 7: Plot ---
+  p <- ggplot2::ggplot(
+    percent_data,
+    ggplot2::aes(
+      x = aa_mut_gene,
+      y = percent,
+      fill = .data[[factor_name]]
+    )
+  ) +
+    ggplot2::geom_bar(
+      stat = "identity",
+      width = 0.9,
+      color = "black"
+    ) +
+    ggplot2::geom_text(
+      data = total_df,
+      ggplot2::aes(
+        x = aa_mut_gene,
+        y = 103,   # safe position above bars
+        label = scales::comma(total_count)
+      ),
+      inherit.aes = FALSE,
+      size = 3.5
+    ) +
+    ggplot2::scale_y_continuous(
+      breaks = seq(0, 100, 25),
+      expand = c(0, 0)
+    ) +
+    ggplot2::coord_cartesian(ylim = c(0, 110)) +
+    ggplot2::labs(
+      title = title,
+      x = "Gene",
+      y = "Proportion (%)",
+      fill = if (show_legend) legend_title else NULL
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      legend.position = if (show_legend) "right" else "none",
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
+    )
+
+  # --- Step 8: Palette ---
+  if (!is.null(palette)) {
+    p <- p + ggplot2::scale_fill_manual(
+      values = palette,
+      drop = FALSE,
+      na.value = "white"
+    )
+  }
+
+  return(p)
+}
+
+
+
+# ============================================================
+# Structural classification of detrimental mutations
+# Version 1: Resolved structures only
+# Version 2: Resolved + predicted structures
+# ============================================================
+
+# Common protein order
+protein_order_structural <- c(
+  "D", "F", "J", "A", "C",
+  "G", "H", "B", "E", "K"
+)
+
+
+# 1. Resolved structures only
+summary_detrimental_by_protein_resolved <-
+  phix_proteome_missense_detrimental %>%
+  dplyr::count(
+    aa_mut_gene,
+    structural_resolved,
+    name = "count"
+  )
+
+plot_detrimental_protein_structure_resolved <-
+  bar_percent_stacked_protein_factor(
+    data = summary_detrimental_by_protein_resolved,
+
+    factor_col = structural_resolved,
+    count_col = count,
+
+    palette = structural_colors,
+
+    title = "Experimentally resolved structures",
+    legend_title = "Structural group",
+
+    show_legend = FALSE,
+    x_order = protein_order_structural
+  )
+
+print(plot_detrimental_protein_structure_resolved)
+
+
+# 2. Resolved + predicted structures
+summary_detrimental_by_protein_predicted <-
+  phix_proteome_missense_detrimental %>%
+  dplyr::count(
+    aa_mut_gene,
+    structural_predicted,
+    name = "count"
+  )
+
+plot_detrimental_protein_structure_predicted <-
+  bar_percent_stacked_protein_factor(
+    data = summary_detrimental_by_protein_predicted,
+
+    factor_col = structural_predicted,
+    count_col = count,
+
+    palette = structural_colors,
+
+    title = "Resolved and predicted structures",
+    legend_title = "Structural group",
+
+    show_legend = FALSE,
+    x_order = protein_order_structural
+  )
+
+print(plot_detrimental_protein_structure_predicted)
+
+
+
+# ============================================================
+# Export structural and increased-effect mutation plots
+# ============================================================
+
+dir.create("./plots", recursive = TRUE, showWarnings = FALSE)
+
+ggplot2::ggsave(
+  "./plots/donut_detrimental_resolved.pdf",
+  plot = donut_detrimental_resolved,
+  width = 4,
+  height = 4
+)
+
+ggplot2::ggsave(
+  "./plots/donut_detrimental_predicted.pdf",
+  plot = donut_detrimental_predicted,
+  width = 4,
+  height = 4
+)
+
+ggplot2::ggsave(
+  "./plots/detrimental_structural_by_protein.pdf",
+  plot = plot_detrimental_protein_structure,
+  width = 6,
+  height = 3
+)
+
+
+
+
+```
+
+Replication-Increased mutations, Fig. S2B, C
+```{r}
+# ============================================================
+# Increased-effect missense mutations
+# ============================================================
+
+phix_proteome_missense_increased <-
+  phix_proteome_dms_mut_missense_analysis %>%
+  dplyr::filter(
+    mutational_effect_category_1aa == "Increased"
+  ) %>%
+  dplyr::mutate(
+    structural_predicted = normalize_structural_category(
+      residue_structural_group_predicted
+    )
+  )
+
+nrow(phix_proteome_missense_increased)
+# [1] 403
+
+
+# Summarize by protein and structural group
+summary_increased_by_protein <-
+  phix_proteome_missense_increased %>%
+  dplyr::count(
+    aa_mut_gene,
+    structural_predicted,
+    name = "count"
+  )
+
+print(summary_increased_by_protein)
+# # A tibble: 19 × 3
+#    aa_mut_gene structural_predicted  count
+#    <chr>       <fct>                 <int>
+#  1 A           Core                      1
+#  2 A           Interface                 9
+#  3 A           Non-interface surface    13
+#  4 B           Core                      1
+#  5 B           Interface                 9
+#  6 B           Non-interface surface    17
+#  7 D           Non-interface surface     1
+#  8 E           Unknown structure         1
+#  9 F           Core                      8
+# 10 F           Interface               113
+# 11 F           Non-interface surface    28
+# 12 G           Interface                12
+# 13 G           Non-interface surface     8
+# 14 H           Interface                47
+# 15 H           Non-interface surface     4
+# 16 H           Unknown structure        83
+# 17 J           Interface                33
+# 18 J           Non-interface surface    12
+# 19 K           Unknown structure         3
+
+
+
+# ============================================================
+# Increased-effect mutations by structural group
+# ============================================================
+
+plot_df_beneficial_structural_count <-
+  summary_increased_by_protein %>%
+  dplyr::mutate(
+    aa_mut_gene = factor(aa_mut_gene)
+  )
+
+total_df_structural <-
+  plot_df_beneficial_structural_count %>%
+  dplyr::group_by(aa_mut_gene) %>%
+  dplyr::summarise(
+    total_count = sum(count),
+    .groups = "drop"
+  )
+
+y_max_structural <- max(
+  total_df_structural$total_count,
+  na.rm = TRUE
+)
+
+p_beneficial_structural_count <- ggplot2::ggplot(
+  plot_df_beneficial_structural_count,
+  ggplot2::aes(
+    x = aa_mut_gene,
+    y = count,
+    fill = structural_predicted
+  )
+) +
+  ggplot2::geom_col(
+    width = 0.9,
+    color = "black"
+  ) +
+  ggplot2::geom_text(
+    data = total_df_structural,
+    ggplot2::aes(
+      x = aa_mut_gene,
+      y = total_count + 0.04 * y_max_structural,
+      label = scales::comma(total_count)
+    ),
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+  ggplot2::scale_fill_manual(
+    values = structural_colors,
+    drop = FALSE
+  ) +
+  ggplot2::scale_y_continuous(
+    breaks = scales::pretty_breaks(n = 5),
+    expand = c(0, 0)
+  ) +
+  ggplot2::coord_cartesian(
+    ylim = c(0, y_max_structural * 1.25)
+  ) +
+  ggplot2::labs(
+    title = "Increased-effect mutations by structural group",
+    x = "Gene",
+    y = "Counts",
+    fill = "Structural group"
+  ) +
+  ggplot2::theme_classic() +
+  ggplot2::theme(
+    legend.position = "none",
+    axis.text.x = ggplot2::element_text(
+      angle = 45,
+      hjust = 1
+    )
+  )
+
+print(p_beneficial_structural_count)
+
+
+
+# ============================================================
+# Increased-effect mutations at protein interfaces
+# ============================================================
+
+# 1. Extract interface mutations and create interface names
+
+plot_df_beneficial_interface <-
+  phix_proteome_missense_increased %>%
+  dplyr::filter(
+    structural_predicted == "Interface",
+    !is.na(binder_genes),
+    binder_genes != ""
+  ) %>%
+  dplyr::mutate(
+    interface = paste(
+      aa_mut_gene,
+      binder_genes,
+      sep = "-"
+    )
+  ) %>%
+  dplyr::count(
+    interface,
+    name = "count"
+  ) %>%
+  dplyr::mutate(
+    interface = forcats::fct_reorder(
+      interface,
+      count,
+      .desc = TRUE
+    )
+  )
+
+print(plot_df_beneficial_interface)
+
+
+# 2. Generate interface count plot
+
+y_max_interface <- max(
+  plot_df_beneficial_interface$count,
+  na.rm = TRUE
+)
+
+p_beneficial_interface <- ggplot2::ggplot(
+  plot_df_beneficial_interface,
+  ggplot2::aes(
+    x = interface,
+    y = count
+  )
+) +
+  ggplot2::geom_col(
+    width = 0.9,
+    fill = "#A9C6B0",
+    color = "black"
+  ) +
+  ggplot2::geom_text(
+    ggplot2::aes(
+      y = count + 0.04 * y_max_interface,
+      label = scales::comma(count)
+    ),
+    size = 3.5
+  ) +
+  ggplot2::scale_y_continuous(
+    breaks = scales::breaks_width(20),
+    expand = c(0, 0)
+  ) +
+  ggplot2::coord_cartesian(
+    ylim = c(0, y_max_interface * 1.25)
+  ) +
+  ggplot2::labs(
+    title = "Increased-effect mutations by protein interface",
+    x = "Interface",
+    y = "Counts"
+  ) +
+  ggplot2::theme_classic() +
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(
+      angle = 45,
+      hjust = 1
+    )
+  )
+
+print(p_beneficial_interface)
+
+
+#ggplot2::ggsave(
+  #"./plots/p_beneficial_structural_count.pdf",
+  #plot = p_beneficial_structural_count,
+  #width = 5,
+  #height = 2.5
+#)
+
+#ggplot2::ggsave(
+  #"./plots/p_beneficial_interface.pdf",
+  #plot = p_beneficial_interface,
+  #width = 6,
+  #height = 2.5
+#)
+
+
+
+
+```
+
+
+### 6) Enrichment analyses, odds ratio (Fig. 4C, D)
+```{r}
+# ============================================================
+# Data S3: Structural odds-ratio analysis
+# ============================================================
+
+# 1. Analysis datasets
+phix_proteome_mut_data_advanced_list <- list(
+  all = phix_1aa_mutations,
+
+  single_orf = phix_proteome_dms_mut_missense_analysis
+)
+
+
+# 2. Structural exposures to evaluate
+exposure_focus_list <- list(
+  residue_structural_group_predicted = c(
+    "Core",
+    "Interface",
+    "Non-interface surface",
+    "Unknown structure"
+  ),
+
+  monomer_structural_class_predicted = c(
+    "Core",
+    "Surface"
+  ),
+
+  residue_surface_class_predicted = c(
+    "Interface",
+    "Non-interface surface"
+  )
+)
+
+
+# 3. Analysis combinations
+odds_ratio_analysis <- expand.grid(
+  subset = c("all", "single_orf"),
+
+  exposure = names(exposure_focus_list),
+
+  stringsAsFactors = FALSE
+)
+
+
+# 4. Outcome categories
+odds_ratio_outcome_focus <- c(
+  "Detrimental",
+  "Strongly detrimental"
+)
+
+
+# Inspect
+print(odds_ratio_analysis)
+#       subset                           exposure
+# 1        all residue_structural_group_predicted
+# 2 single_orf residue_structural_group_predicted
+# 3        all monomer_structural_class_predicted
+# 4 single_orf monomer_structural_class_predicted
+# 5        all    residue_surface_class_predicted
+# 6 single_orf    residue_surface_class_predicted
+
+purrr::map_int(
+  phix_proteome_mut_data_advanced_list,
+  nrow
+)
+#        all single_orf 
+#      48136      28381 
+
+
+
+
+# ============================================================
+# Function: Calculate Fisher's exact test odds ratio
+# Corrected for character column names
+# ============================================================
+
+run_odds_ratio <- function(
+    df,
+    exposure_col,
+    exposure_focus,
+    outcome_col,
+    outcome_focus,
+    dataset = NA_character_,
+    group = NA_character_
+) {
+
+  # Column names are supplied as strings
+  exposure_name <- exposure_col
+  outcome_name <- outcome_col
+
+  # Check required columns
+  stopifnot(
+    exposure_name %in% names(df),
+    outcome_name %in% names(df)
+  )
+
+  # Filter complete cases and define binary variables
+  dat <- df %>%
+    dplyr::filter(
+      !is.na(.data[[exposure_name]]),
+      !is.na(.data[[outcome_name]])
+    ) %>%
+    dplyr::mutate(
+      exposure = .data[[exposure_name]] == exposure_focus,
+      outcome = .data[[outcome_name]] %in% outcome_focus
+    )
+
+  # Construct contingency table
+  tab <- table(dat$exposure, dat$outcome)
+
+  # Return NA if not a complete 2x2 table
+  if (!identical(dim(tab), c(2L, 2L))) {
+
+    return(
+      tibble::tibble(
+        test_type = "fisher_odds_ratio",
+        dataset = dataset,
+        group = group,
+        exposure_var = exposure_name,
+        outcome_var = outcome_name,
+        exposure_focus = exposure_focus,
+        outcome_focus = paste(outcome_focus, collapse = ","),
+
+        n_total = nrow(dat),
+
+        a_exposed_outcome = NA_integer_,
+        b_exposed_no_outcome = NA_integer_,
+        c_unexp_outcome = NA_integer_,
+        d_unexp_no_outcome = NA_integer_,
+
+        odds_ratio = NA_real_,
+        conf_low = NA_real_,
+        conf_high = NA_real_,
+
+        log_or_ln = NA_real_,
+        log_or_log10 = NA_real_,
+        log_conf_low_ln = NA_real_,
+        log_conf_high_ln = NA_real_,
+        log_conf_low_log10 = NA_real_,
+        log_conf_high_log10 = NA_real_,
+
+        p_value = NA_real_,
+        method = "Not 2x2 - skipped"
+      )
+    )
+  }
+
+  # Fisher's exact test
+  ft <- stats::fisher.test(
+    tab,
+    alternative = "two.sided",
+    conf.level = 0.95
+  )
+
+  or_val <- unname(ft$estimate)
+  ci_low <- unname(ft$conf.int[1])
+  ci_high <- unname(ft$conf.int[2])
+
+  # Return results
+  tibble::tibble(
+    test_type = "fisher_odds_ratio",
+    dataset = dataset,
+    group = group,
+
+    exposure_var = exposure_name,
+    outcome_var = outcome_name,
+
+    exposure_focus = exposure_focus,
+    outcome_focus = paste(outcome_focus, collapse = ","),
+
+    n_total = sum(tab),
+
+    a_exposed_outcome = as.integer(tab[2, 2]),
+    b_exposed_no_outcome = as.integer(tab[2, 1]),
+    c_unexp_outcome = as.integer(tab[1, 2]),
+    d_unexp_no_outcome = as.integer(tab[1, 1]),
+
+    odds_ratio = or_val,
+    conf_low = ci_low,
+    conf_high = ci_high,
+
+    log_or_ln = log(or_val),
+    log_or_log10 = log10(or_val),
+
+    log_conf_low_ln = log(ci_low),
+    log_conf_high_ln = log(ci_high),
+
+    log_conf_low_log10 = log10(ci_low),
+    log_conf_high_log10 = log10(ci_high),
+
+    p_value = ft$p.value,
+    method = ft$method
+  )
+}
+
+
+
+# ============================================================
+# Function: Run odds ratios across structural classes
+# ============================================================
+
+run_odds_ratio_grid <- function(
+    df,
+    group_col = NULL,
+    exposure_col,
+    exposure_focuses,
+    outcome_col,
+    outcome_focus
+) {
+
+  # Proteome-wide analysis
+  if (is.null(group_col)) {
+
+    return(
+      purrr::map_dfr(
+        exposure_focuses,
+        function(focus) {
+
+          run_odds_ratio(
+            df = df,
+            exposure_col = exposure_col,
+            exposure_focus = focus,
+            outcome_col = outcome_col,
+            outcome_focus = outcome_focus,
+            group = "Proteome"
+          )
+        }
+      )
+    )
+  }
+
+  # Gene-level analysis
+  gene_data <- df %>%
+    dplyr::filter(
+      !is.na(.data[[group_col]])
+    ) %>%
+    split(.[[group_col]])
+
+  purrr::imap_dfr(
+    gene_data,
+    function(subdf, gene_name) {
+
+      purrr::map_dfr(
+        exposure_focuses,
+        function(focus) {
+
+          run_odds_ratio(
+            df = subdf,
+            exposure_col = exposure_col,
+            exposure_focus = focus,
+            outcome_col = outcome_col,
+            outcome_focus = outcome_focus,
+            group = gene_name
+          )
+        }
+      )
+    }
+  )
+}
+
+
+# ============================================================
+# Function: Run complete odds-ratio pipeline
+# ============================================================
+
+run_or_pipeline <- function(
+    dataset_list,
+    analysis_plan,
+    exposure_focus_list,
+    outcome_col,
+    outcome_focus,
+    group_col = NULL
+) {
+
+  purrr::pmap_dfr(
+    analysis_plan,
+    function(subset, exposure) {
+
+      df_use <- dataset_list[[subset]]
+      focuses <- exposure_focus_list[[exposure]]
+
+      results <- run_odds_ratio_grid(
+        df = df_use,
+
+        group_col = group_col,
+
+        exposure_col = exposure,
+
+        exposure_focuses = focuses,
+
+        outcome_col = outcome_col,
+
+        outcome_focus = outcome_focus
+      )
+
+      results %>%
+        dplyr::mutate(
+          subset = subset,
+          exposure_set = exposure
+        )
+    }
+  )
+}
+
+
+# ============================================================
+# Run odds-ratio analyses
+# ============================================================
+
+# 1. Proteome-wide Fisher tests
+odds_ratio_proteome_results <- run_or_pipeline(
+  dataset_list = phix_proteome_mut_data_advanced_list,
+
+  analysis_plan = odds_ratio_analysis,
+
+  exposure_focus_list = exposure_focus_list,
+
+  outcome_col = "mutational_effect_category_lethal_1aa",
+
+  outcome_focus = odds_ratio_outcome_focus,
+
+  group_col = NULL
+)
+
+
+# 2. Gene-level Fisher tests
+odds_ratio_genes_results <- run_or_pipeline(
+  dataset_list = phix_proteome_mut_data_advanced_list,
+
+  analysis_plan = odds_ratio_analysis,
+
+  exposure_focus_list = exposure_focus_list,
+
+  outcome_col = "mutational_effect_category_lethal_1aa",
+
+  outcome_focus = odds_ratio_outcome_focus,
+
+  group_col = "aa_mut_gene"
+)
+
+
+# Inspect
+print(odds_ratio_proteome_results)
+print(odds_ratio_genes_results)
+
+
+# ============================================================
+# Prepare odds-ratio results
+# ============================================================
+
+# Proteome-level results
+odds_ratio_proteome_structural_classes <-
+  odds_ratio_proteome_results %>%
+  dplyr::filter(
+    subset == "single_orf",
+    !is.na(p_value)
+  ) %>%
+  dplyr::mutate(
+    p_adj = stats::p.adjust(
+      p_value,
+      method = "BH"
+    ),
+
+    significant = p_adj < 0.05
+  )
+
+
+# Gene-level results
+odds_ratio_genes_structural_classes <-
+  odds_ratio_genes_results %>%
+  dplyr::filter(
+    subset == "single_orf",
+    !is.na(p_value)
+  ) %>%
+  dplyr::mutate(
+    p_adj = stats::p.adjust(
+      p_value,
+      method = "BH"
+    ),
+
+    significant = p_adj < 0.05
+  )
+
+
+# Inspect structural exposure groups
+table(
+  odds_ratio_proteome_structural_classes$exposure_var
+)
+
+table(
+  odds_ratio_genes_structural_classes$exposure_var
+)
+
+
+# Inspect results
+odds_ratio_proteome_structural_classes %>%
+  dplyr::select(
+    exposure_var,
+    exposure_focus,
+    n_total,
+    odds_ratio,
+    conf_low,
+    conf_high,
+    p_value,
+    p_adj
+  )
+# # A tibble: 8 × 8
+#   exposure_var                       exposure_focus        n_total odds_ratio conf_low conf_high   p_value     p_adj
+#   <chr>                              <chr>                   <int>      <dbl>    <dbl>     <dbl>     <dbl>     <dbl>
+# 1 residue_structural_group_predicted Core                    28381      3.64     3.35      3.96  2.44e-258 1.95e-257
+# 2 residue_structural_group_predicted Interface               28381      1.50     1.42      1.58  3.59e- 53 3.59e- 53
+# 3 residue_structural_group_predicted Non-interface surface   28381      0.374    0.352     0.398 2.45e-214 9.81e-214
+# 4 residue_structural_group_predicted Unknown structure       28381      0.490    0.459     0.523 4.57e- 99 5.22e- 99
+# 5 monomer_structural_class_predicted Core                    23842      3.28     3.02      3.57  2.40e-205 4.81e-205
+# 6 monomer_structural_class_predicted Surface                 23842      0.305    0.280     0.331 2.40e-205 4.81e-205
+# 7 residue_surface_class_predicted    Interface               18059      2.73     2.55      2.92  7.91e-191 1.06e-190
+# 8 residue_surface_class_predicted    Non-interface surface   18059      0.366    0.342     0.392 7.91e-191 1.06e-190
+
+odds_ratio_genes_structural_classes %>%
+  dplyr::select(
+    group,
+    exposure_var,
+    exposure_focus,
+    odds_ratio,
+    p_value,
+    p_adj
+  )
+# # A tibble: 55 × 6
+#    group exposure_var                       exposure_focus        odds_ratio   p_value     p_adj
+#    <chr> <chr>                              <chr>                      <dbl>     <dbl>     <dbl>
+#  1 A     residue_structural_group_predicted Core                       4.80  5.18e-157 7.12e-156
+#  2 A     residue_structural_group_predicted Interface                  1.28  1.43e-  5 2.80e-  5
+#  3 A     residue_structural_group_predicted Non-interface surface      0.235 2.23e-177 1.22e-175
+#  4 B     residue_structural_group_predicted Core                       2.31  8.10e-  2 1.11e-  1
+#  5 B     residue_structural_group_predicted Interface                  3.98  1.48e-  4 2.71e-  4
+#  6 B     residue_structural_group_predicted Non-interface surface      1.14  7.62e-  1 8.09e-  1
+#  7 B     residue_structural_group_predicted Unknown structure          0.227 3.22e-  6 6.80e-  6
+#  8 C     residue_structural_group_predicted Interface                  1.44  4.83e-  3 7.81e-  3
+#  9 C     residue_structural_group_predicted Unknown structure          0.696 4.83e-  3 7.81e-  3
+# 10 D     residue_structural_group_predicted Core                       9.75  4.86e- 10 1.27e-  9
+# # ℹ 45 more rows
+# # ℹ Use `print(n = ...)` to see more rows
+
+
+
+# ============================================================
+# Function: Forest plot of odds ratios
+# ============================================================
+
+plot_forest_or_raw <- function(
+    data,
+    label_col,
+    or_col,
+    low_col,
+    high_col,
+    p_col = NULL,
+    facet_col = NULL,
+    title = "Odds Ratio",
+    ref_line = 1,
+    or_ticks = c(0.25, 0.5, 1, 2, 4, 8),
+    point_size = 2,
+    ci_width = 0.6,
+    star_size = 4,
+    star_offset = 0.05
+) {
+
+  # ---- Build plotting dataframe ----
+  df <- data.frame(
+    label = as.character(data[[label_col]]),
+    or = data[[or_col]],
+    low = data[[low_col]],
+    high = data[[high_col]]
+  )
+
+  if (!is.null(p_col) && p_col %in% names(data)) {
+    df$pval <- data[[p_col]]
+  }
+
+  if (!is.null(facet_col) && facet_col %in% names(data)) {
+    df$facet <- data[[facet_col]]
+  }
+
+  # ---- Keep valid log-scale values ----
+  df <- df %>%
+    dplyr::filter(
+      is.finite(or),
+      is.finite(low),
+      is.finite(high),
+      or > 0,
+      low > 0,
+      high > 0
+    )
+
+  if (nrow(df) == 0) {
+    stop("No valid odds ratios and confidence intervals to plot.")
+  }
+
+  # ---- Order labels ----
+  df <- df %>%
+    dplyr::arrange(dplyr::desc(or))
+
+  df$label <- factor(
+    df$label,
+    levels = rev(unique(df$label))
+  )
+
+  # ---- Statistical significance ----
+  if ("pval" %in% names(df)) {
+
+    df$star <- dplyr::case_when(
+      is.na(df$pval) ~ "",
+      df$pval <= 0.001 ~ "***",
+      df$pval <= 0.01 ~ "**",
+      df$pval <= 0.05 ~ "*",
+      TRUE ~ ""
+    )
+
+  } else {
+    df$star <- ""
+  }
+
+  df$star_x <- df$high * (1 + star_offset)
+
+  # ---- Forest plot ----
+  p <- ggplot2::ggplot(
+    df,
+    ggplot2::aes(
+      x = or,
+      y = label
+    )
+  ) +
+    ggplot2::geom_vline(
+      xintercept = ref_line,
+      linetype = "dashed",
+      color = "gray50"
+    ) +
+    ggplot2::geom_errorbar(
+      ggplot2::aes(
+        xmin = low,
+        xmax = high
+      ),
+      orientation = "y",
+      width = 0,
+      linewidth = ci_width
+    ) +
+    ggplot2::geom_point(
+      size = point_size
+    ) +
+    ggplot2::scale_x_log10(
+      breaks = or_ticks,
+      labels = or_ticks
+    ) +
+    ggplot2::labs(
+      x = "Odds ratio",
+      y = NULL,
+      title = title
+    ) +
+    ggplot2::theme_classic()
+
+  # ---- Significance stars ----
+  if ("pval" %in% names(df)) {
+
+    p <- p +
+      ggplot2::geom_text(
+        ggplot2::aes(
+          x = star_x,
+          label = star
+        ),
+        hjust = 0,
+        size = star_size,
+        fontface = "bold"
+      )
+  }
+
+  # ---- Optional faceting ----
+  if ("facet" %in% names(df)) {
+
+    p <- p +
+      ggplot2::facet_wrap(
+        ~ facet,
+        scales = "free_y"
+      )
+  }
+
+  return(p)
+}
+
+
+
+# ============================================================
+# Forest plot 1: Proteome-level structural enrichment
+# ============================================================
+
+# Select the two structural comparisons
+forest_data_proteome <-
+  odds_ratio_proteome_structural_classes %>%
+  dplyr::filter(
+    (
+      exposure_var == "monomer_structural_class_predicted" &
+      exposure_focus == "Core"
+    ) |
+    (
+      exposure_var == "residue_surface_class_predicted" &
+      exposure_focus == "Interface"
+    )
+  ) %>%
+  dplyr::mutate(
+    comparison = dplyr::case_when(
+      exposure_focus == "Core" ~ "Core vs Surface",
+      exposure_focus == "Interface" ~
+        "Interface vs Non-interface surface"
+    )
+  )
+
+
+# Generate forest plot
+forest_plot_proteome <- plot_forest_or_raw(
+  data = forest_data_proteome,
+
+  label_col = "comparison",
+
+  or_col = "odds_ratio",
+  low_col = "conf_low",
+  high_col = "conf_high",
+
+  p_col = "p_adj",
+
+  title = "Structural enrichment of detrimental mutations",
+
+  ref_line = 1,
+
+  or_ticks = c(0.25, 0.5, 1, 2, 4, 8)
+)
+
+print(forest_plot_proteome)
+
+
+
+# ============================================================
+# Forest plot 2: Gene-level structural enrichment
+# Separate Core and Interface analyses
+# ============================================================
+
+# 1. Core vs Surface
+forest_data_genes_core <-
+  odds_ratio_genes_structural_classes %>%
+  dplyr::filter(
+    exposure_var == "monomer_structural_class_predicted",
+    exposure_focus == "Core"
+  )
+
+
+# ============================================================
+# 2. Interface vs Non-interface surface
+# Gene-level forest plot: Interface enrichment
+# Special handling for protein C
+# ============================================================
+
+forest_data_genes_interface <-
+  odds_ratio_genes_structural_classes %>%
+  dplyr::filter(
+    (
+      exposure_var == "residue_surface_class_predicted" &
+      exposure_focus == "Interface" &
+      group != "C"
+    ) |
+    (
+      group == "C" &
+      exposure_var == "residue_structural_group_predicted" &
+      exposure_focus == "Interface"
+    )
+  )
+
+# Inspect selected comparisons
+forest_data_genes_interface %>%
+  dplyr::select(
+    group,
+    exposure_var,
+    exposure_focus,
+    odds_ratio,
+    conf_low,
+    conf_high,
+    p_adj
+  )
+# # A tibble: 9 × 7
+#   group exposure_var                       exposure_focus odds_ratio conf_low conf_high    p_adj
+#   <chr> <chr>                              <chr>               <dbl>    <dbl>     <dbl>    <dbl>
+# 1 C     residue_structural_group_predicted Interface           1.44     1.11       1.86 7.81e- 3
+# 2 A     residue_surface_class_predicted    Interface           2.66     2.35       3.01 3.68e-58
+# 3 B     residue_surface_class_predicted    Interface           2.74     1.17       6.55 1.76e- 2
+# 4 D     residue_surface_class_predicted    Interface           1.54     0.963      2.41 7.96e- 2
+# 5 E     residue_surface_class_predicted    Interface           1.04     0.382      2.96 1   e+ 0
+# 6 F     residue_surface_class_predicted    Interface           1.93     1.61       2.30 4.71e-12
+# 7 G     residue_surface_class_predicted    Interface           6.70     5.45       8.28 8.44e-85
+# 8 H     residue_surface_class_predicted    Interface           0.953    0.716      1.27 8.09e- 1
+# 9 J     residue_surface_class_predicted    Interface           0.826    0.551      1.23 4.27e- 1
+
+
+# 4. Forest plot: Core vs Surface
+forest_plot_genes_core <- plot_forest_or_raw(
+  data = forest_data_genes_core,
+
+  label_col = "group",
+
+  or_col = "odds_ratio",
+  low_col = "conf_low",
+  high_col = "conf_high",
+
+  p_col = "p_adj",
+
+  title = "Core vs Surface",
+
+  ref_line = 1,
+
+  or_ticks = c(0.25, 0.5, 1, 2, 4, 8)
+)
+
+print(forest_plot_genes_core)
+
+
+# 5. Forest plot: Interface vs Non-interface surface
+forest_plot_genes_interface <- plot_forest_or_raw(
+  data = forest_data_genes_interface,
+
+  label_col = "group",
+
+  or_col = "odds_ratio",
+  low_col = "conf_low",
+  high_col = "conf_high",
+
+  p_col = "p_adj",
+
+  title = "Interface vs Non-interface surface",
+
+  ref_line = 1,
+
+  or_ticks = c(0.25, 0.5, 1, 2, 4, 8)
+)
+
+print(forest_plot_genes_interface)
+
+
+#ggplot2::ggsave(
+  #filename = "./plots/forest_plot_genes_core.pdf",
+  #plot = forest_plot_genes_core,
+  #width = 3,
+  #height = 4
+#)
+
+#ggplot2::ggsave(
+  #filename = "./plots/forest_plot_genes_interface.pdf",
+  #plot = forest_plot_genes_interface,
+  #width = 3,
+  #height = 4
+#)
+
+
+
+```
+
+
+### 7) Fraction / Distribution of detrimental mutations across proteins (Fig. 4E, F; Fig. S4A, B, C)
+```{r}
+# ============================================================
+# Scatter plots - structural classes and detrimental mutations
+# Input: Data S3 - 1aa_mutations
+# ============================================================
+
+# Analysis dataset defined earlier:
+# phix_proteome_dms_mut_missense_analysis
+
+# Structural classes
+structural_classes <- c(
+  "Core",
+  "Interface",
+  "Non-interface surface",
+  "Unknown structure"
+)
+
+# Protein order
+protein_order_scatter <- c(
+  "B", "D", "F", "G", "H",
+  "J", "A", "C", "E", "K"
+)
+
+# Check the classifications
+table(
+  phix_proteome_dms_mut_missense_analysis$
+    residue_structural_group_predicted,
+  useNA = "ifany"
+)
+#                  Core             Interface Non-interface surface     Unknown structure 
+#                  5783                 12675                  5384                  4539 
+
+table(
+  phix_proteome_dms_mut_missense_analysis$
+    mutational_effect_category_1aa,
+  useNA = "ifany"
+)
+# Detrimental   Increased   No effect 
+#       19910         403        8068 
+
+
+
+# ============================================================
+# Function: Convert class summaries into scatter plotting data
+# ============================================================
+
+prepare_scatter_from_summary <- function(
+    df,
+    gene_col = "aa_mut_gene",
+    class_col = "residue_structural_group_predicted",
+    value_col = "percent",
+    classes = c(
+      "Core",
+      "Interface",
+      "Unknown structure",
+      "Non-interface surface"
+    )
+) {
+
+  plot_data <- df %>%
+    dplyr::filter(
+      !is.na(.data[[gene_col]]),
+      !is.na(.data[[class_col]]),
+      .data[[class_col]] %in% classes
+    ) %>%
+    dplyr::group_by(
+      .data[[gene_col]],
+      .data[[class_col]]
+    ) %>%
+    dplyr::summarise(
+      value = sum(.data[[value_col]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::transmute(
+      gene = as.character(.data[[gene_col]]),
+      class = as.character(.data[[class_col]]),
+      value = value
+    ) %>%
+    tidyr::pivot_wider(
+      names_from = class,
+      values_from = value
+      # Missing categories remain NA
+    )
+
+  # Add completely absent class columns as NA
+  for (class_name in classes) {
+    if (!class_name %in% names(plot_data)) {
+      plot_data[[class_name]] <- NA_real_
+    }
+  }
+
+  plot_data %>%
+    dplyr::select(
+      gene,
+      dplyr::all_of(classes)
+    )
+}
+
+
+
+# ============================================================
+# Analysis 1: Distribution of detrimental mutations
+# Denominator: All detrimental mutations within each protein
+# ============================================================
+
+# Extract detrimental missense mutations
+phix_missense_detrimental_scatter <-
+  phix_proteome_dms_mut_missense_analysis %>%
+  dplyr::filter(
+    mutational_effect_category_1aa == "Detrimental"
+  ) %>%
+  dplyr::mutate(
+    residue_structural_group_predicted = dplyr::if_else(
+      is.na(residue_structural_group_predicted) |
+        trimws(residue_structural_group_predicted) == "",
+      "Unknown structure",
+      residue_structural_group_predicted
+    )
+  )
+
+
+# Summarize structural classes within each protein
+summary_class_proportion_proteome_mis_mut_advanced_deleterious <-
+  generate_mutation_category_summary(
+    df = phix_missense_detrimental_scatter,
+
+    class_col = "aa_mut_gene",
+
+    category_col = "residue_structural_group_predicted"
+  )
+
+print(summary_class_proportion_proteome_mis_mut_advanced_deleterious)
+
+
+# Convert to wide plotting format
+summary_class_proportion_proteome_mis_mut_advanced_deleterious_plotting <-
+  prepare_scatter_from_summary(
+    df = summary_class_proportion_proteome_mis_mut_advanced_deleterious,
+
+    gene_col = "aa_mut_gene",
+
+    class_col = "residue_structural_group_predicted",
+
+    value_col = "percent",
+
+    classes = structural_classes
+  )
+
+print(
+  summary_class_proportion_proteome_mis_mut_advanced_deleterious_plotting
+)
+# # A tibble: 9 × 5
+#   gene   Core Interface `Non-interface surface` `Unknown structure`
+#   <chr> <dbl>     <dbl>                   <dbl>               <dbl>
+# 1 A      43.4      28.5                   28.2                NA   
+# 2 B      13.7      32.9                   34.2                19.2 
+# 3 C      NA        64.0                   NA                  36.0 
+# 4 D      22.7      58.3                   17.0                 2.08
+# 5 E      NA        74.5                   19.2                 6.38
+# 6 F      28.4      60.1                   11.3                 0.25
+# 7 G      37.0      54.6                    8.44               NA   
+# 8 H      NA        33.6                    3.53               62.9 
+# 9 J      NA        67.2                   31.0                 1.73
+
+
+
+# Function: Calculate detrimental fraction within each class
+generate_proportion_summary <- function(
+    df,
+    gene_col,
+    structure_col,
+    category_col,
+    positive_classes,
+    output_label = "Detrimental"
+) {
+
+  stopifnot(
+    all(
+      c(gene_col, structure_col, category_col) %in%
+        names(df)
+    )
+  )
+
+  df %>%
+    dplyr::filter(
+      !is.na(.data[[gene_col]]),
+      !is.na(.data[[structure_col]]),
+      !is.na(.data[[category_col]])
+    ) %>%
+    dplyr::mutate(
+      target_class = dplyr::if_else(
+        .data[[category_col]] %in% positive_classes,
+        output_label,
+        "Other"
+      )
+    ) %>%
+    dplyr::group_by(
+      .data[[gene_col]],
+      .data[[structure_col]]
+    ) %>%
+    dplyr::summarise(
+      total_n = dplyr::n(),
+
+      positive_n = sum(
+        target_class == output_label,
+        na.rm = TRUE
+      ),
+
+      proportion = positive_n / total_n,
+
+      percent = round(proportion * 100, 2),
+
+      .groups = "drop"
+    )
+}
+
+
+
+# ============================================================
+# Analysis 2: Fraction of mutations detrimental within each class
+# ============================================================
+
+summary_proportion_proteome_mis_mut_advanced_deleterious <-
+  generate_proportion_summary(
+    df = phix_proteome_dms_mut_missense_analysis,
+
+    gene_col = "aa_mut_gene",
+
+    structure_col = "residue_structural_group_predicted",
+
+    category_col = "mutational_effect_category_1aa",
+
+    positive_classes = c("Detrimental"),
+
+    output_label = "Detrimental"
+  )
+
+print(summary_proportion_proteome_mis_mut_advanced_deleterious)
+
+
+# Prepare wide plotting table
+# Important: missing structural classes remain NA
+
+summary_proportion_proteome_mis_mut_advanced_deleterious_plotting <-
+  summary_proportion_proteome_mis_mut_advanced_deleterious %>%
+  dplyr::select(
+    aa_mut_gene,
+    residue_structural_group_predicted,
+    percent
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = residue_structural_group_predicted,
+    values_from = percent
+  ) %>%
+  dplyr::rename(
+    gene = aa_mut_gene
+  )
+
+# Add any completely absent structural class columns as NA
+for (class_name in structural_classes) {
+
+  if (!class_name %in% names(
+    summary_proportion_proteome_mis_mut_advanced_deleterious_plotting
+  )) {
+
+    summary_proportion_proteome_mis_mut_advanced_deleterious_plotting[[class_name]] <-
+      NA_real_
+  }
+}
+
+# Reorder columns
+summary_proportion_proteome_mis_mut_advanced_deleterious_plotting <-
+  summary_proportion_proteome_mis_mut_advanced_deleterious_plotting %>%
+  dplyr::select(
+    gene,
+    dplyr::all_of(structural_classes)
+  )
+
+print(summary_proportion_proteome_mis_mut_advanced_deleterious_plotting)
+# # A tibble: 10 × 5
+#    gene   Core Interface `Non-interface surface` `Unknown structure`
+#    <chr> <dbl>     <dbl>                   <dbl>               <dbl>
+#  1 A      85.1      68.4                    44.9               NA   
+#  2 B      50        58.5                    33.8               14.9 
+#  3 C      NA        67.6                    NA                 59.2 
+#  4 D      98.5      89.8                    85.2               51.1 
+#  5 E      NA        36.8                    36                  5.08
+#  6 F      95.5      88.3                    79.6               94.7 
+#  7 G      73.5      68.1                    24.2               NA   
+#  8 H      NA        54.3                    55.5               60.0 
+#  9 J      NA        73.5                    77.0               31.0 
+# 10 K      NA        NA                      NA                  0   
+
+
+
+# ============================================================
+# Function: Scatter plot comparing structural classes
+# ============================================================
+
+plot_core_vs_surface <- function(
+    df,
+    x_col,
+    y_col,
+    label_col = "gene",
+    x_label = NULL,
+    y_label = NULL,
+    point_size = 1.5,
+    label_vjust = -0.5
+) {
+
+  stopifnot(
+    all(c(x_col, y_col, label_col) %in% names(df))
+  )
+
+  # Keep complete observations
+  plot_df <- df %>%
+    dplyr::filter(
+      !is.na(.data[[x_col]]),
+      !is.na(.data[[y_col]])
+    )
+
+  p <- ggplot2::ggplot(
+    plot_df,
+    ggplot2::aes(
+      x = .data[[x_col]],
+      y = .data[[y_col]]
+    )
+  ) +
+    ggplot2::geom_point(
+      size = point_size
+    ) +
+    ggplot2::geom_abline(
+      slope = 1,
+      intercept = 0,
+      linetype = "dashed"
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(
+        label = .data[[label_col]]
+      ),
+      vjust = label_vjust
+    ) +
+    ggplot2::scale_x_continuous(
+      limits = c(0, 100),
+      expand = c(0, 0)
+    ) +
+    ggplot2::scale_y_continuous(
+      limits = c(0, 100),
+      expand = c(0, 0)
+    ) +
+    ggplot2::coord_fixed(
+      ratio = 1
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::labs(
+      x = if (is.null(x_label)) x_col else x_label,
+      y = if (is.null(y_label)) y_col else y_label
+    )
+
+  return(p)
+}
+
+
+
+# ============================================================
+# Generate scatter plots for both analyses
+# ============================================================
+
+# Structural class comparisons
+structural_comparisons <- list(
+  core_interface = c("Core", "Interface"),
+
+  core_surface = c("Core", "Non-interface surface"),
+
+  interface_surface = c("Interface", "Non-interface surface")
+)
+
+
+# Helper function to generate the three plots
+generate_structural_scatter_plots <- function(
+    df,
+    axis_prefix = ""
+) {
+
+  lapply(
+    structural_comparisons,
+    function(classes) {
+
+      plot_core_vs_surface(
+        df = df,
+
+        x_col = classes[1],
+        y_col = classes[2],
+
+        x_label = paste0(
+          axis_prefix,
+          classes[1],
+          ")"
+        ),
+
+        y_label = paste0(
+          axis_prefix,
+          classes[2],
+          ")"
+        )
+      )
+    }
+  )
+}
+
+
+# ------------------------------------------------------------
+# Analysis 1: Distribution of detrimental mutations
+# ------------------------------------------------------------
+
+scatter_detrimental_distribution <-
+  generate_structural_scatter_plots(
+    df =
+      summary_class_proportion_proteome_mis_mut_advanced_deleterious_plotting,
+
+    axis_prefix = "% of detrimental mutations ("
+  )
+
+
+# ------------------------------------------------------------
+# Analysis 2: Fraction detrimental within each class
+# ------------------------------------------------------------
+
+scatter_detrimental_fraction <-
+  generate_structural_scatter_plots(
+    df =
+      summary_proportion_proteome_mis_mut_advanced_deleterious_plotting,
+
+    axis_prefix = "% detrimental mutations ("
+  )
+
+
+# Inspect plots
+print(scatter_detrimental_distribution$core_interface)
+print(scatter_detrimental_distribution$core_surface)
+print(scatter_detrimental_distribution$interface_surface)
+
+print(scatter_detrimental_fraction$core_interface)
+print(scatter_detrimental_fraction$core_surface)
+print(scatter_detrimental_fraction$interface_surface)
+
+
+
+# ============================================================
+# Spearman correlations across structural classes
+# ============================================================
+
+calculate_structural_correlations <- function(df) {
+
+  purrr::imap_dfr(
+    structural_comparisons,
+    function(classes, comparison_name) {
+
+      x_col <- classes[1]
+      y_col <- classes[2]
+
+      # Include only proteins with both structural classes
+      complete_df <- df %>%
+        dplyr::filter(
+          !is.na(.data[[x_col]]),
+          !is.na(.data[[y_col]])
+        )
+
+      n <- nrow(complete_df)
+
+      if (
+        n < 3 ||
+        dplyr::n_distinct(complete_df[[x_col]]) < 2 ||
+        dplyr::n_distinct(complete_df[[y_col]]) < 2
+      ) {
+        return(
+          tibble::tibble(
+            comparison = comparison_name,
+            n = n,
+            rho = NA_real_,
+            S = NA_real_,
+            p_value = NA_real_
+          )
+        )
+      }
+
+      # Original R cor.test() behavior
+      test <- stats::cor.test(
+        complete_df[[x_col]],
+        complete_df[[y_col]],
+        method = "spearman"
+      )
+
+      tibble::tibble(
+        comparison = comparison_name,
+        n = n,
+        rho = unname(test$estimate),
+        S = unname(test$statistic),
+        p_value = test$p.value
+      )
+    }
+  )
+}
+
+# Analysis 1: Distribution of detrimental mutations
+cor_detrimental_distribution <-
+  calculate_structural_correlations(
+    summary_class_proportion_proteome_mis_mut_advanced_deleterious_plotting
+  )
+
+print(cor_detrimental_distribution)
+# # A tibble: 3 × 5
+#   comparison            n     rho     S p_value
+#   <chr>             <int>   <dbl> <dbl>   <dbl>
+# 1 core_interface        5 -0.3       26   0.683
+# 2 core_surface          5 -0.4       28   0.517
+# 3 interface_surface     8 -0.0476    88   0.935
+
+
+# Analysis 2: Fraction detrimental within each class
+cor_detrimental_fraction <-
+  calculate_structural_correlations(
+    summary_proportion_proteome_mis_mut_advanced_deleterious_plotting
+  )
+
+print(cor_detrimental_fraction)
+# # A tibble: 3 × 5
+#   comparison            n   rho        S p_value
+#   <chr>             <int> <dbl>    <dbl>   <dbl>
+# 1 core_interface        5 1     4.44e-15  0.0167
+# 2 core_surface          5 0.9   2.00e+ 0  0.0833
+# 3 interface_surface     8 0.714 2.4 e+ 1  0.0576
+
+
+
+
+```
+
+
+
+## Additional results
+### 1) Detrimental synonymous mutations (some overlapping with regulatory elements)
+```{r}
+# 4) Detrimental synonymous mutations
+# extract aa mut ID for 1aa detrimental synonymous
+#phix_proteome_dms_mut_Fitness_unique_advanced$aa_mut_ID[phix_proteome_dms_mut_Fitness_unique_advanced$phix_aa_mut_orf_class == "Synonymous" & phix_proteome_dms_mut_Fitness_unique_advanced$aa_mut_gene != "Astar" & phix_proteome_dms_mut_Fitness_unique_advanced$mutation_category_FDR_1aa == "Detrimental"]
+
+#table(phix_proteome_dms_mut_Fitness_unique_advanced$mutation_category_FDR_1aa[phix_proteome_dms_mut_Fitness_unique_advanced$phix_aa_mut_orf_class == "Synonymous" & phix_proteome_dms_mut_Fitness_unique_advanced$aa_mut_gene != "Astar"])
+
+#detrimental_syn_ids <- phix_proteome_dms_mut_Fitness_unique_advanced %>%
+  #filter(
+    #phix_aa_mut_orf_class == "Synonymous",
+    #aa_mut_gene != "Astar",
+    #mutation_category_FDR_1aa == "Detrimental"
+  #) %>%
+  #pull(aa_mut_ID) %>%
+  #unique()
+
+#detrimental_syn_annotation <- tibble(
+  #aa_mut_ID = detrimental_syn_ids
+#) %>%
+  #left_join(
+    #phix_1aa_syn_genome_nt_look_up_unique,
+    #by = c("aa_mut_ID" = "phix_aa_mut_ID")
+  #)
+
+#sum(is.na(detrimental_syn_annotation$genome_nt_pos_annotation))
+# [1] 93
+
+
+
+
+
+```
+
+
+
+### 2) Non-interface surface detrimental mutations in protein J
+```{r}
+# ============================================================
+# Protein J - non-interface surface mutations
+# ============================================================
+
+phix_protein_J_surface <- 
+  phix_proteome_dms_mut_missense_analysis %>%
+  dplyr::filter(
+    aa_mut_gene == "J",
+    residue_structural_group_predicted ==
+      "Non-interface surface"
+  )
+
+
+# Mutation categories by wild-type amino acid
+summary_protein_J_surface_wt <-
+  generate_mutation_category_summary(
+    df = phix_protein_J_surface,
+    class_col = "aa_mut_wt",
+    category_col = "mutational_effect_category_1aa"
+  )
+
+print(summary_protein_J_surface_wt)
+# # A tibble: 9 × 5
+#   aa_mut_wt mutational_effect_category_1aa count proportion percent
+#   <chr>     <chr>                          <int>      <dbl>   <dbl>
+# 1 G         Detrimental                      135      0.888    88.8
+# 2 G         No effect                         17      0.112    11.2
+# 3 K         Detrimental                        2      0.105    10.5
+# 4 K         Increased                         12      0.632    63.2
+# 5 K         No effect                          5      0.263    26.3
+# 6 P         Detrimental                       14      0.737    73.7
+# 7 P         No effect                          5      0.263    26.3
+# 8 Q         Detrimental                       10      0.526    52.6
+# 9 Q         No effect                          9      0.474    47.4
+
+
+# Calculate fraction of detrimental mutations per WT amino acid
+summary_protein_J_surface_detrimental <-
+  phix_protein_J_surface %>%
+  dplyr::filter(
+    !is.na(mutational_effect_category_1aa)
+  ) %>%
+  dplyr::group_by(aa_mut_wt) %>%
+  dplyr::summarise(
+    n_mutations = dplyr::n(),
+    n_detrimental = sum(
+      mutational_effect_category_1aa == "Detrimental"
+    ),
+    percent_detrimental =
+      100 * n_detrimental / n_mutations,
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(
+    dplyr::desc(percent_detrimental)
+  )
+
+print(summary_protein_J_surface_detrimental)
+# # A tibble: 4 × 4
+#   aa_mut_wt n_mutations n_detrimental percent_detrimental
+#   <chr>           <int>         <int>               <dbl>
+# 1 G                 152           135                88.8
+# 2 P                  19            14                73.7
+# 3 Q                  19            10                52.6
+# 4 K                  19             2                10.5
+
+
+```
+
+
+
+## Save checkpoints
+```{r}
+save.image(
+  file = "./codes_Github_final/run_Supplementary_Data.RData",
+  compress = "xz"
+)
+
+
+```
+
+
+
+
+
+
+
+
