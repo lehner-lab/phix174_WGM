@@ -6,7 +6,8 @@ The bacteriophage ΦX174 was the first genome to be sequenced and the first to b
 
 
 ## Repository structure
-This repository contains the metadata, reference sequences, and analysis scripts used to process deep-sequencing data from ΦX174 variant libraries and calculate variant fitness values using DiMSum.
+
+This repository contains the metadata, reference sequences, datasets, and analysis scripts used for the complete mutational analysis of the ΦX174 genome and proteome. It includes the original data-processing workflows and standalone R scripts for reproducing manuscript analyses and figures directly from the supplementary datasets.
 
 ```text
 phix174-WGM/
@@ -23,7 +24,19 @@ phix174-WGM/
 │   ├── 03_single_nucleotide_variants.R
 │   ├── 04_single_amino_acid_variants.R
 │   ├── 05_evaluate_VEPs.R
-│   └── 06_evaluate_AF3_models.R
+│   ├── 06_evaluate_AF3_models.R
+│   ├── 07a_evo_phage_genomes_analysis.Rmd
+│   └── 07b_evo300_phage_genomes_analysis.Rmd
+│
+├── R_reproduce_figures/
+│   ├── README.md
+│   ├── Data_S1_all_variants.Rmd
+│   ├── Data_S2_single_nucleotide.Rmd
+│   ├── Data_S3_single_amino_acid.Rmd
+│   ├── Data_S4_evaluate_VEPs.Rmd
+│   ├── Data_S5_evaluate_AF3.Rmd
+│   ├── Data_S6_evo_phage_genomes.Rmd
+│   └── Figure_S7_human_protein_complexes.Rmd
 │
 ├── scripts/
 │   ├── README.md
@@ -35,24 +48,18 @@ phix174-WGM/
 │   └── 06_run_internal_RMSD.sh
 │
 ├── data/
-│   ├── raw_fitness_data/
-│   │   ├── pool*_twist*_lib*_dimsum_fitness.RData
-│   │   └── ...
-│   │
-│   ├── evaluate_VEPs/
+│   ├── README.md
+│   ├── EVcouplings_MSA/
 │   ├── evaluate_AF3_models/
-│   ├── proteins_data/
-│   ├── mutant_library/
-│   ├── mutant_annotation/
-│   ├── EVcouplings/
-│   │
-│   ├── phix_dimsum_fitness_libraries.rds
-│   ├── phix_dms_sub_libraries_normalized.rds
-│   ├── phix_all_dms100_sub_libraries_normalized_unique_stat.tsv
-│   ├── phix_all_dms100_sub_libraries_normalized_unique_stat_1nt.tsv
-│   ├── phix_all_dms100_sub_libraries_normalized_unique_stat_AA.tsv
-│   ├── phix_proteome_dms_mut_Fitness_unique_advanced.tsv
-│   └── phix_proteome_dms_aa_pos_Fitness_advanced.tsv
+│   ├── evaluate_VEPs/
+│   ├── fitness_scoring_structure/
+│   ├── mutant_library_annotations/
+│   ├── processed_fitness_data/
+│   ├── proteins_structural_data/
+│   ├── raw_fitness_data/
+│   ├── resolved_human_protein_complexes/
+│   ├── summary_tables/
+│   └── variant_genome_sequences/
 │
 └── metadata/
     ├── DiMSum_library_parameters.tsv
@@ -60,28 +67,38 @@ phix174-WGM/
     └── variant_identity/
 ```
 
+The `R_scripts/` directory contains the original R analysis workflows, while `R_reproduce_figures/` provides scripts for reproducing manuscript figures directly from supplementary datasets (Data S1–S6) and structural analysis files. The `scripts/` directory contains additional computational pipelines.
+
+The `data/processed_fitness_data/` directory stores the processed, normalized, and analysis-ready variant datasets.
+
 
 ## Data Availability
+Raw paired-end sequencing reads have been deposited in the European Nucleotide Archive (ENA) under project accession **PRJEB120835**. This repository provides the metadata and scripts required to download sequencing reads, concatenate FASTQ files from separate sequencing lanes, and run the DiMSum analysis pipeline.
 
-Raw paired-end sequencing reads have been deposited in the European Nucleotide Archive (ENA) under project accession **PRJEB120835**. This repository provides the metadata and scripts required to download the sequencing data, merge FASTQ files generated from separate sequencing lanes, and reproduce the DiMSum analysis pipeline.
+The key input, intermediate, and analysis-ready datasets are provided to facilitate reproducibility. Additional datasets generated during the study are available through the following repositories:
 
-To facilitate reproducibility of all downstream analyses, we provide the key input datasets, intermediate datasets, and analysis-ready datasets generated throughout the study. These datasets are sufficient to reproduce all analyses, statistical tests, and figures presented in the manuscript without rerunning the sequencing data processing pipeline.
+- **Original DiMSum outputs and sequencing-depth downsampling datasets:** https://doi.org/10.5281/zenodo.23889881
+- **EVcouplings multiple-sequence alignments** for ΦX174 proteins across UniRef100, UniRef90, and MGnify+UniProt searches: https://doi.org/10.5281/zenodo.23889160
+- **AlphaFold 3 models and structural analyses** of ΦX174 protein A–DNA and protein A–C interactions: https://doi.org/10.5281/zenodo.23880305
+- **Sequence alignments of Evo-designed ΦX174 genomes:** https://doi.org/10.5281/zenodo.23890094
 
-Large structural datasets are hosted separately because of GitHub file size limitations.
-
-* **AlphaFold 3 models and structural analysis datasets:** https://doi.org/10.6084/m9.figshare.33102308
-* **EVcouplings multiple sequence alignments and output files:** https://doi.org/10.6084/m9.figshare.33102170
+For convenient reproduction of manuscript analyses and figures, we provide dedicated R scripts that directly load the published supplementary datasets (Data S1–S6), without rerunning the original data-processing pipelines. See [`R_reproduce_figures/`](R_reproduce_figures/) for details and a figure-by-figure reproduction guide.
 
 
-## Analysis overview
-The downstream analysis consists of the following steps:
-1. Load raw DiMSum fitness estimates, associated errors, and library-specific variant annotations.
-3. Normalize fitness values within each library and rescale normalized fitness across genes.
-4. Combine libraries, merge duplicated genotypes, statistic tests, and mutational effects category.
-5. Generate annotated single-nucleotide and single-amino-acid variant datasets, together with residue-level summaries.
-6. Perform enrichment tests, comparative analyses, and figure generation.
-7. Integrate variant-effect predictor scores and evaluate predictor performance.
-8. Use mutational data to evaluate AlphaFold 3 predicted protein structures and interaction complex models.
+## Analysis workflow
+
+The following workflow describes the processing of DiMSum output datasets and subsequent downstream analyses:
+
+1. Load DiMSum fitness estimates, associated errors, and library-specific variant annotations.
+2. Normalize fitness estimates within individual libraries and rescale normalized values across genes.
+3. Combine libraries, merge duplicate genotypes, perform statistical tests, and classify mutational effects.
+4. Generate annotated single-nucleotide and single-amino-acid variant datasets, including residue-level summaries.
+5. Perform statistical enrichment tests, comparative analyses, and figure generation.
+6. Integrate variant-effect predictor scores and benchmark their performance against experimental measurements.
+7. Use experimental mutational data to evaluate AlphaFold 3 protein structures and predicted interaction complexes.
+8. Analyze Evo-designed ΦX174 genomes, including mutational effects, genome viability, and lytic performance.
+
+The original analysis workflows are provided in [`R_scripts/`](R_scripts/), while scripts for reproducing manuscript analyses and figures directly from supplementary datasets are available in [`R_reproduce_figures/`](R_reproduce_figures/).
 
 
 ## Citation
